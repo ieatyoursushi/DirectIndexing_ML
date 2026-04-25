@@ -1,5 +1,5 @@
-# Data Memo — PSTAT 231 (Formal Mapping)
-### Gabriel Kung 
+# Data Memo Background — PSTAT 231 
+### Gabriel Kung
 ## *Machine Learning for Tax-Loss Harvesting Decisions in a Simulated Direct Indexing Portfolio*
 
 ---
@@ -12,7 +12,7 @@ Fix a probability space $(\mathcal{X} \times \mathcal{Y},\ \mathcal{F},\ \mathca
 
 - $\mathcal{X} \subset \mathbb{R}^d$ is the **feature space** (a measurable subset of $\mathbb{R}^d$, $d \approx 10$–$20$), equipped with the Borel $\sigma$-algebra $\mathcal{B}(\mathcal{X})$.
 - $\mathcal{Y} = \{0, 1\}$ is the **label space**, equipped with the discrete $\sigma$-algebra $2^{\mathcal{Y}}$.
-- $\mathcal{D}$ is an unknown **joint distribution** over $\mathcal{X} \times \mathcal{Y}$, the true data-generating mechanism.
+- $\mathcal{D}$ is an unknown **joint distribution** over $\mathcal{X} \times \mathcal{Y}$, the true data-generating mechanism. (The entire $\mathbb{R}^d$ scalar field representing feature + label space)
 - $\mathcal{F} = \mathcal{B}(\mathcal{X}) \otimes 2^{\mathcal{Y}}$ is the product $\sigma$-algebra.
 
 Each observation $(x_i, y_i) \in \mathcal{X} \times \{0,1\}$ is a realization of a random vector $(X, Y)$ where $(X, Y) \sim \mathcal{D}$.
@@ -37,7 +37,7 @@ The oracle rule (defined precisely in §3) is an explicit approximation to $f^{\
 
 ---
 
-## 2. Feature Space Geometry and the Panel Structure
+## 2. Feature Space Geometry and the Panel Structure (Subject to change)
 
 ### 2.1 Feature Vectors as Elements of a Structured Space
 
@@ -178,7 +178,7 @@ Regularized ML models are therefore implicitly solving a **variational problem**
 
 ---
 
-## 5. Statistical Learning Theory: ERM and Generalization
+## 5. Statistical Learning Theory: ERM and Generalization (Formal definition of the interior $f^*(x)$)
 
 ### 5.1 Risk, Empirical Risk, and the ERM Principle
 
@@ -230,6 +230,9 @@ where $\varepsilon_{\text{oracle}}(x) := f^*_{\text{true}}(x) - f^*(x)$ is a det
 
 The irreducible component of this error is the Bayes risk induced by the oracle misspecification — no ML algorithm can close this gap without access to future price data.
 
+---
+### 5.A
+- Continued discussion of hard labels -> soft labels and models used & model fitting comparisons in a future document (likely a feature memo or .readme of sorts), Where in the soft label case the ultimate deciding çlassification is set by a mechanistic function, for example: $$y^​=1[η^​(x)≥τ]$$ This is also where the image of the feature space has smooth continuous meaningful geometry in $ y\in[0, 1]$. Where $η: \mathcal{X} → [0, 1]$ with a possible applied boundary classification (described by y) being geometrically represented as a level set ($τ\in \mathbb{[0,1]})$ representing the default tunable deployment parameter within $Im_n(\mathcal{X}))$: $$∂Ω = \{x \in \mathcal{X} : η(x) = 0.5\}$$ Which can be more generalized to: $$L_c​=\{x∈X:η^​(x)=c\} \ \ ∀c∈[0,1]$$ each level set $L_c$ represents a $(d-1)$ hypersurface $\in \mathcal{X}$ in the context of this project representing a contour of harvest urgency in $\mathbb{R^d}$...
 ---
 
 ## 6. Dimensionality Reduction: Factor Structure and PCA
@@ -367,4 +370,10 @@ with associated error decomposition:
 
 $$R(\hat{f}) - R(f^*_{\text{true}}) = \underbrace{\left[R(f^*_{\text{oracle}}) - R(f^*_{\text{true}})\right]}_{\text{oracle gap (irreducible)}} + \underbrace{\left[R(f^{\text{opt}}_\mathcal{H}) - R(f^*_{\text{oracle}})\right]}_{\text{approximation error}} + \underbrace{\left[R(\hat{f}) - R(f^{\text{opt}}_\mathcal{H})\right]}_{\text{estimation error}}$$
 
-The project's contribution is controlling the estimation error (via well-chosen $\mathcal{H}$ and $N$) while acknowledging the oracle gap is the binding constraint on practical tax alpha improvement. The geometric structure of the problem — oracle as boundary current, ML model as interior current, the Stokes relationship between them — precisely characterizes why no amount of model complexity can substitute for a better oracle, and why the oracle's threshold $\theta$ is a modeling assumption external to the learning problem itself.
+The project's contribution is twofold. First, it controls estimation error via well-chosen $\mathcal{H}$ and $N$, learning the oracle's boundary from data rather than requiring explicit derivation. Second — and more importantly — by training on soft labels $\tilde{y}$ constructed from forward simulation windows, the ML model learns the harvest urgency landscape inside $\Omega$: a scalar field $\hat{\eta}: \mathcal{X} \to [0,1]$ whose level sets $L_c$ represent contours of harvest urgency in feature space. This inner-domain learning is what a hard-label model structurally cannot do. The oracle gap remains irreducible — no model complexity fixes a misspecified threshold $\theta_1$ — but the interior gap between oracle performance and ML performance is closeable, and closing it is the project's primary empirical contribution.
+
+Sources of tax-alpha: 
+
+ <b>Source 1 — Boundary placement ($\partial \Omega$):</b> how much $\alpha$ is available depends on where $\theta_1$ sits. This is what the oracle controls and what the oracle gap measures. ML trained on hard labels cannot improve this.
+
+<b> Source 2 — Interior prioritization ($\Omega$):</b> given the boundary is fixed, which lots inside $\Omega$ do you harvest first, how urgently, and in what order? This is what the soft-label ML model captures. A lot at $\ell = -40\%$ in a high-volatility drawdown is categorically more urgent than a lot at $\ell = -3\%$ in a calm market — harvesting the former now and letting the latter wait generates more $\alpha$ than treating them identically as the oracle does.
