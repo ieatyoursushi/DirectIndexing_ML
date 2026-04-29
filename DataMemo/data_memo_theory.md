@@ -1,5 +1,5 @@
 # Data Memo Background — PSTAT 231 
-### Gabriel Kung
+### Gabriel Kung, Co-Authored by Claude Sonnet 
 ## *Machine Learning for Tax-Loss Harvesting Decisions in a Simulated Direct Indexing Portfolio*
 
 ---
@@ -232,7 +232,7 @@ The irreducible component of this error is the Bayes risk induced by the oracle 
 
 ---
 ### 5.A
-- Continued discussion of hard labels -> soft labels and models used & model fitting comparisons in a future document (likely a feature memo or .readme of sorts), Where in the soft label case the ultimate deciding çlassification is set by a mechanistic function, for example: $$y^​=1[η^​(x)≥τ]$$ This is also where the image of the feature space has smooth continuous meaningful geometry in $ y\in[0, 1]$. Where $η: \mathcal{X} → [0, 1]$ with a possible applied boundary classification (described by y) being geometrically represented as a level set ($τ\in \mathbb{[0,1]})$ representing the default tunable deployment parameter within $Im_n(\mathcal{X}))$: $$∂Ω = \{x \in \mathcal{X} : η(x) = 0.5\}$$ Which can be more generalized to: $$L_c​=\{x∈X:η^​(x)=c\} \ \ ∀c∈[0,1]$$ each level set $L_c$ represents a $(d-1)$ hypersurface $\in \mathcal{X}$ in the context of this project representing a contour of harvest urgency in $\mathbb{R^d}$...
+- Continued discussion of hard labels -> soft labels and models used & model fitting comparisons in a future document (likely a feature memo or .readme of sorts), Where in the soft label case the ultimate deciding çlassification is set by a mechanistic function, for example: $$y^​=1[η^​(x)≥τ]$$ This is also where the image of the feature space has smooth continuous meaningful geometry in $ y\in[0, 1]$. Where $η: \mathcal{X} → [0, 1]$ with a possible applied boundary classification (described by y) being geometrically represented as a level set ($τ\in \mathbb{[0,1]})$ representing the default tunable deployment parameter within $Im_n(\mathcal{X}))$: $$∂Ω = \{x \in \mathcal{X} : η(x) = 0.5\}$$ Which can be more generalized to: $$∂Ω_{L_c}​=\{x∈X:η^​(x)=c\} \ \ ∀c∈[0,1]$$ each level set $L_c$ represents a $(d-1)$ hypersurface $\in \mathcal{X}$ in the context of this project representing a contour of harvest urgency in $\mathbb{R^d}$...
 ---
 
 ## 6. Dimensionality Reduction: Factor Structure and PCA

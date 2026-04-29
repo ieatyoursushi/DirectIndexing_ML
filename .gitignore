@@ -1,0 +1,11 @@
+# Build outputs
+bin/
+obj/
+*.user
+
+# Data (large raw files, re-downloadable)
+data/raw/
+
+# Secrets
+.env
+*.env
