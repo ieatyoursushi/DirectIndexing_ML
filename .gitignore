@@ -9,3 +9,7 @@ data/raw/
 # Secrets
 .env
 *.env
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
