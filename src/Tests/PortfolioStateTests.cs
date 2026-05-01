@@ -1,5 +1,4 @@
 // Tests/PortfolioStateTests.cs
-using System;
 using System.Diagnostics;
 using DirectIndexing.Core.Portfolio;
 
@@ -39,7 +38,7 @@ public void Test_WashSaleClock_StartsAtZeroAfterHarvest()
     Console.WriteLine("Test 2 passed: wash-sale clock = 0 after harvest, 1 after advance");
 }
 
-// Test 3: oracle conditions fire correctly
+// Test 3: oracle condition concept fire correctly aka the boundary \partial \mathcal{Omega}
 //oracle is not currently implemented expected failure 
 public void Test_OracleBlocked_WhenGYTD_IsNegative()
 {

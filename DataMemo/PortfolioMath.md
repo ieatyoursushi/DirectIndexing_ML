@@ -120,14 +120,37 @@ portfolioState.ResetForNewYear();  // G_YTD ← 0m; wash clocks untouched
 
 ---
 
-## 3. LotSnapshot as the Feature Extraction Map
+## 3. LotSnapshot as the Feature Extraction Map — Graph of $\mathcal{X} \times \mathcal{Y}$
 
 ### 3.1 Formal Definition
 
 The feature extraction map is:
 $$g : \mathcal{S}_t \times \mathbf{P}_t \to \mathcal{X}^{|\mathcal{K}_t|}$$
 
-where $\mathbf{P}_t$ is the price vector at time $t$ and $\mathcal{K}_t$ is the set of open lots. Applied to a single lot $k$, it yields one point $x_{k,t} \in \mathcal{X} \subset \mathbb{R}^d$ — a `LotSnapshot`.
+where $\mathbf{P}_t$ is the price vector at time $t$ and $\mathcal{K}_t$ is the set of open lots. Applied to a single lot $k$, it yields one observation in the product space:
+
+$$\text{LotSnapshot}_{k,t} \cong (x_{k,t},\, \tilde{y}_{k,t}) \in \mathcal{X} \times \mathcal{Y}$$
+
+where $\mathcal{X} \subset \mathbb{R}^d$ is the feature space and $\mathcal{Y} = \{0,1\} \times [0,1]$ carries both label types. The full record therefore lives in $\mathbb{R}^{d+2}$ — $d$ feature coordinates plus two label coordinates (`Y_Oracle`, `Y_Soft`).
+
+The **dimensionality partition** of the $d$ feature coordinates:
+
+```
+LotSnapshot ∈ ℝ^d × 𝒴
+├── x ∈ 𝒳 ⊂ ℝ^d  (features — model inputs)
+│   ├── L, H, S, B, W, K              ← 𝒳_lot     ⊂ ℝ^6   (lot-level)
+│   ├── G_YTD, Sigma_TE, WashClock    ← 𝒳_portfolio ⊂ ℝ^3  (portfolio-level)
+│   ├── R_t, SigmaRange, DeltaMA50, DeltaMA200  ← 𝒳_asset ⊂ ℝ^4  (asset-level)
+│   └── AlphaTax, DaysToYE            ← 𝒳_derived  ⊂ ℝ^2  (composite)
+│
+└── y ∈ 𝒴  (labels — model targets, never inputs)
+    ├── Y_Oracle ∈ {0,1}              ← hard label  f*(x)
+    └── Y_Soft   ∈ [0,1]              ← soft label  ỹ(x)
+```
+
+So $d \approx 15$ before one-hot encoding of `Sector`. The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
+
+**Schema-first timing:** `LotSnapshot` is defined now as the **interface contract** before the simulation exists. Every downstream component — `PriceLoader`, `OracleGate`, `SoftLabelBuilder`, `SimulationExporter` — is built against this schema. Defining it late would mean those components implicitly define the schema through whatever they happen to produce, which is riskier in a typed system.
 
 `LotSnapshot` is:
 - **Immutable** (`record` type in C#, value semantics) — unlike `Lot` and `PortfolioState` which are mutable `class` types.
@@ -191,6 +214,65 @@ LotSnapshot      immutable record — frozen at extraction time, never changes
 ```
 
 This mirrors the distinction in §2.2 of the theory memo between the **stochastic process** $\{(X_{i,t}, Y_{i,t})\}$ (evolving) and the **i.i.d. training sample** $S = \{(x_i, y_i)\}_{i=1}^N$ (frozen). Once a `LotSnapshot` is written to `lots.csv` it is a fixed realisation — an element of the empirical distribution $\hat{\mathcal{D}}$. The ML model never sees the mutable simulation objects.
+
+### 3.4 The Dataset as a Graph — Cardinality Estimate
+
+The full training dataset is the graph of the empirical map over all $(k,t)$ pairs:
+
+$$S = \bigl\{(x_{k,t},\, \tilde{y}_{k,t})\bigr\}_{k \in \mathcal{K}_t,\; t = 1,\ldots,T}$$
+
+This is a finite set of points in $\mathcal{X} \times \mathcal{Y}$ — the empirical distribution $\hat{\mathcal{D}}_N$ supported on $N$ atoms.
+
+At steady state, with roughly 150 open lots per day across 252 simulated trading days per year:
+
+$$N = |\mathcal{K}| \times T \approx 150 \times 252 \approx 37{,}800 \text{ rows per simulated year}$$
+
+Over 2 simulated years: $N \approx 75{,}600$. Each row is one `LotSnapshot` — one point in $\mathbb{R}^{d+2}$.
+
+### 3.5 Conditional Independence — The i.i.d. Justification
+
+The raw panel $\{(X_{k,t}, Y_{k,t})\}$ is **not** i.i.d. — it has two sources of correlation that must be resolved before treating observations as independent training examples.
+
+#### Source 1: Cross-sectional dependence (lots at the same $t$)
+
+At any fixed $t$, all open lots share the **same portfolio-level state**:
+$$G_t^{\text{YTD}},\; \sigma_{\text{TE},t} \in \text{PortfolioState}_t$$
+
+So `LotSnapshot(AAPL, t=50)` and `LotSnapshot(MSFT, t=50)` share the same `G_YTD` and `Sigma_TE` coordinates — they are correlated through the common $\mathcal{S}_t$.
+
+#### Source 2: Temporal dependence (same lot at consecutive days)
+
+`LotSnapshot(AAPL_lot1, t=50)` and `LotSnapshot(AAPL_lot1, t=51)` — the features `L`, `H`, `SigmaRange`, `DeltaMA50` all evolve smoothly day-to-day, making consecutive snapshots of the same lot nearly collinear.
+
+#### Why neither source breaks the i.i.d. assumption for the ML model
+
+The label $\tilde{y}_{k,t} = f^*(x_{k,t})$ is a **deterministic function of $x_{k,t}$ alone** (oracle) or a deterministic function of the forward price path (soft label). Once you condition on the full feature vector, no other snapshot provides additional information about this lot's label:
+
+$$\tilde{y}_{k,t} \perp \tilde{y}_{j,s} \mid x_{k,t} \quad \forall (j,s) \neq (k,t)$$
+
+The shared portfolio state is not hidden — it is **explicitly encoded** as columns in every snapshot. `G_YTD` and `Sigma_TE` appear as coordinates in $x_{k,t}$. The cross-sectional correlation is absorbed into the feature representation rather than lurking as latent confounding.
+
+This is the **ergodic collapse** described in §2.2 of the theory memo:
+
+```
+Raw panel:     correlated across lots and time
+                    ↓  condition on features
+Feature space: conditionally independent observations
+                    ↓  justified by Markov property of 𝒮_t
+ML training:   treat as i.i.d. draws from 𝒟
+```
+
+Formally, $Y_{k,t}$ is $\sigma(X_{k,t})$-measurable under the oracle — it is a measurable function of the current feature vector, not of past or future states or other lots. Conditioning on $X_{k,t}$ screens off all temporal and cross-sectional dependence.
+
+#### The one exception — soft label forward-window leakage
+
+$\tilde{y}_{k,t}$ (soft label) is computed over a 30-day forward simulation window. Near the end of the simulation ($t$ close to $T$), the forward windows of different lots overlap — they all observe the same future price paths. This introduces a mild **label correlation** that the conditional independence argument does not dissolve, because the dependence operates through the future, not the current feature vector.
+
+**Practical fix:** time-based train/test split.
+- Train: $t = 1, \ldots, 200$ (windows land entirely within the simulation)
+- Test: $t = 201, \ldots, 252$ (potential overlap contained within the test period, never contaminates training labels)
+
+This is not a flaw in the model — it is a known, bounded, and handled boundary condition of the soft labelling scheme.
 
 ---
 

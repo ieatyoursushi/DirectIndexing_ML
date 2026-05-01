@@ -15,6 +15,7 @@ namespace DirectIndexing.Core.Portfolio;
 /// Sign conventions (see PortfolioMath.md §3 for derivations):
 ///   L   — negative for a harvestable lot  (ℓ = (P_t − p_k)/p_k &lt; 0)
 ///   G_YTD — positive means net gains exist to offset; oracle fires only when &gt; 0
+/// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
 public record LotSnapshot
 {

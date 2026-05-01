@@ -54,6 +54,7 @@ public class PortfolioState
     /// <summary>
     /// Realise the P&amp;L of a lot and remove it from the measure.
     /// ΔG = q_k · (P_t − p_k)  — negative when harvesting a loss.
+    /// secondary goal: two TE reductable routes of either repurchasing back after the 30d wash sale rule timer or replacing the harvested with a colinear asset that meets as many colinearity conditions as possible (like simlar sector, weight, covariance, etc.). The reducable can be chosen from the lots that got reduced away in the step 0 PCA/K-means dimensionality reduction.
     /// </summary>
     public void HarvestLot(Lot lot, decimal currentPrice)
     {
