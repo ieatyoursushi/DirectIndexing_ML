@@ -18,6 +18,7 @@ switch (mode)
     case "simulate": throw new NotImplementedException();break;
     case "train": throw new NotImplementedException(); break;
     case "test":
+    //production unit tests move to a tests project for .NET grade testing features.
     PortfolioStateTests tests = new PortfolioStateTests();
     tests.Test_HarvestLoss_DecreasesGYTD();
     tests.Test_WashSaleClock_StartsAtZeroAfterHarvest();
