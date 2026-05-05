@@ -15,14 +15,28 @@ switch (mode)
         await new MarketDataDownloader(apiKey).DownloadAllHistoricalData("data/raw", years: 2); 
     }
     break;
-    case "simulate": throw new NotImplementedException();break;
-    case "train": throw new NotImplementedException(); break;
+    case "simulate": throw new NotImplementedException("Simulation not yet built.");
+    case "train":    throw new NotImplementedException("Training not yet built.");
+    //case "results" will likely be in python to generate the ipynb performance report
     case "test":
-    //production unit tests move to a tests project for .NET grade testing features.
-    PortfolioStateTests tests = new PortfolioStateTests();
-    tests.Test_HarvestLoss_DecreasesGYTD();
-    tests.Test_WashSaleClock_StartsAtZeroAfterHarvest();
-    tests.Test_OracleBlocked_WhenGYTD_IsNegative();
-    Console.WriteLine("All tests passed.");
+    {
+        // v0.1 smoke tests — simple Debug.Assert runners.
+        // Move to a proper xUnit/NUnit project when the simulation layer is added.
+
+        var portfolioTests = new PortfolioStateTests();
+        portfolioTests.Test_HarvestLoss_DecreasesGYTD();
+        portfolioTests.Test_WashSaleClock_StartsAtZeroAfterHarvest();
+        portfolioTests.Test_OracleBlocked_WhenGYTD_IsNegative();
+
+        var oracleTests = new OracleBoundaryTests();
+        oracleTests.Test_Oracle_FiresWhenAllConditionsMet();
+        oracleTests.Test_Oracle_Blocked_WhenLossInsufficient();
+        oracleTests.Test_Oracle_Blocked_WhenTEOverBudget();
+        oracleTests.Test_Oracle_Blocked_WhenGYTD_Zero();
+        oracleTests.Test_Oracle_Blocked_WhenWashSaleActive();
+        oracleTests.Test_Oracle_Fires_AtWashSaleBoundary();
+
+        Console.WriteLine("All tests passed.");
+    }
     break;
 }

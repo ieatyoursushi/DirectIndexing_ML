@@ -70,7 +70,7 @@ public record LotSnapshot
     /// α_tax = τ(h) · |G_lot| · 𝟙[G_YTD &gt; 0]
     /// — estimated tax alpha from harvesting this lot right now
     /// </summary>
-    public float AlphaTax    { get; init; }
+    public float TaxAlpha    { get; init; }
 
     /// <summary>Calendar days remaining in the tax year (resets Jan 1)</summary>
     public int   DaysToYE    { get; init; }

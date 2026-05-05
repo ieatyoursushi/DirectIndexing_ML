@@ -39,11 +39,11 @@ public class PortfolioState
 
     // ─── Time evolution ──────────────────────────────────────────────────────
 
-    /// <summary>Advance every wash-sale clock by one trading day.</summary>
-    public void AdvanceDay()
+    /// <summary>Advance every wash-sale clock by one trading day. Days should be 1 unless testing</summary>
+    public void AdvanceDay(int days = 1)
     {
         foreach (var key in _washClocks.Keys.ToList())
-            _washClocks[key]++;
+            _washClocks[key] += days;
     }
 
     // ─── State transitions ───────────────────────────────────────────────────
