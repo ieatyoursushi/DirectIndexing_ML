@@ -45,6 +45,12 @@ public sealed class MarketDataDownloader
         var constituents = await GetSP500Symbols();
         Console.WriteLine($"Fetched {constituents.Count} S&P 500 constituents.");
 
+        // Save constituent metadata (symbol, sector, weight) alongside the raw price files
+        // so the simulation engine can load sector labels without hitting the API again.
+        var constituentsPath = Path.Combine(outputDir, "..", "constituents.json");
+        await File.WriteAllTextAsync(constituentsPath,
+            JsonSerializer.Serialize(constituents, new JsonSerializerOptions { WriteIndented = false }));
+
         var to   = DateOnly.FromDateTime(DateTime.Today);
         var from = to.AddYears(-years);
 

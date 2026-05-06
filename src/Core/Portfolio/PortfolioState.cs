@@ -77,4 +77,12 @@ public class PortfolioState
     /// </summary>
     public void ResetForNewYear() =>
         G_YTD = 0m;
+
+    /// <summary>
+    /// Seed G_YTD with an external gain amount — used at simulation start and after
+    /// year-end resets to represent gains from other client activity (dividends,
+    /// rebalancing, other account sales) that are not modelled explicitly.
+    /// Without this, the oracle's G_YTD &gt; 0 gate is permanently closed.
+    /// </summary>
+    public void SeedGYTD(decimal amount) => G_YTD += amount;
 }

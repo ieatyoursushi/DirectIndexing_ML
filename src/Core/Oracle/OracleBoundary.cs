@@ -61,11 +61,11 @@ public static class OracleBoundary
     }
 
     /// <summary>
-    /// Convenience overload — works directly on a populated LotSnapshot.
+    /// Convenience overload — works directly on a populated LotStateVector.
     /// Useful for validation passes and tests; the simulation calls the
     /// scalar overload above since it constructs the snapshot in the same pass.
     /// </summary>
-    public static int Label(LotSnapshot snapshot) =>
+    public static int Label(LotStateVector snapshot) =>
         Label(
             unrealizedReturn: (decimal)snapshot.L,
             sigmaTE:          snapshot.Sigma_TE,

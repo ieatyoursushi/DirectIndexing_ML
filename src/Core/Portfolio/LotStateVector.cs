@@ -17,7 +17,7 @@ namespace DirectIndexing.Core.Portfolio;
 ///   G_YTD — positive means net gains exist to offset; oracle fires only when &gt; 0
 /// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
-public record LotSnapshot
+public record LotStateVector
 {
     // ── Lot-level features ───────────────────────────────────────────────────
 
@@ -77,11 +77,22 @@ public record LotSnapshot
 
     // ── Labels ───────────────────────────────────────────────────────────────
 
-    /// <summary>f*(x) ∈ {0,1}  — oracle hard label</summary>
+    /// <summary>f*(x) ∈ {0,1}  — oracle hard label (backtesting)</summary>
     public int   Y_Oracle    { get; init; }
 
-    /// <summary>ỹ(x) ∈ [0,1]  — soft label from forward simulation window</summary>
-    public float Y_Soft      { get; init; }
+    /// <summary>
+    /// ỹ_GBM(x) ∈ [0,1]  — fraction of 200 GBM forward paths where oracle fires
+    /// within the next 30 trading days (frozen portfolio state, per-stock σ from
+    /// trailing 21-day realised vol).
+    /// </summary>
+    public float Y_Soft_GBM  { get; init; }
+
+    /// <summary>
+    /// ỹ_BT(x) ∈ [0,1]  — fraction of the next 30 actual trading days where oracle
+    /// fires (frozen portfolio state, real historical prices).
+    /// NaN when fewer than 30 days remain in the data window.
+    /// </summary>
+    public float Y_Soft_BT   { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 
