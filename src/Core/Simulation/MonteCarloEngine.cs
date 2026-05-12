@@ -165,7 +165,7 @@ public sealed class MonteCarloEngine
     /// <param name="seed">RNG seed for reproducibility (default 42).</param>
     /// <returns>List of feature snapshots with Y_Soft_GBM filled and Y_Soft_BT = NaN.</returns>
     public List<LotStateVector> Run(
-        decimal initialPortfolioValue = 1_000_000m,
+        decimal initialPortfolioValue = 10_000_000m,
         int     simDays               = 504,
         int     warmupDays            = 200,
         int     seed                  = 42)

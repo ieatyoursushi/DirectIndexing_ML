@@ -41,11 +41,10 @@ public sealed class SimulationEngine
         _prices = prices;
         _te     = new TrackingErrorProxy(prices);
     }
-
     // ── Public entry point ───────────────────────────────────────────────────
 
     /// <param name="initialPortfolioValue">Total dollars invested at simulation start.</param>
-    public List<LotStateVector> Run(decimal initialPortfolioValue = 1_000_000m)
+    public List<LotStateVector> Run(decimal initialPortfolioValue = 10_000_000m)
     {
         InitializePortfolio(PriceLoader.WarmupDays, initialPortfolioValue);
 

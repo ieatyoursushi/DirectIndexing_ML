@@ -21,7 +21,7 @@ switch (mode)
         loader.Load("data/raw", "data/constituents.json");
 
         var engine    = new SimulationEngine(loader);
-        var snapshots = engine.Run(initialPortfolioValue: 1_000_000m);
+        var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
         var softLabeller = new SoftLabelBuilder(loader);
         softLabeller.Label(snapshots);
@@ -39,7 +39,7 @@ switch (mode)
 
         var mcEngine  = new MonteCarloEngine(loader, annualDrift: 0f);
         var snapshots = mcEngine.Run(
-            initialPortfolioValue: 1_000_000m,
+            initialPortfolioValue: 10_000_000m,
             simDays:    504,
             warmupDays: 200,
             seed:       42);

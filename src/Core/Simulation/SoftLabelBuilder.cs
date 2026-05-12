@@ -39,7 +39,7 @@ public sealed class SoftLabelBuilder
     {
         Console.WriteLine($"[SoftLabelBuilder] Labelling {snapshots.Count} snapshots …");
 
-        Parallel.For(0, snapshots.Count, i =>
+        Parallel.For(0, snapshots.Count, i => 
         {
             var snap = snapshots[i];
             snapshots[i] = snap with
