@@ -77,7 +77,7 @@ public sealed class SimulationEngine
         if (portValue <= 0m) portValue = 1m;   // guard against empty portfolio
 
         // Equal-weighted return of open lots — avoids structural jumps from harvest/reopen events
-        float sigmaTE = _te.Update(_state.OpenLots.Select(l => l.Symbol), t);
+        float sigmaTE = _te.Update(_state.OpenLots.Select(l => l.Symbol));
 
         // Extract snapshot + oracle for every open lot (iterate over copy; harvests mutate list)
         foreach (var lot in _state.OpenLots.ToList())

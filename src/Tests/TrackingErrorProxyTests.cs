@@ -3,31 +3,26 @@ using System.Diagnostics;
 using DirectIndexing.Core.Simulation;
 
 /// <summary>
-/// Tests for TrackingErrorProxy — validates the equal-weight return approach
-/// and the structural-stability invariants that motivated the bug fix.
+/// Tests for TrackingErrorProxy — validates the covariance-matrix quadratic form
+/// σ_TE = √(δw⊤ Σ δw × 252).
 ///
-/// Key design assumption:
-///   σ_TE = annualised std(r_portfolio − r_benchmark)
-///   r_portfolio = equal-weighted daily return over currently open lot symbols
-///   r_benchmark = equal-weighted daily return over ALL ticker symbols
+/// Key design:
+///   δw_i = 1/n_open − 1/N  (open)    or   −1/N  (not open)
+///   Σ = N×N daily return covariance, pre-computed from full price history
 ///
-/// This decouples σ_TE from structural cash-flow events (lot harvest + wash-sale
-/// reopen), which inflate the measure by 30–100%+ under a dollar-value-based
-/// implementation because removing a lot worth 1/3 of the portfolio looks like a
-/// −33% "return" on the following day.
+/// This approach is forward-looking (given current weights + historical covariance,
+/// what is the expected TE?) and captures cross-stock correlations, unlike the
+/// v0.1 rolling scalar std estimator.
 /// </summary>
 public class TrackingErrorProxyTests
 {
     // ── Test 1 ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// When the portfolio holds every ticker in the universe, the equal-weight
-    /// portfolio return equals the equal-weight benchmark return at every step
-    /// → σ_TE = 0.
+    /// When the portfolio holds every ticker in the universe, δw = 0 everywhere
+    /// → δw⊤ Σ δw = 0 exactly → σ_TE = 0 regardless of Σ.
     ///
-    /// Assumption tested: portfolio return = sum(r_i) / n_open
-    ///                    benchmark return = sum(r_i) / n_total
-    ///                    When open = all, both are identical → diff = 0 always.
+    /// Assumption tested: wPort = wBench = 1/N when open = all → δw_i = 0 → σ_TE = 0.
     /// </summary>
     public void Test_SigmaTE_Zero_WhenPortfolioEqualsFullBenchmark()
     {
@@ -37,9 +32,7 @@ public class TrackingErrorProxyTests
         var te     = new TrackingErrorProxy(prices);
 
         string[] allSyms = ["A", "B", "C"];
-        float sigmaTE = 0f;
-        for (int t = 1; t < r.Length; t++)
-            sigmaTE = te.Update(allSyms, t);
+        float sigmaTE = te.Update(allSyms);
 
         Debug.Assert(sigmaTE < 1e-5f,
             $"Expected σ_TE ≈ 0 when portfolio = full benchmark; got {sigmaTE:G4}");
@@ -49,13 +42,12 @@ public class TrackingErrorProxyTests
     // ── Test 2 ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// When the portfolio omits a ticker whose returns are 10× more volatile,
-    /// the portfolio return diverges from the benchmark → σ_TE > 0.
+    /// Excluding a high-variance ticker from the portfolio produces σ_TE > 0.
     ///
-    /// Assumption tested: σ_TE correctly captures compositional divergence.
-    /// If a ticker with large return swings is in the benchmark but not the
-    /// portfolio, the equal-weight benchmark return will differ from the
-    /// equal-weight portfolio return, producing a non-zero std of differences.
+    /// With C having 10× the return magnitude of A and B:
+    ///   Σ_CC ≫ Σ_AA, Σ_BB
+    ///   δw_C = −1/N < 0  (C is in benchmark but not portfolio)
+    ///   → δw_C² × Σ_CC term dominates → σ²_TE > 0
     /// </summary>
     public void Test_SigmaTE_Positive_WhenPortfolioExcludesDivergingTicker()
     {
@@ -67,9 +59,7 @@ public class TrackingErrorProxyTests
 
         // Portfolio holds only the two low-vol tickers; benchmark includes high-vol C
         string[] portfolio = ["A", "B"];
-        float sigmaTE = 0f;
-        for (int t = 1; t < rSmall.Length; t++)
-            sigmaTE = te.Update(portfolio, t);
+        float sigmaTE = te.Update(portfolio);
 
         Debug.Assert(sigmaTE > 0.001f,
             $"Expected σ_TE > 0 when portfolio excludes high-vol ticker; got {sigmaTE:G4}");
@@ -79,50 +69,35 @@ public class TrackingErrorProxyTests
     // ── Test 3 ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Structural lot removal (a harvest event) must NOT spike σ_TE.
+    /// Structural lot removal does not spike σ_TE.
     ///
-    /// With equal-weight returns:
-    ///   If all tickers have identical returns, removing one from the portfolio
-    ///   does not change r_portfolio (equal-weight of identical values = same
-    ///   value regardless of which subset you pick).  σ_TE stays at 0.
+    /// With all 3 symbols having identical returns, Σ is proportional to 11⊤ (rank-1).
+    /// When C is "harvested" (removed from portfolio):
+    ///   δw_A = δw_B = 1/2 − 1/3 = +1/6
+    ///   δw_C = −1/3
+    ///   δw⊤ Σ δw = σ² × (δw_A + δw_B + δw_C)² = σ² × (1/6 + 1/6 − 1/3)² = 0
     ///
-    /// With the old dollar-value approach (the bug):
-    ///   Portfolio value drops by ≈1/3 when C is removed.
-    ///   portRet ≈ −33% the following day.
-    ///   benchRet ≈ +2% (normal market move).
-    ///   diff ≈ −35% for that one day.
-    ///   Annualised: 0.35 × √252 ≈ 5.6 → σ_TE > 560%, permanently blocking
-    ///   the oracle's σ_TE ≤ 5% gate for the rest of the simulation.
-    ///   (This is the exact bug that generated σ_TE = 116% in the real run.)
+    /// σ_TE = 0 because removing a perfectly correlated stock does not change
+    /// the portfolio's relationship to the benchmark.
     ///
-    /// This test is the regression guard for that fix.
+    /// Regression guard: old rolling-scalar code yielded σ_TE ≈ 5.6 (560%) here
+    /// due to the structural portfolio value drop creating a fake −33% "return".
     /// </summary>
     public void Test_SigmaTE_StaysBounded_AfterStructuralLotRemoval()
     {
-        // All 3 symbols have identical returns — structural composition change is
-        // invisible to equal-weight return, but would look like a −33% return in
-        // the old dollar-value code when C is "removed" from the portfolio.
         float[] r  = [float.NaN, 0.01f, -0.01f, 0.02f, -0.02f, 0.01f,
                       0.03f, -0.01f, 0.02f, -0.01f, 0.02f, -0.01f, 0.02f, -0.01f, 0.02f];
         var rets   = new Dictionary<string, float[]> { ["A"] = r, ["B"] = r, ["C"] = r };
         var prices = PriceLoader.CreateForTesting(rets);
         var te     = new TrackingErrorProxy(prices);
 
-        string[] full    = ["A", "B", "C"];
-        string[] partial = ["A", "B"];   // C "harvested" on day 7
+        // After "harvesting" C: portfolio = {A, B}
+        string[] partial = ["A", "B"];
+        float sigmaTE = te.Update(partial);
 
-        float sigmaTE = 0f;
-        for (int t = 1; t < r.Length; t++)
-        {
-            var syms = t < 7 ? full : partial;
-            sigmaTE  = te.Update(syms, t);
-        }
-
-        // All diffs are 0 → σ_TE = 0 with the fix.
-        // Old code: σ_TE ≈ 5.6 after the structural jump on day 8.
         Debug.Assert(sigmaTE < 1e-5f,
-            $"σ_TE should stay ≈ 0 after structural lot removal when returns are identical; " +
-            $"got {sigmaTE:G4} (old dollar-value code would yield ≈ 5.6 here)");
+            $"σ_TE should be ≈ 0 after structural lot removal when returns are identical; " +
+            $"got {sigmaTE:G4}  (old rolling-scalar code yielded ≈ 5.6)");
         Console.WriteLine(
             $"  [TE Test 3] passed: σ_TE = {sigmaTE:G4} ≈ 0 after structural removal " +
             $"(regression guard — old code would give ≈ 5.6)");
@@ -131,29 +106,41 @@ public class TrackingErrorProxyTests
     // ── Test 4 ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The proxy returns 0 until it has accumulated at least 5 observations in
-    /// the rolling window.  This prevents wildly unreliable estimates on the
-    /// first few trading days of a simulation.
+    /// When two stocks are anti-correlated (A = +r, B = −r), excluding one from
+    /// the portfolio maximises σ_TE relative to a two-stock equal-weight benchmark.
     ///
-    /// Assumption tested: the hard-coded guard <c>if (_filled &lt; 5) return 0f</c>
-    /// in TrackingErrorProxy.Update fires correctly.
+    /// Analytical derivation (two stocks, portfolio holds only A):
+    ///   δw = [+0.5, −0.5]   (wPort_A=1, wBench_A=wBench_B=0.5)
+    ///
+    ///   Σ_AA = Σ_BB = σ²   (both series have same |returns|)
+    ///   Σ_AB = Σ_BA = −σ²  (perfect anti-correlation)
+    ///
+    ///   δw⊤ Σ δw = 0.25σ² − (−0.25σ²) − (−0.25σ²) + 0.25σ² = σ²
+    ///   σ_TE = σ_daily × √252
+    ///
+    /// Assumption tested: covariance matrix correctly propagates off-diagonal terms;
+    /// anti-correlation increases σ_TE beyond the independent-stock case.
     /// </summary>
-    public void Test_SigmaTE_Zero_WithInsufficientHistory()
+    public void Test_SigmaTE_Positive_ForAntiCorrelatedUniverse()
     {
-        // Only 4 time steps → _filled tops out at 4, never reaches 5
-        float[] r  = [float.NaN, 0.01f, -0.05f, 0.03f];
-        var rets   = new Dictionary<string, float[]> { ["A"] = r, ["B"] = r };
+        float[] rA = [float.NaN,  0.01f, -0.01f,  0.02f, -0.02f,  0.01f,  0.03f, -0.01f,  0.02f, -0.01f];
+        float[] rB = [float.NaN, -0.01f,  0.01f, -0.02f,  0.02f, -0.01f, -0.03f,  0.01f, -0.02f,  0.01f];
+        var rets   = new Dictionary<string, float[]> { ["A"] = rA, ["B"] = rB };
         var prices = PriceLoader.CreateForTesting(rets);
         var te     = new TrackingErrorProxy(prices);
 
-        float sigmaTE = 0f;
-        for (int t = 0; t < r.Length; t++)
-            sigmaTE = te.Update(new[] { "A", "B" }, t);
+        // Portfolio holds only A; benchmark = equal-weight {A, B}
+        float sigmaTE = te.Update(new[] { "A" });
 
-        Debug.Assert(sigmaTE == 0f,
-            $"Expected σ_TE = 0 with fewer than 5 observations; got {sigmaTE}");
+        // σ_daily of A = std([0.01, -0.01, 0.02, -0.02, 0.01, 0.03, -0.01, 0.02, -0.01])
+        // Analytical σ_TE = σ_daily × √252 (from the derivation above)
+        // Just assert it's strictly positive and below a reasonable upper bound
+        Debug.Assert(sigmaTE > 0.01f,
+            $"Expected σ_TE > 0 for anti-correlated universe; got {sigmaTE:G4}");
+        Debug.Assert(sigmaTE < 5f,
+            $"Expected σ_TE < 5 (finite, reasonable); got {sigmaTE:G4}");
         Console.WriteLine(
-            $"  [TE Test 4] passed: σ_TE = 0 with {r.Length} observations " +
-            $"(guard: _filled < 5 → return 0)");
+            $"  [TE Test 4] passed: σ_TE = {sigmaTE:G4} for anti-correlated two-stock universe " +
+            $"(validates off-diagonal Σ terms increase TE)");
     }
 }

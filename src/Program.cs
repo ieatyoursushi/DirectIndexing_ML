@@ -73,7 +73,7 @@ switch (mode)
         teTests.Test_SigmaTE_Zero_WhenPortfolioEqualsFullBenchmark();
         teTests.Test_SigmaTE_Positive_WhenPortfolioExcludesDivergingTicker();
         teTests.Test_SigmaTE_StaysBounded_AfterStructuralLotRemoval();
-        teTests.Test_SigmaTE_Zero_WithInsufficientHistory();
+        teTests.Test_SigmaTE_Positive_ForAntiCorrelatedUniverse();
 
         var gbmTests = new GbmSimulatorTests();
         gbmTests.Test_SimulatePaths_AllPricesPositive();

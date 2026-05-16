@@ -49,12 +49,12 @@ $$
 \text{perLot} = V_0 / N, \qquad k_i = \lfloor \text{perLot} / P_{t_0}^{(i)} \rfloor
 $$
 
-where $V_0 = \$1{,}000{,}000$ (default) and $N$ = number of tickers with valid prices.
+where $V_0 = \$10{,}000{,}000$ (default) and $N$ = number of tickers with valid prices.
 
 G_YTD is seeded at simulation start and after each year-end reset:
 
 $$
-G_{t_0}^{\text{YTD}} \leftarrow 0.05 \cdot V_0 = \$50{,}000
+G_{t_0}^{\text{YTD}} \leftarrow 0.05 \cdot V_0 = \$500{,}000
 $$
 
 This simulates prior-year or external gains the client has realised elsewhere (dividends
@@ -211,43 +211,81 @@ simulation order of harvest decisions.
 
 ---
 
-## §5  Tracking Error Proxy (`TrackingErrorProxy`)
+## §5  Tracking Error (`TrackingErrorProxy`)
 
-### 5.1  Definition
-
-$$
-\hat\sigma_{\text{TE},t} = \sqrt{252} \cdot \hat s_{30}\!\left(r^{\text{port}} - r^{\text{bench}}\right)
-$$
-
-where $\hat s_{30}$ is the 30-day rolling sample standard deviation, and:
+### 5.1  Definition — Quadratic Form (v0.2)
 
 $$
-r_t^{\text{port}}  = \frac{1}{|\mathcal{K}_t|} \sum_{k \in \mathcal{K}_t} r_t^{(A_k)}, \qquad
-r_t^{\text{bench}} = \frac{1}{N} \sum_{i=1}^{N} r_t^{(i)}
+\hat\sigma_{\text{TE},t} = \sqrt{\delta w_t^\top \hat\Sigma\, \delta w_t \cdot 252}
 $$
 
-Both returns are **equal-weighted averages** of daily log-returns.
+where $\hat\Sigma$ is the $N \times N$ daily return covariance matrix pre-computed once
+from the full price history at load time, and $\delta w_t$ is the active weight deviation:
 
-### 5.2  Why Equal-Weight Returns (Not Dollar-Value Changes)
+$$
+\delta w_i = \begin{cases}
+  \dfrac{1}{n_t^{\text{open}}} - \dfrac{1}{N} & \text{if lot } i \text{ is open at day } t \\[6pt]
+  -\dfrac{1}{N}                                & \text{otherwise (in wash-sale / not held)}
+\end{cases}
+$$
 
-The previous implementation computed $r_t^{\text{port}} = V_t / V_{t-1} - 1$.
+Both portfolio and benchmark use **equal weights**, consistent with the equal-dollar
+lot initialisation.
 
-**Bug:** when a lot is harvested, $V_t$ drops discontinuously by the harvested lot's value.
-For a 503-stock equal-weight portfolio, this produces a one-day "return" of $\approx -1/503$
-from the structural removal alone — even if all prices are unchanged.  Over time:
+### 5.2  Covariance Estimation
 
-- Each harvest event contributes a $\approx -0.2\%$ structural jump.
-- 100+ harvest events produce spurious variance in the portfolio return series.
-- Annualised: $\Delta V / V \approx -0.002$, and $0.002 \times \sqrt{252} \approx 0.032$.
-  Accumulated over many harvests: $\hat\sigma_{\text{TE}} \gg 5\%$, blocking the oracle permanently.
+$\hat\Sigma$ is estimated once at construction from the full available return history
+(up to 504 trading days).  Pairwise available-case sample covariance with Bessel's correction:
 
-**Fix:** use equal-weighted average of *individual ticker returns* instead of dollar-value ratio.
-Removing a ticker from the portfolio does not change the equal-weight return of the
-remaining tickers, so structural composition changes are invisible to the estimator.
+$$
+\hat\Sigma_{ij} = \frac{1}{T_{ij}-1}
+  \sum_{\substack{t=0 \\ r_t^{(i)},\, r_t^{(j)} \ne \text{NaN}}}^{T-1}
+  \bigl(r_t^{(i)} - \bar{r}^{(i)}\bigr)\bigl(r_t^{(j)} - \bar{r}^{(j)}\bigr)
+$$
 
-The residual tracking error ($\hat\sigma_{\text{TE}} > 0$) correctly reflects periods when
-the portfolio composition diverges systematically from the benchmark — e.g., when many tickers
-are simultaneously in the wash-sale window and their benchmark exposure is missing.
+$\hat\Sigma$ is symmetric by construction; diagonal entries $\hat\Sigma_{ii}$ are the
+per-stock daily return variances.  A guard `max(variance, 0)` before the square root
+prevents numerical underflow near zero.
+
+### 5.3  Why the Quadratic Form (Not Rolling Scalar Std)
+
+The v0.1 estimator `std(r_port − r_bench, window=30) × √252` estimates the same quantity
+from the *realised* scalar series.  The quadratic form:
+
+- Is **forward-looking** — given today's weights and the historical covariance structure,
+  it reports the *expected* TE going forward rather than what recently happened.
+- Exposes **cross-stock correlations** explicitly — two highly correlated stocks in the
+  portfolio produce less incremental TE than two uncorrelated ones with the same weight deviation.
+- Is the natural extension point for **Random Matrix Theory**: replace $\hat\Sigma$ with a
+  Marchenko-Pastur-cleaned $\hat\Sigma_{\text{clean}}$ (zero noise eigenvalues, rescale trace)
+  to separate signal from noise in the $N=503, T=504$ regime where $q = N/T \approx 1$.
+
+### 5.4  Historical Note — Dollar-Value Bug (v0.0)
+
+The original implementation computed $r_t^{\text{port}} = V_t / V_{t-1} - 1$ from total
+portfolio dollar value.  When a lot was harvested, $V_t$ dropped by the harvested value,
+producing a structural one-day "return" of $\approx -1/503 \approx -0.2\%$ per harvest
+even with unchanged prices.  Over 100+ harvest events:
+
+$$
+\hat\sigma_{\text{TE}} \approx 0.002 \times \sqrt{252} \times \sqrt{\text{harvests}} \gg 5\%
+$$
+
+This permanently blocked the oracle's $\sigma_{\text{TE}} \le 5\%$ gate.  Observed in
+the real run: $\hat\sigma_{\text{TE}}$ median $33\%$, max $116\%$.
+
+The v0.1 fix (equal-weight ticker returns) eliminated the structural jump.  v0.2 (quadratic
+form) retains the structural invariance while adding the covariance-based forward-looking estimate.
+
+### 5.5  Computational Cost
+
+| Step | Complexity | Frequency |
+|---|---|---|
+| Compute $\hat\Sigma$ | $O(N^2 T) \approx 127\text{M ops}$ | Once at construction |
+| Build $\delta w$ | $O(N)$ | Each day |
+| $v = \hat\Sigma\,\delta w$ + $\delta w^\top v$ | $O(N^2) \approx 253\text{K ops}$ | Each day |
+
+For $N=503$, $T=504$: construction $< 1\text{s}$; per-day $\approx 253\text{K} \times 300 \approx 76\text{M}$ total ops.
 
 ---
 

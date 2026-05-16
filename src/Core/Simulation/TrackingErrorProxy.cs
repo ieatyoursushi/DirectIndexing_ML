@@ -1,77 +1,131 @@
 namespace DirectIndexing.Core.Simulation;
 
 /// <summary>
-/// v0.1 proxy for annualised tracking error σ_TE.
+/// Computes annualised tracking error σ_TE = √(δw⊤ Σ δw × 252) via the full
+/// quadratic form, where:
+///   Σ   = N×N daily return covariance matrix, pre-computed once from the full
+///          price history at construction time (pairwise available-case, Bessel correction).
+///   δw  = active weight deviation vector:
+///            δw_i = 1/n_open − 1/N   (lot i is open)
+///            δw_i =         − 1/N   (lot i is not open / in wash-sale window)
 ///
-/// σ_TE ≈ std(r_portfolio − r_benchmark) over trailing <see cref="Window"/> days × √252
+/// Both portfolio and benchmark use equal weights, consistent with the simulation's
+/// equal-dollar lot initialisation.
 ///
-/// Benchmark: equal-weighted daily return across all S&amp;P 500 tickers in PriceLoader.
-/// Full quadratic form σ_TE = √(δw⊤ Σ δw) deferred to v0.2 (needs 503×503 covariance).
+/// v0.1 used std(r_port − r_bench, window=30) × √252 (rolling scalar approach).
+/// v0.2 (this class) uses the quadratic form for forward-looking estimates that expose
+/// cross-stock correlations — the natural extension point for future RMT-based
+/// Marchenko-Pastur eigenvalue cleaning.
+///
+/// Computational cost:
+///   Construction : O(N² × T) ≈ 127M ops — once at load time
+///   Per-day call : O(N²)     ≈ 253K ops — v = Σδw matrix-vector product
 /// </summary>
 public sealed class TrackingErrorProxy
 {
-    private readonly PriceLoader _prices;
+    private readonly float[,]               _cov;      // [N, N] daily return covariance
+    private readonly List<string>           _symbols;  // sorted — defines row/col order
+    private readonly Dictionary<string,int> _symIdx;
+    private readonly int                    _N;
 
-    private const int Window = 30;
+    public TrackingErrorProxy(PriceLoader prices)
+    {
+        _symbols = prices.Symbols.OrderBy(s => s).ToList();
+        _N       = _symbols.Count;
+        _symIdx  = _symbols.Select((s, i) => (s, i)).ToDictionary(x => x.s, x => x.i);
+        _cov     = ComputeCovariance(prices, _symbols, _N);
+        Console.WriteLine($"[TrackingErrorProxy] Σ computed: {_N}×{_N}.");
+    }
 
-    private readonly float[] _portHistory  = new float[Window];
-    private readonly float[] _benchHistory = new float[Window];
-    private int  _head    = 0;
-    private int  _filled  = 0;
-
-    public TrackingErrorProxy(PriceLoader prices) => _prices = prices;
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Call once per day with the symbols of currently open lots.
-    /// Returns annualised tracking error in [0, ∞).
-    ///
-    /// Portfolio return = equal-weighted return over open-lot symbols.
-    /// This avoids spurious jumps from lots being added/removed at structural events
-    /// (harvest + wash-sale reopen), which would inflate σ_TE by orders of magnitude
-    /// if computed from raw dollar-value changes.
+    /// Returns annualised tracking error for the current open-lot universe.
+    /// Call once per trading day before the lot loop.
     /// </summary>
-    public float Update(IEnumerable<string> openSymbols, int dayIndex)
+    public float Update(IEnumerable<string> openSymbols)
     {
-        // Portfolio: equal-weighted return of currently open lots
-        float portSum = 0f;
-        int   portN   = 0;
-        foreach (var sym in openSymbols)
+        // Build open set (restrict to symbols known in our covariance universe)
+        var openSet = new HashSet<string>();
+        foreach (var s in openSymbols)
+            if (_symIdx.ContainsKey(s)) openSet.Add(s);
+
+        int nOpen = openSet.Count;
+        if (nOpen == 0) return 0f;
+
+        float wPort  = 1f / nOpen;
+        float wBench = 1f / _N;
+
+        // Pre-compute δw vector (N HashSet lookups instead of N² inside the loop)
+        var dw = new float[_N];
+        for (int i = 0; i < _N; i++)
+            dw[i] = openSet.Contains(_symbols[i]) ? wPort - wBench : -wBench;
+
+        // variance = δw⊤ Σ δw  (combined matrix-vector multiply + dot product)
+        double variance = 0;
+        for (int i = 0; i < _N; i++)
         {
-            float r = _prices.DailyReturn(sym, dayIndex);
-            if (!float.IsNaN(r)) { portSum += r; portN++; }
+            double vi = 0;
+            for (int j = 0; j < _N; j++)
+                vi += _cov[i, j] * dw[j];
+            variance += dw[i] * vi;
         }
-        float portRet = portN > 0 ? portSum / portN : 0f;
 
-        // Benchmark: equal-weighted average of all available tickers at this day
-        float benchSum = 0f;
-        int   benchN   = 0;
-        foreach (var sym in _prices.Symbols)
+        return MathF.Sqrt(MathF.Max((float)variance, 0f) * 252f);
+    }
+
+    // ── Shared covariance estimator ──────────────────────────────────────────
+
+    /// <summary>
+    /// Pairwise available-case sample covariance with Bessel's correction.
+    ///
+    /// Σ_ij is estimated from all days t where both r_t^(i) and r_t^(j) are non-NaN.
+    /// The resulting matrix is symmetric; diagonal entries are per-stock daily variances.
+    ///
+    /// Exposed as <c>internal static</c> so <see cref="MonteCarloEngine"/> can reuse
+    /// it for its calibrated constructor without duplicating the logic.
+    /// </summary>
+    internal static float[,] ComputeCovariance(PriceLoader prices, List<string> symbols, int N)
+    {
+        var retArrays = symbols.Select(s => prices.GetReturnArray(s)).ToArray();
+        int T         = retArrays[0].Length;
+
+        // Step 1: per-symbol means (ignoring NaN)
+        var means  = new double[N];
+        var counts = new int[N];
+        for (int i = 0; i < N; i++)
         {
-            float r = _prices.DailyReturn(sym, dayIndex);
-            if (!float.IsNaN(r)) { benchSum += r; benchN++; }
+            for (int t = 0; t < T; t++)
+            {
+                float r = retArrays[i][t];
+                if (!float.IsNaN(r)) { means[i] += r; counts[i]++; }
+            }
+            if (counts[i] > 0) means[i] /= counts[i];
         }
-        float benchRet = benchN > 0 ? benchSum / benchN : 0f;
 
-        // Rolling window update (circular buffer)
-        _portHistory[_head]  = portRet;
-        _benchHistory[_head] = benchRet;
-        _head = (_head + 1) % Window;
-        if (_filled < Window) _filled++;
-
-        if (_filled < 5) return 0f;   // not enough history yet
-
-        // std(r_port − r_bench) annualised
-        float diffSum = 0f, diffSumSq = 0f;
-        for (int i = 0; i < _filled; i++)
+        // Step 2: pairwise sample covariance (upper triangle → fill both halves)
+        var cov = new float[N, N];
+        for (int i = 0; i < N; i++)
         {
-            float d = _portHistory[i] - _benchHistory[i];
-            diffSum   += d;
-            diffSumSq += d * d;
+            for (int j = i; j < N; j++)
+            {
+                double sumCov = 0;
+                int    cnt    = 0;
+                for (int t = 0; t < T; t++)
+                {
+                    float ri = retArrays[i][t];
+                    float rj = retArrays[j][t];
+                    if (!float.IsNaN(ri) && !float.IsNaN(rj))
+                    {
+                        sumCov += (ri - means[i]) * (rj - means[j]);
+                        cnt++;
+                    }
+                }
+                float c = cnt > 1 ? (float)(sumCov / (cnt - 1)) : 0f;
+                cov[i, j] = c;
+                cov[j, i] = c;
+            }
         }
-        float mean     = diffSum   / _filled;
-        float variance = diffSumSq / _filled - mean * mean;
-        float dailyStd = MathF.Sqrt(MathF.Max(variance, 0f));
-
-        return dailyStd * MathF.Sqrt(252f);   // annualise
+        return cov;
     }
 }

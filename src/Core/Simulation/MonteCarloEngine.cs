@@ -44,6 +44,12 @@ public sealed class MonteCarloEngine
     private readonly Dictionary<string, float>            _annualSigma = new();
     private readonly float                                _annualDrift;
 
+    // ── Covariance matrix for σ_TE (quadratic form) ───────────────────────────
+
+    private readonly float[,]               _covMatrix;
+    private readonly List<string>           _covSymbols;
+    private readonly Dictionary<string,int> _covSymIdx;
+
     // ── GBM simulator for Y_Soft_GBM labels ──────────────────────────────────
 
     private static readonly GbmSimulator _labelSim = new(paths: 200, horizon: 30);
@@ -82,6 +88,16 @@ public sealed class MonteCarloEngine
 
         foreach (var (sym, _) in _universe)
             _annualSigma[sym] = globalSigma;
+
+        // Diagonal Σ: no real return data, so assume each stock is independent
+        // with variance = (globalSigma / √252)²
+        _covSymbols = _universe.Select(u => u.Symbol).OrderBy(s => s).ToList();
+        int covN    = _covSymbols.Count;
+        _covSymIdx  = _covSymbols.Select((s, i) => (s, i)).ToDictionary(x => x.s, x => x.i);
+        _covMatrix  = new float[covN, covN];
+        float dailyVar = globalSigma / MathF.Sqrt(TradingDays);
+        dailyVar *= dailyVar;
+        for (int i = 0; i < covN; i++) _covMatrix[i, i] = dailyVar;
     }
 
     // ── Calibrated constructor ────────────────────────────────────────────────
@@ -138,6 +154,13 @@ public sealed class MonteCarloEngine
 
             _annualSigma[sym] = annSig;
         }
+
+        // Full covariance matrix from real return history (reuses TrackingErrorProxy's estimator)
+        _covSymbols = _universe.Select(u => u.Symbol).OrderBy(s => s).ToList();
+        int covN    = _covSymbols.Count;
+        _covSymIdx  = _covSymbols.Select((s, i) => (s, i)).ToDictionary(x => x.s, x => x.i);
+        _covMatrix  = TrackingErrorProxy.ComputeCovariance(prices, _covSymbols, covN);
+        Console.WriteLine($"[MonteCarloEngine] Σ computed: {covN}×{covN}.");
     }
 
     // ── Public entry point ────────────────────────────────────────────────────
@@ -196,9 +219,8 @@ public sealed class MonteCarloEngine
         decimal seedAmount = InitialisePortfolio(
             state, lotCount, closes, warmupDays, initialPortfolioValue);
 
-        // Rolling σ_TE (30-day circular buffer; no PriceLoader dependency)
-        var te = new SigmaTeBuffer();
-        var allSymbols = _universe.Select(u => u.Symbol).ToList();
+        // σ_TE via quadratic form δw⊤Σδw — covariance pre-computed at construction
+        var te = new SigmaTeBuffer(_covMatrix, _covSymbols, _covSymIdx);
 
         // ── Step 4: day loop ──────────────────────────────────────────────────
         for (int t = warmupDays; t < simDays; t++)
@@ -206,7 +228,7 @@ public sealed class MonteCarloEngine
             ProcessDay(
                 t, state, lotCount, reopenQueue, snapshots,
                 closes, returns, rangeVol, ma50, ma200,
-                te, allSymbols, simDays);
+                te, simDays);
 
             // Year-end reset every 252 trading days counted from warmupDays
             if ((t - warmupDays + 1) % (int)TradingDays == 0)
@@ -375,7 +397,6 @@ public sealed class MonteCarloEngine
         Dictionary<string, float[]> ma50,
         Dictionary<string, float[]> ma200,
         SigmaTeBuffer           te,
-        List<string>            allSymbols,
         int                     simDays)
     {
         // Current portfolio value (using simulated closes)
@@ -386,10 +407,9 @@ public sealed class MonteCarloEngine
         });
         if (portValue <= 0m) portValue = 1m;
 
-        // σ_TE: rolling 30-day std(r_port − r_bench) × √252
+        // σ_TE via quadratic form δw⊤Σδw
         float sigmaTE = te.Update(
-            state.OpenLots.Select(l => l.Symbol).ToList(),
-            returns, t, allSymbols);
+            state.OpenLots.Select(l => l.Symbol).ToList());
 
         // Snapshot + oracle for every open lot (iterate over a copy; harvests mutate the list)
         foreach (var lot in state.OpenLots.ToList())
@@ -559,75 +579,59 @@ public sealed class MonteCarloEngine
         return (float)(taxRate * absLoss);
     }
 
-    // ── Private: rolling σ_TE ─────────────────────────────────────────────────
+    // ── Private: σ_TE via quadratic form ─────────────────────────────────────
 
     /// <summary>
-    /// Stateful rolling-window σ_TE estimator for MC mode.
+    /// σ_TE estimator for MC mode — mirrors <see cref="TrackingErrorProxy"/>
+    /// but holds its own copy of the covariance matrix so the engine has no
+    /// runtime dependency on <see cref="PriceLoader"/> after construction.
     ///
-    /// Mirrors <see cref="TrackingErrorProxy"/> but operates on in-memory float[]
-    /// arrays rather than a <see cref="PriceLoader"/>, so <see cref="MonteCarloEngine"/>
-    /// has no dependency on real price data once the price arrays are generated.
-    ///
-    /// σ_TE = std(r_portfolio − r_benchmark, window=30) × √252,
-    /// where r_benchmark = equal-weight return of all tickers at each step.
+    /// σ_TE = √(δw⊤ Σ δw × 252)
     /// </summary>
     private sealed class SigmaTeBuffer
     {
-        private const int Window = 30;
+        private readonly float[,]               _cov;
+        private readonly List<string>           _symbols;
+        private readonly Dictionary<string,int> _symIdx;
+        private readonly int                    _N;
+        private readonly float[]                _dw;   // reused per call — avoids per-day alloc
 
-        private readonly float[] _portH  = new float[Window];
-        private readonly float[] _benchH = new float[Window];
-        private int _head   = 0;
-        private int _filled = 0;
-
-        /// <summary>
-        /// Record returns at timestep <paramref name="t"/> and return the
-        /// current annualised tracking-error estimate.
-        /// </summary>
-        public float Update(
-            List<string>                openSymbols,
-            Dictionary<string, float[]> returns,
-            int                         t,
-            List<string>                allSymbols)
+        public SigmaTeBuffer(float[,] cov, List<string> symbols, Dictionary<string,int> symIdx)
         {
-            // Equal-weighted portfolio return (open lots only)
-            float pSum = 0f; int pN = 0;
-            foreach (var sym in openSymbols)
+            _cov     = cov;
+            _symbols = symbols;
+            _symIdx  = symIdx;
+            _N       = symbols.Count;
+            _dw      = new float[_N];
+        }
+
+        public float Update(List<string> openSymbols)
+        {
+            var openSet = new HashSet<string>();
+            foreach (var s in openSymbols)
+                if (_symIdx.ContainsKey(s)) openSet.Add(s);
+
+            int nOpen = openSet.Count;
+            if (nOpen == 0) return 0f;
+
+            float wPort  = 1f / nOpen;
+            float wBench = 1f / _N;
+
+            // Build δw
+            for (int i = 0; i < _N; i++)
+                _dw[i] = openSet.Contains(_symbols[i]) ? wPort - wBench : -wBench;
+
+            // variance = δw⊤ Σ δw  (single double loop)
+            double variance = 0;
+            for (int i = 0; i < _N; i++)
             {
-                float r = returns[sym][t];
-                if (!float.IsNaN(r)) { pSum += r; pN++; }
+                double vi = 0;
+                for (int j = 0; j < _N; j++)
+                    vi += _cov[i, j] * _dw[j];
+                variance += _dw[i] * vi;
             }
-            float portRet = pN > 0 ? pSum / pN : 0f;
 
-            // Equal-weighted benchmark return (all tickers in universe)
-            float bSum = 0f; int bN = 0;
-            foreach (var sym in allSymbols)
-            {
-                float r = returns[sym][t];
-                if (!float.IsNaN(r)) { bSum += r; bN++; }
-            }
-            float benchRet = bN > 0 ? bSum / bN : 0f;
-
-            // Circular buffer update
-            _portH[_head]  = portRet;
-            _benchH[_head] = benchRet;
-            _head = (_head + 1) % Window;
-            if (_filled < Window) _filled++;
-
-            if (_filled < 5) return 0f;   // insufficient history
-
-            // Annualised std of the active difference buffer
-            float diffSum = 0f, diffSumSq = 0f;
-            for (int i = 0; i < _filled; i++)
-            {
-                float d = _portH[i] - _benchH[i];
-                diffSum   += d;
-                diffSumSq += d * d;
-            }
-            float mean     = diffSum   / _filled;
-            float variance = diffSumSq / _filled - mean * mean;
-            float dailyStd = MathF.Sqrt(MathF.Max(variance, 0f));
-            return dailyStd * MathF.Sqrt(252f);
+            return MathF.Sqrt(MathF.Max((float)variance, 0f) * 252f);
         }
     }
 }
