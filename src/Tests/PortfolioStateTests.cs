@@ -86,4 +86,74 @@ public void Test_OracleBlocked_WhenGYTD_IsNegative()
 
     Console.WriteLine("Test 3 passed: oracle blocked (label=0) when G_YTD negative, even past wash-sale window");
 }
+
+// Test 4: SeedGYTD transitions the oracle's G_YTD > 0 gate from blocked → open.
+//
+// Assumption: a real direct-indexing client already has realised gains elsewhere
+// (dividends re-invested, cap-gains from other accounts, etc.) that are available
+// to offset harvested losses.  The simulation has no such activity modelled
+// explicitly, so the engine seeds G_YTD to a representative starting value.
+// Without this seed, G_YTD = 0 and the third oracle gate (gYtd > 0) is
+// permanently closed — no harvest would ever fire.
+public void Test_SeedGYTD_EnablesOracleGate()
+{
+    var state = new PortfolioState();
+
+    // Baseline: G_YTD = 0 → oracle blocked even with a deep loss and clear wash clock
+    int before = OracleBoundary.Label(
+        unrealizedReturn: -0.05m,
+        sigmaTE:          0.01f,
+        gYtd:             state.G_YTD,   // = 0
+        washClock:        999);
+    Debug.Assert(before == 0,
+        "Oracle must be blocked when G_YTD = 0 (no gains to offset harvested losses)");
+
+    // Seed simulates $50K of prior-year or external gains available for offset
+    state.SeedGYTD(50_000m);
+    Debug.Assert(state.G_YTD == 50_000m,
+        $"G_YTD should be 50 000 after seed, got {state.G_YTD}");
+
+    // G_YTD > 0 gate now passes → oracle fires
+    int after = OracleBoundary.Label(
+        unrealizedReturn: -0.05m,
+        sigmaTE:          0.01f,
+        gYtd:             state.G_YTD,
+        washClock:        999);
+    Debug.Assert(after == 1,
+        "Oracle must fire once G_YTD is seeded positive");
+
+    Console.WriteLine("Test 4 passed: SeedGYTD opens the G_YTD > 0 oracle gate");
+}
+
+// Test 5: ResetForNewYear clears G_YTD; the engine must re-seed for the new
+//         tax year or the oracle goes permanently dark again.
+//
+// Assumption: IRS tracks gains/losses on a calendar-year basis, so G_YTD resets
+// to 0 at Jan 1.  Wash-sale clocks intentionally persist across the reset
+// (the 30-day window can straddle year-end).  SimulationEngine calls SeedGYTD
+// immediately after ResetForNewYear to replicate the client's ongoing external
+// gain activity in the new year.
+public void Test_SeedGYTD_ReSeeds_AfterYearEndReset()
+{
+    var state = new PortfolioState();
+    state.SeedGYTD(50_000m);
+
+    // Year-end: G_YTD clears to 0
+    state.ResetForNewYear();
+    Debug.Assert(state.G_YTD == 0m,
+        $"ResetForNewYear must zero G_YTD, got {state.G_YTD}");
+
+    // Without re-seed: oracle immediately blocked again
+    int blocked = OracleBoundary.Label(-0.05m, 0.01f, state.G_YTD, 999);
+    Debug.Assert(blocked == 0,
+        "Oracle should be blocked right after year-end reset, before re-seeding");
+
+    // SimulationEngine re-seeds after the reset → oracle fires again
+    state.SeedGYTD(50_000m);
+    int fired = OracleBoundary.Label(-0.05m, 0.01f, state.G_YTD, 999);
+    Debug.Assert(fired == 1,
+        "Oracle must fire again after re-seeding for the new tax year");
+
+    Console.WriteLine("Test 5 passed: SeedGYTD after year-end reset re-enables oracle gate");
+}
 }
