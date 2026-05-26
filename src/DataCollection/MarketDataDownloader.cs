@@ -1,4 +1,6 @@
 using System.Text.Json;
+using ClosedXML.Excel;
+using System.Globalization;
 
 namespace DirectIndexing.DataCollection;
 
@@ -21,10 +23,79 @@ public sealed class MarketDataDownloader
 
     public async Task<List<SP500Constituent>> GetSP500Symbols()
     {
-        var url = $"https://financialmodelingprep.com/v3/sp500-constituent?apikey={_apiKey}";
-        var json = await _http.GetStringAsync(url);
-        return JsonSerializer.Deserialize<List<SP500Constituent>>(json, JsonOpts)
-               ?? throw new InvalidOperationException("FMP returned null for S&P 500 constituents.");
+        const string url =
+            "https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spy.xlsx";
+
+        await using var stream = await _http.GetStreamAsync(url);
+        using var workbook = new XLWorkbook(stream);
+        var worksheet = workbook.Worksheets.First();
+
+        var rows = worksheet.RowsUsed().ToList();
+
+        var headerRow = rows.FirstOrDefault(row =>
+            row.CellsUsed().Any(cell =>
+                string.Equals(cell.GetString().Trim(), "Ticker", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(cell.GetString().Trim(), "Symbol", StringComparison.OrdinalIgnoreCase)));
+
+        if (headerRow is null)
+            throw new InvalidOperationException("Could not find holdings header row in SPY XLSX.");
+
+        var headers = headerRow.CellsUsed()
+            .ToDictionary(
+                cell => cell.GetString().Trim().ToLowerInvariant(),
+                cell => cell.Address.ColumnNumber);
+
+        int tickerCol = FindCol(headers, "ticker", "symbol");
+        int nameCol = FindCol(headers, "name", "security name", "holding name");
+        int weightCol = FindCol(headers, "weight", "weight (%)", "% of fund");
+        int sectorCol = FindOptionalCol(headers, "sector");
+
+        var constituents = new List<SP500Constituent>();
+
+        foreach (var row in rows.Where(row => row.RowNumber() > headerRow.RowNumber()))
+        {
+            var rawTicker = row.Cell(tickerCol).GetString().Trim();
+
+            if (string.IsNullOrWhiteSpace(rawTicker))
+                continue;
+
+            if (rawTicker.Equals("Ticker", StringComparison.OrdinalIgnoreCase) ||
+                rawTicker.Equals("CASH_USD", StringComparison.OrdinalIgnoreCase) ||
+                rawTicker.Contains("USD", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var symbol = NormalizeTickerForFmp(rawTicker);
+
+            var name = row.Cell(nameCol).GetString().Trim();
+            if (string.IsNullOrWhiteSpace(name))
+                name = symbol;
+
+            var weight = ParseWeight(row.Cell(weightCol).GetString());
+
+            var sector = sectorCol > 0
+                ? row.Cell(sectorCol).GetString().Trim()
+                : string.Empty;
+
+            constituents.Add(new SP500Constituent(
+                symbol,
+                name,
+                sector,
+                string.Empty,
+                weight));
+        }
+
+        constituents = constituents
+            .Where(constituent => !string.IsNullOrWhiteSpace(constituent.Symbol))
+            .GroupBy(constituent => constituent.Symbol)
+            .Select(group => group.First())
+            .OrderBy(constituent => constituent.Symbol)
+            .ToList();
+
+        if (constituents.Count < 450)
+            throw new InvalidOperationException(
+                $"SPY holdings scrape only returned {constituents.Count} tickers. XLSX format likely changed.");
+
+        return constituents;
     }
 
     public async Task<string> FetchHistoricalPrices(string symbol, DateOnly from, DateOnly to)
@@ -49,7 +120,7 @@ public sealed class MarketDataDownloader
         // so the simulation engine can load sector labels without hitting the API again.
         var constituentsPath = Path.Combine(outputDir, "..", "constituents.json");
         await File.WriteAllTextAsync(constituentsPath,
-            JsonSerializer.Serialize(constituents, new JsonSerializerOptions { WriteIndented = false }));
+            JsonSerializer.Serialize(constituents, new JsonSerializerOptions { WriteIndented = true }));
 
         var to         = DateOnly.FromDateTime(DateTime.Today);
         var windowFrom = to.AddYears(-years);   // rolling window floor — data older than this is dropped
@@ -114,7 +185,7 @@ public sealed class MarketDataDownloader
                 }
 
                 await File.WriteAllTextAsync(filePath,
-                    JsonSerializer.Serialize(merged, new JsonSerializerOptions { WriteIndented = false }));
+                    JsonSerializer.Serialize(merged, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch (Exception ex)
             {
@@ -135,4 +206,44 @@ public sealed class MarketDataDownloader
 
     private static void LogProgress(int completed, int total, int skipped, int updated, int failed) =>
         Console.WriteLine($"[{completed}/{total}] skipped={skipped} updated={updated} failed={failed}");
+
+    private static int FindCol(Dictionary<string, int> headers, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (headers.TryGetValue(name.ToLowerInvariant(), out var col))
+                return col;
+        }
+
+        throw new InvalidOperationException($"Missing required column. Tried: {string.Join(", ", names)}");
+    }
+
+    private static int FindOptionalCol(Dictionary<string, int> headers, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (headers.TryGetValue(name.ToLowerInvariant(), out var col))
+                return col;
+        }
+
+        return -1;
+    }
+
+    private static string NormalizeTickerForFmp(string ticker)
+    {
+        ticker = ticker.Trim().ToUpperInvariant();
+        return ticker.Replace('.', '-');
+    }
+
+    private static decimal ParseWeight(string raw)
+    {
+        raw = raw.Trim()
+            .Replace("%", "")
+            .Replace(",", "");
+
+        if (decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+            return value;
+
+        return 0m;
+    }
 }
