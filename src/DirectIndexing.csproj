@@ -7,4 +7,19 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Exclude the Python ML runtime from C# compilation and content publishing.
+    ML/Python/ is a uv-managed Python package — it has no .cs files but does
+    contain .venv/, __pycache__/, etc. that should not enter the build output.
+  -->
+  <ItemGroup>
+    <Compile Remove="ML/Python/**" />
+    <Content Remove="ML/Python/**" />
+    <None Remove="ML/Python/**" />
+    <EmbeddedResource Remove="ML/Python/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+  </ItemGroup>
+
 </Project>

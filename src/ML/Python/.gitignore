@@ -1,0 +1,8 @@
+# Local-only: uv virtualenv, pytest cache, bytecode
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
