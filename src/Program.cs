@@ -1,6 +1,9 @@
 using DirectIndexing.Core.Simulation;
 using DirectIndexing.DataCollection;
 using DirectIndexing.Export;
+using DirectIndexing.ML;
+using DirectIndexing.ML.MLNet;
+using DirectIndexing.ML.MLNet.Data;
 
 var mode = args.FirstOrDefault() ?? "simulate";
 switch (mode)
@@ -47,7 +50,63 @@ switch (mode)
         SimulationExporter.WriteCsv(snapshots, "data/lots-mc.csv");
     }
     break;
-    case "train": throw new NotImplementedException("Training not yet built.");
+    case "train": throw new NotImplementedException("Training not yet built — use mlnet-supervised.");
+
+    // ── ML.NET layer — typed, in-process supervised/unsupervised pipeline ─────
+    // Each case loads data/lots.csv into List<LotStateVector>, then hands it
+    // straight to LoadFromEnumerable. No CSV inside ML.NET, no [LoadColumn]
+    // round-trip — the typed schema flows all the way through.
+    case "mlnet-eda":
+    {
+        var rc = PythonRunner.Run("scripts.eda",
+            "--in",  "../../../data/lots.csv",
+            "--out", "../../Export/eda-mlnet/");
+        Environment.ExitCode = rc;
+    }
+    break;
+    case "mlnet-unsupervised":
+    {
+        var data = LotStateVectorCsvReader.Read("data/lots.csv");
+        MLnetPipeline.RunUnsupervised(data, "data/artifacts-mlnet/");
+    }
+    break;
+    case "mlnet-supervised":   // PRIMARY: Y_Soft_BT
+    {
+        var data = LotStateVectorCsvReader.Read("data/lots.csv");
+        MLnetPipeline.RunSupervised(data, target: "soft_bt", artifactsDir: "data/artifacts-mlnet/");
+    }
+    break;
+    case "mlnet-baseline":     // SANITY: Y_Oracle
+    {
+        var data = LotStateVectorCsvReader.Read("data/lots.csv");
+        MLnetPipeline.RunSupervised(data, target: "oracle", artifactsDir: "data/artifacts-mlnet/");
+    }
+    break;
+    case "mlnet-render":
+    {
+        var rc = MLnetPipeline.RunRender(
+            lotsCsv:      "../../../data/lots.csv",
+            artifactsDir: "../../../data/artifacts-mlnet/",
+            edaDir:       "../../Export/eda-mlnet/",
+            modelsDir:    "../../Export/models-mlnet/");
+        Environment.ExitCode = rc;
+    }
+    break;
+    case "mlnet-all":
+    {
+        var data = LotStateVectorCsvReader.Read("data/lots.csv");
+        MLnetPipeline.RunUnsupervised(data, "data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervised(data, target: "soft_bt", artifactsDir: "data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervised(data, target: "oracle",  artifactsDir: "data/artifacts-mlnet/");
+        var rc = MLnetPipeline.RunRender(
+            lotsCsv:      "../../../data/lots.csv",
+            artifactsDir: "../../../data/artifacts-mlnet/",
+            edaDir:       "../../Export/eda-mlnet/",
+            modelsDir:    "../../Export/models-mlnet/");
+        Environment.ExitCode = rc;
+    }
+    break;
+
     //case "results" will likely be in python to generate the ipynb performance report
     case "test":
     {
@@ -82,6 +141,16 @@ switch (mode)
         gbmTests.Test_FractionFiring_One_WhenConditionAlwaysFires();
         gbmTests.Test_FractionFiring_InRange_ForRealisticPredicate();
         gbmTests.Test_NextGaussian_NearStandardNormal();
+
+        // ── ML.NET layer tests ──────────────────────────────────────────────
+        new LotStateVectorCsvReaderTests().Test_RoundTrip_PreservesAllFields();
+        new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
+        new StratifiedKFoldTests().Test_FoldsPartitionDataAndContainPositives();
+        new SilhouetteTests().Test_TwoBlobsHighSilhouette();
+        var preprocessing = new PreprocessingTests();
+        preprocessing.Test_MedianImputerReplacesNaNs();
+        preprocessing.Test_ClassWeightsBalanced();
+        new GridSearchTests().Test_PicksLargestCForLinearlySeparableData();
 
         Console.WriteLine("All tests passed.");
     }
