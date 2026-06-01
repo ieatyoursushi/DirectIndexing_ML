@@ -1,7 +1,7 @@
 # Portfolio Domain Model — Formal Specification
 ### Gabriel Kung · Co-authored with Claude Sonnet
 
-> Companion to `data_memo_theory.md`. This document formalises the **implementation objects** in `Core/Portfolio/` and maps each C# class precisely to its mathematical definition. The goal is to make the bridge between the ML theory (§1–9 of the theory memo) and the simulation code unambiguous for future model development.
+> Companion to `data_memo_theory.md` and `LotVectorSpaceDerivations.md`. This document formalises the **implementation objects** in `Core/Portfolio/` and maps each C# class precisely to its mathematical definition. The goal is to make the bridge between the ML theory (§1–9 of the theory memo) and the simulation code unambiguous for future model development.
 
 ---
 
