@@ -144,5 +144,6 @@ Together ≈ 200 LOC. Zero sklearn. Zero ML logic. Pure pandas + matplotlib + ji
 - **`MLNetVsPython.md`** — the architectural argument (schema-first vs estimator-API).
 - **`MLNetLeakageAudit.md`** — the training-fold-only invariants made structural.
 - **`MLNetSemanticReconciliation.md`** — every place ML.NET defaults differ from sklearn (`C` vs `L2`, class-weight, median impute, etc.).
+- **`MLModelDerivations.md`** — expanded mathematical derivations for supervised/unsupervised models in `LotStateVector` space (issue #9).
 
 For the lot/feature codebook itself, see [`Codebook.md`](Codebook.md) on `feature/ML-layer` — the schema is identical across branches.
