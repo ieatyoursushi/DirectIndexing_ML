@@ -15,7 +15,7 @@ $$
 Using the project schema, the coordinate vector is
 
 $$
-x_{k,t}=\bigl(L,H,S,B,W,K,G_t^{\mathrm{YTD}},\sigma_{\mathrm{TE}},\mathcal{W}_t^{A_i},R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA50},\Delta\mathrm{MA200},\alpha_{\mathrm{tax}},\mathrm{DaysToYE}\bigr)^\top.
+x_{k,t}=\bigl(L,H,S,B,W,K,G_t^{\mathrm{YTD}},\sigma_{\mathrm{TE}},C_t^{A_i},R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA50},\Delta\mathrm{MA200},\alpha_{\mathrm{tax}},\mathrm{DaysToYE}\bigr)^\top.
 $$
 
 ---
@@ -61,7 +61,8 @@ $$
 Portfolio coordinates:
 
 $$
-x^{\mathrm{port}}_{k,t}=(G_t^{\mathrm{YTD}},\sigma_{\mathrm{TE}},\mathcal{W}_t^{A_i})^\top\in\mathbb{R}^{3}.
+x^{\mathrm{port}}_{k,t}=(G_t^{\mathrm{YTD}},\sigma_{\mathrm{TE}},C_t^{A_i})^\top\in\mathbb{R}^{3},\qquad
+C_t^{A_i}:=\text{wash clock in days since last harvest for asset }A_i.
 $$
 
 Asset coordinates:
@@ -123,13 +124,17 @@ $$
 The hard oracle label is
 
 $$
-f^*(x)=\mathbf{1}_{\{L\le-\theta_1\}}\cdot\mathbf{1}_{\{\sigma_{\mathrm{TE}}\le\theta_2\}}\cdot\mathbf{1}_{\{G_t^{\mathrm{YTD}}>0\}}\cdot\mathbf{1}_{\{\mathcal{W}_t^{A_i}\ge30\}}.
+\theta_1=\text{loss threshold},\qquad \theta_2=\text{tracking-error threshold},\qquad \theta_3=30\ \text{(wash-sale day threshold)}.
+$$
+
+$$
+f^*(x)=\mathbf{1}_{\{L\le-\theta_1\}}\cdot\mathbf{1}_{\{\sigma_{\mathrm{TE}}\le\theta_2\}}\cdot\mathbf{1}_{\{G_t^{\mathrm{YTD}}>0\}}\cdot\mathbf{1}_{\{C_t^{A_i}\ge\theta_3\}}.
 $$
 
 Therefore the harvest region is
 
 $$
-\Omega=\{x\in\mathcal{X}:L\le-\theta_1,\ \sigma_{\mathrm{TE}}\le\theta_2,\ G_t^{\mathrm{YTD}}>0,\ \mathcal{W}_t^{A_i}\ge30\}.
+\Omega=\{x\in\mathcal{X}:L\le-\theta_1,\ \sigma_{\mathrm{TE}}\le\theta_2,\ G_t^{\mathrm{YTD}}>0,\ C_t^{A_i}\ge\theta_3\}.
 $$
 
 This gives the explicit lot-vector-space derivation used by the simulator and by downstream ML training.
