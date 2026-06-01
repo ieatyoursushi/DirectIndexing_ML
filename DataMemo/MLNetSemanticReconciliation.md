@@ -126,3 +126,66 @@ Same algorithm family, but the convergence criteria differ:
 | PCA loadings | `.components_` | MathNet SVD | `PcaPipeline.cs` |
 | K-fold partition | sklearn internal | round-robin per class | `StratifiedKFold.cs` |
 | Solver iter cap | `max_iter=100` | `MaximumNumberOfIterations=200` | `LogisticTrainer.cs` |
+| GBT leaves | `max_leaf_nodes` | `NumberOfLeaves` | `GradientBoostedTreesTrainer.cs` |
+| GBT trees | `n_estimators` | `NumberOfTrees` | `GradientBoostedTreesTrainer.cs` |
+| RF feature frac | `max_features='sqrt'` | `FeatureFraction=0.7` | `RandomForestTrainer.cs` |
+| Elastic Net L1 | `l1_ratio * (1/C)` | `L1Regularization` (direct) | `ElasticNetTrainer.cs` |
+| Elastic Net L2 | `(1-l1_ratio) * (1/C)` | `L2Regularization` (direct) | `ElasticNetTrainer.cs` |
+| Uncalibrated prob | sklearn always calibrates | Score used as proxy | `BinaryMetrics.cs` |
+| Champion selection | `best_estimator_` | `RunAllSupervised` CV leaderboard | `MLnetPipeline.cs` |
+
+## 11. GBT — `FastTreeBinaryTrainer` vs sklearn `GradientBoostingClassifier`
+
+**sklearn.** `GradientBoostingClassifier(n_estimators=..., learning_rate=..., max_leaf_nodes=...)`.
+
+**ML.NET.** `FastTreeBinaryTrainer.Options { NumberOfTrees, LearningRate, NumberOfLeaves }`.
+
+**Reconciliation.** `NumberOfTrees ≡ n_estimators` (number of boosting rounds), `LearningRate ≡ learning_rate` (shrinkage multiplier per tree), `NumberOfLeaves ≡ max_leaf_nodes`. Note that sklearn's `max_depth` controls the tree structure via recursion depth while ML.NET's `NumberOfLeaves` controls it via maximum leaf count — they're equivalent controls on the same axis (higher = more complex tree). Set `NumberOfLeaves ∈ {20, 31}` to span sklearn's common defaults.
+
+**Preprocessing note.** `NormalizeMeanVariance` applied for schema consistency but is a no-op for tree models: axis-aligned split decisions are invariant to monotone feature scaling. Both branches normalize; the normalization has no effect on GBT/RF but doesn't hurt.
+
+## 12. Random Forest — `FastForestBinaryTrainer` vs sklearn `RandomForestClassifier`
+
+**sklearn.** `RandomForestClassifier(n_estimators=..., max_leaf_nodes=..., max_features='sqrt')`.
+
+**ML.NET.** `FastForestBinaryTrainer.Options { NumberOfTrees, NumberOfLeaves, FeatureFraction }`.
+
+**Reconciliation.** `NumberOfTrees ≡ n_estimators`, `NumberOfLeaves ≡ max_leaf_nodes`. `FeatureFraction = 0.7` approximates sklearn's `max_features='sqrt'` (for 15 features, sqrt(15)/15 ≈ 0.26; FastForest's default of 0.7 is more aggressive feature sharing — matches LightGBM-style training more than sklearn's conservative default). Reported in `rf_{target}_metrics.json` for transparency.
+
+**Calibration.** sklearn's `RandomForestClassifier.predict_proba` is calibrated via Platt scaling. FastForest is *uncalibrated* by default — "Probability" column is absent in scored output. `BinaryMetrics.Compute` falls back to "Score" as the probability proxy (§ below), which produces valid ROC/PR curves at the cost of miscalibrated probability magnitudes. This is acceptable for ranking and AUC computation; it would matter for downstream Brier-score or calibration analysis.
+
+## 13. Elastic Net — `SdcaLogisticRegressionBinaryTrainer` vs sklearn `LogisticRegression(penalty='elasticnet')`
+
+**sklearn.** `LogisticRegression(penalty='elasticnet', solver='saga', C=c, l1_ratio=ρ)`.
+
+The sklearn objective:
+$$\min_w \frac{1}{n}\sum_i \ell(y_i, w \cdot x_i) + \frac{1}{C} \Big[\rho \|w\|_1 + \frac{1-\rho}{2}\|w\|_2^2\Big]$$
+
+**ML.NET.** `SdcaLogisticRegressionBinaryTrainer.Options { L1Regularization, L2Regularization }`.
+
+The ML.NET objective:
+$$\min_w \frac{1}{n}\sum_i \ell(y_i, w \cdot x_i) + \lambda_1 \|w\|_1 + \lambda_2 \|w\|_2^2$$
+
+**Reconciliation.** Direct mapping: $\lambda_1 = \rho/C$ and $\lambda_2 = (1-\rho)/(2C)$. The grid searches over $(\lambda_1, \lambda_2)$ directly rather than $(\rho, C)$ — this avoids the interaction between two hyperparameters and is equivalent. Choosing $(\lambda_1, \lambda_2) \in \{0.001, 0.01, 0.1\}^2$ covers a 100× range in both penalties and includes the corners $(\lambda_1=0, \lambda_2>0)$ (pure ridge) and $(\lambda_1>0, \lambda_2=0)$ (pure lasso) approximately.
+
+## 14. Linear Regression — poor-fit demonstration
+
+**sklearn equivalent.** `LinearRegression()` or `Ridge()` fit on binary $\{0,1\}$ targets.
+
+**ML.NET.** `SdcaRegressionTrainer.Options { LabelColumnName = "FloatLabel", ExampleWeightColumnName = "Weight", L2Regularization }`.
+
+**Label type.** Binary trainers use `bool Label`; regression trainers require `float`. `MLReadyRow` carries both: `Label: bool` for classifiers, `FloatLabel: float` (set by `MedianImputer.Apply` as `label ? 1f : 0f`) for regression.
+
+**Probability proxy.** Regression "Score" is used as the probability for ROC/PR computation (`BinaryMetrics.Compute` Score fallback). The key failure diagnostic is `fractionOutsideUnit` — the fraction of test scores outside $[0,1]$. This is impossible for logistic/GBT/RF (they produce probabilities by construction) and systematically non-zero for linear regression on imbalanced data (the hyperplane does not respect the unit interval).
+
+**Champion selection.** `LinearRegressionTrainer` participates in the CV leaderboard but is excluded from champion selection (only classifiers compete). Its test metrics are always emitted for comparison, clearly labelled `"modelType": "regression_demonstration"`.
+
+## 15. Calibration + `BinaryMetrics.Compute` fallback
+
+FastTree (GBT) applies Platt calibration internally, producing a "Probability" column. FastForest (RF) does not — the scored output has only "Score". `BinaryMetrics.Compute(MLContext, IDataView)` checks for the "Probability" column; if absent, it sets `Probability = Score` before sweeping the curve. This fallback:
+
+- Produces valid ROC and PR curves (ordinal ranking is preserved regardless of calibration).
+- Produces valid AUC metrics (AUC is a ranking statistic, not a calibration statistic).
+- Produces **incorrect** probability estimates at a given threshold (the Score scale is not $[0,1]$ bounded for regression; for RF it is $[0,1]$ bounded but miscalibrated).
+
+Confusion matrices and F1 at threshold 0.5 are thus meaningful for RF (Score is in $[0,1]$) but not meaningful for linear regression (Score can exceed those bounds). The `fractionOutsideUnit` field in the linreg JSON makes this explicit.

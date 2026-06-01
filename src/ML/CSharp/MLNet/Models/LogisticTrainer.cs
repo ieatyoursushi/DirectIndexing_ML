@@ -6,6 +6,7 @@ using DirectIndexing.ML.MLNet.Splits;
 using DirectIndexing.ML.MLNet.Tuning;
 using Microsoft.ML;
 using Microsoft.ML.Trainers;
+using Microsoft.ML.Data;
 
 namespace DirectIndexing.ML.MLNet.Models;
 
@@ -32,6 +33,36 @@ public static class LogisticTrainer
         int RowsTrain,
         int RowsTest,
         ITransformer Model);
+
+    /// <summary>
+    /// CV-only path used by <c>RunAllSupervised</c> for champion selection.
+    /// Does NOT touch the held-out test set.
+    /// </summary>
+    public static CvResult RunCV(
+        MLContext ml,
+        IReadOnlyList<LotStateVector> data,
+        string target)
+    {
+        var (filtered, label) = SelectTarget(data, target);
+        var (train, _) = StratifiedSplit.Split(
+            filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
+
+        var grid = new Dictionary<string, object[]>
+        {
+            ["C"] = new object[] { 0.01, 0.1, 1.0, 10.0 },
+        };
+        var search = GridSearchCV.Search(
+            ml, train, r => label(r) ? 1 : 0, grid,
+            cfg => BuildEstimator(ml, (double)cfg["C"]),
+            label, k: 5, seed: 42);
+
+        return new CvResult(
+            ModelName:   "logistic",
+            BestParams:  search.BestParams,
+            MeanCvScore: search.MeanCvScore,
+            PerFoldScores: search.PerFoldScores,
+            AllConfigs:  search.All.Select(a => (a.Params, a.MeanScore)).ToList());
+    }
 
     public static LogisticOutput Run(
         MLContext ml,

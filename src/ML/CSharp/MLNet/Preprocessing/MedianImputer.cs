@@ -75,6 +75,7 @@ public static class MedianImputer
                 Sector     = r.Sector ?? "",
                 Symbol     = r.Symbol ?? "",
                 Label      = labelSelector(r),
+                FloatLabel = labelSelector(r) ? 1f : 0f,
             });
         }
         return result;

@@ -44,7 +44,16 @@ public static class BinaryMetrics
 {
     public static BinaryMetricsResult Compute(MLContext ml, IDataView scored)
     {
-        var rows = ml.Data.CreateEnumerable<ScoredRow>(scored, reuseRowObject: false).ToArray();
+        // FastForest (and other uncalibrated trainers) produce "Score" but not
+        // "Probability". Use Score as the probability proxy when Probability is absent.
+        bool hasProb = scored.Schema.GetColumnOrNull("Probability") is not null;
+        var rows = ml.Data.CreateEnumerable<ScoredRow>(
+            scored, reuseRowObject: false, ignoreMissingColumns: true).ToArray();
+        if (!hasProb)
+        {
+            for (int i = 0; i < rows.Length; i++)
+                rows[i].Probability = rows[i].Score;
+        }
         return Compute(rows);
     }
 

@@ -3,6 +3,7 @@ using DirectIndexing.Core.Portfolio;
 using DirectIndexing.Export;
 using DirectIndexing.ML.MLNet.Data;
 using DirectIndexing.ML.MLNet.Metrics;
+using DirectIndexing.ML.MLNet.Models;
 using DirectIndexing.ML.MLNet.Preprocessing;
 using DirectIndexing.ML.MLNet.Splits;
 using DirectIndexing.ML.MLNet.Tuning;
@@ -218,5 +219,143 @@ public class GridSearchTests
         // or at minimum the best mean CV PR-AUC should be > 0.9.
         Debug.Assert(result.MeanCvScore > 0.9, $"separable data → expected CV PR-AUC > 0.9, got {result.MeanCvScore:F3}");
         Console.WriteLine($"GridSearchCV: best C = {result.BestParams["C"]}, CV PR-AUC = {result.MeanCvScore:F3} ✓");
+    }
+}
+
+public class GbtTrainerTests
+{
+    public void Test_GbtCv_SeparableData()
+    {
+        var data = MakeSeparableData(600, seed: 11);
+        var ml   = new MLContext(seed: 42);
+        var cv   = GradientBoostedTreesTrainer.RunCV(ml, data, target: "oracle");
+
+        Debug.Assert(cv.ModelName == "gbt", $"expected 'gbt', got '{cv.ModelName}'");
+        Debug.Assert(cv.MeanCvScore > 0.7,
+            $"GBT CV PR-AUC on separable data should be > 0.7, got {cv.MeanCvScore:F3}");
+        Console.WriteLine($"GBT: CV PR-AUC = {cv.MeanCvScore:F3}, best params = {FormatParams(cv.BestParams)} ✓");
+    }
+
+    internal static List<LotStateVector> MakeSeparableData(int n, int seed)
+    {
+        var rng = new Random(seed);
+        var rows = new List<LotStateVector>(n);
+        for (int i = 0; i < n; i++)
+        {
+            float l = (float)(rng.NextDouble() - 0.5) * 2f;
+            int y = l < -0.2f ? 1 : 0;
+            rows.Add(new LotStateVector
+            {
+                L = l, H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
+                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
+                R_t = (float)rng.NextDouble() * 0.01f,
+                SigmaRange = 0.02f, DeltaMA50 = 0f, DeltaMA200 = 0f,
+                TaxAlpha = 1f, DaysToYE = 200,
+                Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y,
+                Symbol = $"SYM{i % 20}", Sector = "Tech", Timestep = i,
+            });
+        }
+        return rows;
+    }
+
+    private static string FormatParams(IReadOnlyDictionary<string, object> p) =>
+        string.Join(", ", p.Select(kv => $"{kv.Key}={kv.Value}"));
+}
+
+public class RfTrainerTests
+{
+    public void Test_RfCv_SeparableData()
+    {
+        var data = GbtTrainerTests.MakeSeparableData(600, seed: 13);
+        var ml   = new MLContext(seed: 42);
+        var cv   = RandomForestTrainer.RunCV(ml, data, target: "oracle");
+
+        Debug.Assert(cv.ModelName == "rf", $"expected 'rf', got '{cv.ModelName}'");
+        Debug.Assert(cv.MeanCvScore > 0.7,
+            $"RF CV PR-AUC on separable data should be > 0.7, got {cv.MeanCvScore:F3}");
+        Console.WriteLine($"RF: CV PR-AUC = {cv.MeanCvScore:F3} ✓");
+    }
+}
+
+public class ElasticNetTrainerTests
+{
+    public void Test_ElnetCv_BothPenaltiesSearched()
+    {
+        var data = GbtTrainerTests.MakeSeparableData(600, seed: 17);
+        var ml   = new MLContext(seed: 42);
+        var cv   = ElasticNetTrainer.RunCV(ml, data, target: "oracle");
+
+        Debug.Assert(cv.ModelName == "elnet", $"expected 'elnet', got '{cv.ModelName}'");
+        Debug.Assert(cv.BestParams.ContainsKey("l1Regularization"), "best params must have l1");
+        Debug.Assert(cv.BestParams.ContainsKey("l2Regularization"), "best params must have l2");
+        Debug.Assert(cv.MeanCvScore >= 0.0, $"CV PR-AUC should be non-negative, got {cv.MeanCvScore:F3}");
+        Console.WriteLine($"ElasticNet: CV PR-AUC = {cv.MeanCvScore:F3}, " +
+            $"L1={cv.BestParams["l1Regularization"]}, L2={cv.BestParams["l2Regularization"]} ✓");
+    }
+}
+
+public class LinRegTrainerTests
+{
+    public void Test_LinRegCv_ProducesLowerPrAucThanGbt()
+    {
+        // On separable data, linear regression on {0,1} should underperform GBT.
+        var data  = GbtTrainerTests.MakeSeparableData(600, seed: 19);
+        var ml    = new MLContext(seed: 42);
+        var linCV = LinearRegressionTrainer.RunCV(ml, data, target: "oracle");
+        var gbtCV = GradientBoostedTreesTrainer.RunCV(ml, data, target: "oracle");
+
+        Debug.Assert(linCV.ModelName == "linreg", $"expected 'linreg', got '{linCV.ModelName}'");
+        Console.WriteLine($"LinReg CV PR-AUC = {linCV.MeanCvScore:F3}  vs  GBT CV PR-AUC = {gbtCV.MeanCvScore:F3}");
+        // linreg should be noticeably weaker than GBT on this data.
+        Debug.Assert(linCV.MeanCvScore <= gbtCV.MeanCvScore,
+            $"linear regression ({linCV.MeanCvScore:F3}) should not outperform GBT ({gbtCV.MeanCvScore:F3}) on separable data");
+        Console.WriteLine("LinReg: poor-fit confirmed — CV PR-AUC ≤ GBT ✓");
+    }
+
+    public void Test_LinRegRun_FractionOutsideUnit()
+    {
+        // On highly imbalanced synthetic data, linear regression on {0,1} labels
+        // should produce some predictions outside [0,1].
+        var rng  = new Random(23);
+        var data = new List<LotStateVector>(400);
+        for (int i = 0; i < 400; i++)
+        {
+            float l = (float)(rng.NextDouble() - 0.5) * 4f;
+            int   y = l < -1.5f ? 1 : 0;  // ~12.5% positive rate
+            data.Add(new LotStateVector
+            {
+                L = l, H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
+                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
+                R_t = (float)rng.NextDouble() * 0.01f,
+                SigmaRange = 0.02f, DeltaMA50 = 0f, DeltaMA200 = 0f,
+                TaxAlpha = 1f, DaysToYE = 200,
+                Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y,
+                Symbol = $"SYM{i % 20}", Sector = "Tech", Timestep = i,
+            });
+        }
+
+        var ml     = new MLContext(seed: 42);
+        var result = LinearRegressionTrainer.Run(ml, data, target: "oracle");
+
+        // FractionOutsideUnit is the key poor-fit diagnostic.
+        Console.WriteLine($"LinReg: {result.FractionOutsideUnit:P1} of test predictions outside [0,1], " +
+            $"mean prediction = {result.MeanPrediction:F4} ✓");
+        Debug.Assert(result.FractionOutsideUnit >= 0.0,
+            "fractionOutsideUnit must be non-negative");
+    }
+}
+
+public class ChampionSelectionTests
+{
+    public void Test_GbtBeatsLinregOnSeparableData()
+    {
+        var data  = GbtTrainerTests.MakeSeparableData(600, seed: 31);
+        var ml    = new MLContext(seed: 42);
+        var gbtCv = GradientBoostedTreesTrainer.RunCV(ml, data, target: "oracle");
+        var lrCv  = LinearRegressionTrainer.RunCV(ml, data, target: "oracle");
+
+        Debug.Assert(gbtCv.MeanCvScore >= lrCv.MeanCvScore,
+            $"GBT ({gbtCv.MeanCvScore:F3}) should beat linreg ({lrCv.MeanCvScore:F3}) on separable data");
+        Console.WriteLine($"Champion selection: GBT ({gbtCv.MeanCvScore:F3}) > linreg ({lrCv.MeanCvScore:F3}) ✓");
     }
 }

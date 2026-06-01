@@ -34,6 +34,9 @@ public record MLReadyRow
     public string Sector { get; init; } = "";
 
     public bool  Label { get; init; }
+    // FloatLabel mirrors Label as 1f/0f; consumed by the regression trainer
+    // which requires a float label column (regression does not use bool Label).
+    public float FloatLabel { get; init; }
     public float Weight { get; init; } = 1f;
     public string Symbol { get; init; } = "";
 }
