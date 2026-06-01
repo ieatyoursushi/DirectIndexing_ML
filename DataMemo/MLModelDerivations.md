@@ -24,7 +24,7 @@ y_i=
 \mathbf{1}[\tilde y^{\text{BT}}_i>0], & \texttt{target = "soft_bt"}
 \end{cases}
 \]
-Rows with NaN \( \tilde y^{\text{BT}}_i\) are dropped before splitting.
+Rows with NaN\((\tilde y^{\text{BT}}_i)\) are dropped before splitting.
 
 ## 2) Train/test protocol used by all supervised trainers
 
