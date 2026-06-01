@@ -41,16 +41,16 @@ Let each row be
 v_i=(x_i,\; z_i,\; y_i^{\text{oracle}},\; \tilde y_i^{\text{BT}})
 \]
 where:
-- \(x_i\in\mathbb{R}^{15}\) are the numeric fields in `FeatureLists.NumericFeatures` (all sourced from `LotStateVector`),
+- \(x_i\in\mathbb{R}^{p}\) are the numeric fields in `FeatureLists.NumericFeatures` (\(p\) = numeric-feature count in source code; 15 at time of writing),
 - \(z_i\in\{1,\dots,m\}\) is sector, one-hot encoded to \(e(z_i)\in\{0,1\}^m\),
-- the final model input is \(\phi_i=[\operatorname{Norm}(x_i), e(z_i)]\in\mathbb{R}^{15+m}\).
+- the final model input is \(\phi_i=[\operatorname{Norm}(x_i), e(z_i)]\in\mathbb{R}^{p+m}\).
 
 Targets are induced directly from `LotStateVector` labels:
 \[
 y_i=
 \begin{cases}
-Y\_\text{Oracle}(i)\in\{0,1\}, & \texttt{target="oracle"}\\
-\mathbf{1}\!\left[\tilde y_i^{\text{BT}}>0\right], & \texttt{target="soft\_bt"}
+Y_\text{Oracle}(i)\in\{0,1\}, & \texttt{target="oracle"}\\
+\mathbf{1}\!\left[\tilde y_i^{\text{BT}}>0\right], & \texttt{target="soft_bt"}
 \end{cases}
 \]
 with NaN \(\tilde y_i^{\text{BT}}\) rows removed before split/CV.
@@ -86,14 +86,18 @@ with NaN \(\tilde y_i^{\text{BT}}\) rows removed before split/CV.
 ### Unsupervised models (implemented)
 
 - **PCA on numeric `LotStateVector` subspace**  
-  With standardized matrix \(X\in\mathbb{R}^{n\times 15}\), covariance
+  With standardized matrix \(X\in\mathbb{R}^{n\times p}\) (\(p\) = numeric-feature count in source code), covariance
   \[
   C=\frac{1}{n-1}X^\top X.
   \]
-  Eigenpairs \((\lambda_j, u_j)\) of \(C\) give principal axes \(u_j\) and explained-variance ratios \(\lambda_j/\sum_k\lambda_k\). Keep smallest \(r\) with cumulative variance \(\ge 0.95\).
+  Eigenpairs \((\lambda_j, u_j)\) of \(C\) give principal axes \(u_j\) and explained-variance ratios \(\lambda_j/\sum_k\lambda_k\). Keep the first \(r\) components (ordered by descending \(\lambda_j\)) such that cumulative variance \(\ge 0.95\).
 
 - **K-means on per-symbol aggregates**  
-  For each symbol \(s\), aggregate four asset-level coordinates from `LotStateVector`: \((R_t,\Sigma_{\text{Range}},\Delta MA50,\Delta MA200)\), then standardize and solve
+  For each symbol \(s\), define the standardized aggregate vector
+  \[
+  g_s=\operatorname{Std}\!\big(\operatorname{Avg}_t(R_t,\Sigma_{\text{Range}},\Delta MA50,\Delta MA200)\big)\in\mathbb{R}^4,
+  \]
+  then solve
   \[
   \min_{\{\mu_c\},\{a_s\}}\sum_s\left\|g_s-\mu_{a_s}\right\|_2^2,\quad a_s\in\{1,\dots,k\}.
   \]
