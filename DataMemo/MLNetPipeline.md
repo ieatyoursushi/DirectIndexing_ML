@@ -34,6 +34,71 @@ IDataView  (named, typed columns — no schema loss, no CSV round-trip)
 
 Every arrow is typed. Nothing is positional. The schema declared in [`LotStateVector.cs`](../src/Core/Portfolio/LotStateVector.cs) is the single source of truth — there is no separate `[LoadColumn]` projection, no pandas DataFrame intermediary, no point at which a column name is reduced to a positional index.
 
+## Mathematical derivations in `LotStateVector` space
+
+Let each row be
+\[
+v_i=(x_i,\; z_i,\; y_i^{\text{oracle}},\; \tilde y_i^{\text{BT}})
+\]
+where:
+- \(x_i\in\mathbb{R}^{15}\) are the numeric fields in `FeatureLists.NumericFeatures` (all sourced from `LotStateVector`),
+- \(z_i\in\{1,\dots,m\}\) is sector, one-hot encoded to \(e(z_i)\in\{0,1\}^m\),
+- the final model input is \(\phi_i=[\operatorname{Norm}(x_i), e(z_i)]\in\mathbb{R}^{15+m}\).
+
+Targets are induced directly from `LotStateVector` labels:
+\[
+y_i=
+\begin{cases}
+Y\_\text{Oracle}(i)\in\{0,1\}, & \texttt{target="oracle"}\\
+\mathbf{1}\!\left[\tilde y_i^{\text{BT}}>0\right], & \texttt{target="soft\_bt"}
+\end{cases}
+\]
+with NaN \(\tilde y_i^{\text{BT}}\) rows removed before split/CV.
+
+### Supervised models (implemented)
+
+- **Logistic (`LbfgsLogisticRegression`)**  
+  \[
+  \hat p_i=\sigma(w^\top\phi_i+b),\quad
+  \min_{w,b}\;\sum_i \alpha_i\Big[-y_i\log \hat p_i-(1-y_i)\log(1-\hat p_i)\Big]+\lambda\|w\|_2^2
+  \]
+  where \(\alpha_i\) are class-balance weights and \(\lambda=1/C,\; C\in\{0.01,0.1,1,10\}\).
+
+- **Gradient-boosted trees (`FastTree`)**  
+  Additive model \(F_M(\phi)=\sum_{m=1}^M \nu\,f_m(\phi)\), where each \(f_m\) is a regression tree fit to current pseudo-residuals of logistic loss.
+
+- **Random forest (`FastForest`)**  
+  Ensemble \(F(\phi)=\frac1T\sum_{t=1}^T f_t(\phi)\) over bagged trees with random feature sub-sampling; class probabilities come from averaged tree votes/scores.
+
+- **Elastic net (`SdcaLogisticRegression`)**  
+  Logistic loss with mixed penalty:
+  \[
+  \min_{w,b}\;\sum_i \ell_{\log}(y_i,w^\top\phi_i+b)+\lambda_1\|w\|_1+\lambda_2\|w\|_2^2
+  \]
+
+- **Linear regression demo (`Sdca`)**  
+  \[
+  \hat y_i=w^\top\phi_i+b,\quad
+  \min_{w,b}\;\sum_i(y_i-\hat y_i)^2+\lambda\|w\|_2^2
+  \]
+  included as an intentionally misspecified baseline for binary targets.
+
+### Unsupervised models (implemented)
+
+- **PCA on numeric `LotStateVector` subspace**  
+  With standardized matrix \(X\in\mathbb{R}^{n\times 15}\), covariance
+  \[
+  C=\frac{1}{n-1}X^\top X.
+  \]
+  Eigenpairs \((\lambda_j, u_j)\) of \(C\) give principal axes \(u_j\) and explained-variance ratios \(\lambda_j/\sum_k\lambda_k\). Keep smallest \(r\) with cumulative variance \(\ge 0.95\).
+
+- **K-means on per-symbol aggregates**  
+  For each symbol \(s\), aggregate four asset-level coordinates from `LotStateVector`: \((R_t,\Sigma_{\text{Range}},\Delta MA50,\Delta MA200)\), then standardize and solve
+  \[
+  \min_{\{\mu_c\},\{a_s\}}\sum_s\left\|g_s-\mu_{a_s}\right\|_2^2,\quad a_s\in\{1,\dots,k\}.
+  \]
+  Choose \(k\in\{5,10,15,20,25\}\) by maximal silhouette score.
+
 ## What changes vs Python
 
 | Stage | Python (`lots_pipeline/`) | ML.NET (`src/ML/CSharp/MLNet/`) | Why the change is principled |
