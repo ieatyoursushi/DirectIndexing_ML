@@ -109,7 +109,10 @@ public sealed class MarketDataDownloader
         return await _http.GetStringAsync(url);
     }
 
-    public async Task DownloadAllHistoricalData(string outputDir, int years = 2)
+    public async Task DownloadAllHistoricalData(
+        string outputDir,
+        int years = 2,
+        int warmupTradingDays = 200)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -122,8 +125,13 @@ public sealed class MarketDataDownloader
         await File.WriteAllTextAsync(constituentsPath,
             JsonSerializer.Serialize(constituents, new JsonSerializerOptions { WriteIndented = true }));
 
-        var to         = DateOnly.FromDateTime(DateTime.Today);
-        var windowFrom = to.AddYears(-years);   // rolling window floor — data older than this is dropped
+        var to = DateOnly.FromDateTime(DateTime.Today);
+
+        // Extend the fetch window backward to cover the warmup period (e.g. 200 trading days
+        // for MA-200) so the warmup sits *before* the n-year simulation window rather than
+        // consuming part of it.  200 trading days ≈ 290 calendar days (200 × 365.25 / 252).
+        int extraCalendarDays = (int)Math.Ceiling(warmupTradingDays * 365.25 / 252.0);
+        var windowFrom = to.AddYears(-years).AddDays(-extraCalendarDays);  // rolling window floor
 
         int completed = 0;
         int skipped   = 0;
@@ -141,16 +149,29 @@ public sealed class MarketDataDownloader
 
                 if (File.Exists(filePath))
                 {
-                    var existingJson = await File.ReadAllTextAsync(filePath);
-                    existing = JsonSerializer.Deserialize<List<DailyPrice>>(existingJson, JsonOpts);
+                    try
+                    {
+                        var existingJson = await File.ReadAllTextAsync(filePath);
+                        existing = JsonSerializer.Deserialize<List<DailyPrice>>(existingJson, JsonOpts);
+                    }
+                    catch (JsonException ex)
+                    {
+                        // Corrupted or truncated file — discard it and do a full re-fetch
+                        Console.WriteLine($"[WARN] Corrupted cache for {stock.Symbol}, re-fetching: {ex.Message}");
+                        existing = null;
+                    }
 
                     if (existing is { Count: > 0 })
                     {
                         var maxDate = existing.Max(p => p.Date);
+                        var minDate = existing.Min(p => p.Date);
 
-                        if (maxDate >= to)
+                        bool needsNewData = maxDate < to;
+                        bool needsOldData = minDate > windowFrom;  // file doesn't reach back far enough
+
+                        if (!needsNewData && !needsOldData)
                         {
-                            // Already up to date — no fetch needed
+                            // Both ends of the window are covered — no fetch needed
                             skipped++;
                             completed++;
                             if (completed % 50 == 0)
@@ -158,7 +179,10 @@ public sealed class MarketDataDownloader
                             continue;
                         }
 
-                        fetchFrom = maxDate.AddDays(1);
+                        // If we need older history, start the fetch from the window floor so FMP
+                        // returns the full missing range; the merge+dedup step below reconciles it.
+                        // If we only need newer data, start the day after what we already have.
+                        fetchFrom = needsOldData ? windowFrom : maxDate.AddDays(1);
                     }
                 }
 

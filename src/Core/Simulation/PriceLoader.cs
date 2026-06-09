@@ -75,8 +75,18 @@ public sealed class PriceLoader
         foreach (var filePath in Directory.EnumerateFiles(rawDataDir, "*.json"))
         {
             var symbol = Path.GetFileNameWithoutExtension(filePath);
-            var json   = File.ReadAllText(filePath);
-            var arr    = JsonSerializer.Deserialize<DailyPrice[]>(json, JsonOpts);
+            DailyPrice[]? arr;
+            try
+            {
+                var json = File.ReadAllText(filePath);
+                arr = JsonSerializer.Deserialize<DailyPrice[]>(json, JsonOpts);
+            }
+            catch (JsonException ex)
+            {
+                Console.WriteLine($"[WARN] Skipping corrupted price file {symbol}.json: {ex.Message}");
+                continue;
+            }
+
             if (arr is null || arr.Length == 0) continue;
             // FMP returns newest-first; sort ascending for array index alignment
             Array.Sort(arr, (a, b) => a.Date.CompareTo(b.Date));
