@@ -148,7 +148,41 @@ switch (mode)
     }
     break;
 
-    //case "results" will likely be in python to generate the ipynb performance report
+    // ── Report layer — final-project report (notebook + HTML + codebook) ─────
+    // Python renders; preflight fails fast (exit 2) if ML artifacts are missing.
+    case "report":
+    {
+        var rc = PythonRunner.Run("scripts.report",
+            "--lots",      "../../../data/lots.csv",
+            "--artifacts", "../../../data/artifacts-mlnet/",
+            "--notebook",  "notebooks/final_report.ipynb",
+            "--out",       "../../Export/report/");
+        Environment.ExitCode = rc;
+    }
+    break;
+    case "report-all":   // mlnet-all training + report, one command
+    {
+        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        MLnetPipeline.RunUnsupervised(data, "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: "../data/artifacts-mlnet/");
+        var rc = PythonRunner.Run("scripts.report",
+            "--lots",      "../../../data/lots.csv",
+            "--artifacts", "../../../data/artifacts-mlnet/",
+            "--notebook",  "notebooks/final_report.ipynb",
+            "--out",       "../../Export/report/");
+        Environment.ExitCode = rc;
+    }
+    break;
+    case "submission":   // package the course submission zip at the repo root
+    {
+        var rc = PythonRunner.Run("scripts.package_submission",
+            "--repo-root", "../../..",
+            "--out",       "../../../submission.zip");
+        Environment.ExitCode = rc;
+    }
+    break;
+
     case "test":
     {
         // v0.1 smoke tests — simple Debug.Assert runners.
