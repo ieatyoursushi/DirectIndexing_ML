@@ -96,11 +96,12 @@ COLUMNS: list[dict] = [
         "role": "feature (portfolio-level)",
         "description": (
             "Net realized gain/loss for the calendar year to date, shared by "
-            "every lot at the same timestep. Seeded at +$500,000 (5% of the "
-            "$10M portfolio) at simulation start and re-seeded after each "
-            "year-end reset to simulate externally realized gains. Harvesting "
-            "a loss pushes G_YTD down; the oracle only fires while G_YTD > 0 "
-            "(there must be gains to offset)."
+            "every lot at the same timestep. Seeded at +$1,000,000 (10% of the "
+            "$10M portfolio — the S&P 500's long-run annual return) at "
+            "simulation start and re-seeded after each year-end reset to "
+            "simulate externally realized gains. Harvesting a loss pushes "
+            "G_YTD down; the oracle only fires while G_YTD > 0 (there must be "
+            "gains to offset)."
         ),
         "encoding": "Signed continuous. Positive = net realized gains.",
         "missing": "None.",
@@ -231,7 +232,7 @@ COLUMNS: list[dict] = [
             "1[WashClock ≥ 30]. This is the decision boundary the supervised "
             "models try to learn. Never used as a model input."
         ),
-        "encoding": "0 = do not harvest, 1 = harvest. Positive rate ≈ 0.85%.",
+        "encoding": "0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.",
         "missing": "None.",
         "source": "OracleBoundary.Label",
     },

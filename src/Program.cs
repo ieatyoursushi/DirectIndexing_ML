@@ -174,6 +174,18 @@ switch (mode)
         Environment.ExitCode = rc;
     }
     break;
+    // ── DevTools — dependency/coupling atlas of this C# layer ────────────────
+    // Brute-force regex scan of src/**/*.cs (same approach as Zombtoy
+    // DevTools/Diagrams) → one markdown file of mermaid diagrams + tables.
+    case "deps":
+    {
+        var rc = PythonRunner.Run("scripts.dependencies",
+            "--src", "../../../src",
+            "--out", "../../Export/diagrams/");
+        Environment.ExitCode = rc;
+    }
+    break;
+
     case "submission":   // package the course submission zip at the repo root
     {
         var rc = PythonRunner.Run("scripts.package_submission",

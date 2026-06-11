@@ -10,6 +10,7 @@ All layers run through the .NET orchestrator (from `src/`):
 | `dotnet run report` | 4 — report | Codebook + execute `notebooks/final_report.ipynb` + export HTML → `src/Export/report/` (requires layer-3 artifacts; exits 2 with a list if missing) |
 | `dotnet run report-all` | 3+4 | `mlnet-all` training followed by the report, one command |
 | `dotnet run submission` | packaging | Assemble `submission.zip` at the repo root (report deliverables at zip root; excludes `data/raw/` and model binaries; `--no-data` drops `lots.csv`) |
+| `dotnet run deps` | devtools | Brute-force scan of `src/**/*.cs` → dependency/coupling atlas (`src/Export/diagrams/Dependencies.md`: mermaid layer graph, class graph, inheritance, fan-in/out tables, call detail) |
 
 The report layer is Python (nbclient + nbconvert under `src/ML/Python/`, managed by `uv`),
 invoked via the same `PythonRunner` subprocess seam as the EDA/render scripts.

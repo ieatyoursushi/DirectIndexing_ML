@@ -1,7 +1,7 @@
 # Codebook — `data/lots.csv`
 
 **Project:** DirectIndexing — learning the tax-loss-harvest decision boundary
-**Dataset:** 201407 rows × 21 columns. One row = one *lot snapshot*:
+**Dataset:** 170751 rows × 21 columns. One row = one *lot snapshot*:
 the state of a single tax lot on a single simulated trading day.
 
 Rows are produced by the backtesting simulation (`dotnet run simulate`) over a
@@ -102,7 +102,7 @@ Number of open lots in the same ticker as this lot (including itself). Stays 1 i
 | **Missing** | None. |
 | **Source** | `PortfolioState.G_YTD` |
 
-Net realized gain/loss for the calendar year to date, shared by every lot at the same timestep. Seeded at +$500,000 (5% of the $10M portfolio) at simulation start and re-seeded after each year-end reset to simulate externally realized gains. Harvesting a loss pushes G_YTD down; the oracle only fires while G_YTD > 0 (there must be gains to offset).
+Net realized gain/loss for the calendar year to date, shared by every lot at the same timestep. Seeded at +$1,000,000 (10% of the $10M portfolio — the S&P 500's long-run annual return) at simulation start and re-seeded after each year-end reset to simulate externally realized gains. Harvesting a loss pushes G_YTD down; the oracle only fires while G_YTD > 0 (there must be gains to offset).
 
 ## 8. `Sigma_TE`
 
@@ -164,7 +164,7 @@ Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 18 of 201407 rows (0.01%) |
+| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 18 of 170751 rows (0.01%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentum / mean-reversion signal.
@@ -177,7 +177,7 @@ Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentu
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 466 of 201407 rows (0.23%) |
+| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 440 of 170751 rows (0.26%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 200-day moving average: (P_t − MA_200) / MA_200. The 200-day warmup window exists so this is defined from the first active simulation day.
@@ -215,7 +215,7 @@ Calendar days remaining until December 31 of the simulated tax year. Year-end is
 | **Type** | int (binary) |
 | **Units** | — |
 | **Role** | label (hard) |
-| **Values / encoding** | 0 = do not harvest, 1 = harvest. Positive rate ≈ 0.85%. |
+| **Values / encoding** | 0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%. |
 | **Missing** | None. |
 | **Source** | `OracleBoundary.Label` |
 
@@ -242,7 +242,7 @@ Probability the oracle fires within the next 30 trading days, estimated as the f
 | **Units** | fraction of days |
 | **Role** | label (soft, deterministic) |
 | **Values / encoding** | Continuous in [0, 1] in increments of 1/30. |
-| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 11597 of 201407 rows (5.76%) |
+| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 11162 of 170751 rows (6.54%) |
 | **Source** | `SoftLabelBuilder (real forward window)` |
 
 Fraction of the next 30 actual trading days on which the oracle would fire, computed from the real forward price series with portfolio state frozen at the snapshot. The primary supervised training target (binarized as Y_Soft_BT > 0 for classification).
@@ -268,7 +268,7 @@ Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.
 | **Units** | — |
 | **Role** | categorical feature |
 | **Values / encoding** | '-' or empty → 'Unknown' before one-hot encoding (vocabulary fit on the training fold only). |
-| **Missing** | '-' placeholder ≈99.5% of rows; empty ≈0.5%. — observed: 1081 of 201407 rows (0.54%) |
+| **Missing** | '-' placeholder ≈99.5% of rows; empty ≈0.5%. — observed: 961 of 170751 rows (0.56%) |
 | **Source** | `SPY holdings (constituents.json)` |
 
 GICS-style sector of the ticker from the SPY holdings file. In the v0.1 data this column is degenerate: ≈99.5% of rows carry the placeholder '-' and the rest are empty, so after cleaning it is effectively a single 'Unknown' category.

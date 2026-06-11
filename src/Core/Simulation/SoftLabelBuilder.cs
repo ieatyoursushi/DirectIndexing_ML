@@ -72,8 +72,12 @@ public sealed class SoftLabelBuilder
         float costBasis= snap.B;
 
         // Delegate path simulation and first-passage counting to GbmSimulator.
-        // Thread-local Random so Parallel.For workers don't share state.
-        var rng = new Random();
+        // Per-snapshot Random, deterministically seeded from (Symbol, Timestep) with a
+        // stable polynomial hash (string.GetHashCode is randomized per process) so
+        // Y_Soft_GBM is reproducible across runs and safe under Parallel.For.
+        int seed = snap.Timestep;
+        foreach (char c in snap.Symbol) seed = unchecked(seed * 31 + c);
+        var rng = new Random(seed);
 
         return _gbm.FractionFiring(
             startPrice:  currentClose,

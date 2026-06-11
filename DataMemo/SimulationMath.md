@@ -54,12 +54,15 @@ where $V_0 = \$10{,}000{,}000$ (default) and $N$ = number of tickers with valid 
 G_YTD is seeded at simulation start and after each year-end reset:
 
 $$
-G_{t_0}^{\text{YTD}} \leftarrow 0.05 \cdot V_0 = \$500{,}000
+G_{t_0}^{\text{YTD}} \leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000
 $$
 
 This simulates prior-year or external gains the client has realised elsewhere (dividends
-reinvested, other account sales).  Without seeding, the third oracle gate $G^{\text{YTD}} > 0$
-is permanently closed and no harvests fire.
+reinvested, other account sales).  The 10% rate is calibrated to the S&P 500's long-run
+~10% annual total return — the client is assumed to realise gains elsewhere at roughly the
+index's pace.  Without seeding, the third oracle gate $G^{\text{YTD}} > 0$ is permanently
+closed and no harvests fire (index appreciation inside the portfolio is *unrealised* and
+never enters $G^{\text{YTD}}$).
 
 ### 2.2  Day Loop  ($t = t_0, \ldots, T-1$)
 
@@ -79,7 +82,7 @@ For each trading day $t$:
    reopened at the current price with the same dollar amount.
 6. **Advance clocks** — `state.AdvanceDay()` increments every wash-sale clock by 1.
 7. **Year-end reset** — if $\text{date}(t+1).\text{year} \ne \text{date}(t).\text{year}$:
-   - $G^{\text{YTD}} \leftarrow 0$, then $G^{\text{YTD}} \leftarrow G^{\text{YTD}} + 50{,}000$
+   - $G^{\text{YTD}} \leftarrow 0$, then re-seed: $G^{\text{YTD}} \leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000$
    - Wash clocks **persist** (IRS wash-sale window crosses Dec 31)
 
 ### 2.3  Harvest Transition
@@ -344,13 +347,29 @@ expected absolute half-range under a Brownian bridge approximation).
 
 ## §7  Dataset Characteristics
 
-### 7.1  Size
+### 7.1  Size — endogenous, not fixed
 
-With 503 tickers, 300 trading days post-warmup, and oracle harvests reducing the portfolio:
+The dataset size is **not** the static product $252 \times \text{years} \times N$. A lot
+emits one row per day *only while open*; every harvest removes its lot from the dataset for
+exactly the 30-day wash-sale window (reopened on day $t+30$, first snapshot $t+31$). The
+exact identity:
 
 $$
-N_{\text{rows}} \approx 503 \times 300 \times \text{(fraction of days a lot is open)} \approx 120{,}000\text{–}140{,}000
+N_{\text{rows}} \;=\; \underbrace{n_0 \cdot T}_{\text{ceiling}}
+\;-\; \sum_{\text{harvests } h} \min\!\bigl(30,\; T_{\text{end}} - t_h\bigr)
+\;-\; \varepsilon
 $$
+
+where $n_0$ = lots opened on the warmup day, $T$ = active simulation days, and
+$\varepsilon$ = small leakage from NaN-close days and zero-share reopens.
+
+Current run (10% G_YTD seed): $503 \times 500 = 251{,}500$ ceiling, $2{,}730$ harvests
+costing $80{,}426$ lot-days, $\varepsilon = 323$ (0.13%) → $N_{\text{rows}} = 170{,}751$.
+
+**Consequence:** row count is endogenous to the market path. A window with more drawdowns
+fires more harvests and produces a *smaller* dataset; raising the G_YTD seed from 5% to 10%
+roughly doubled harvests and shrank the dataset from 201,407 to 170,751 rows. Any shift in
+the underlying price data moves $N_{\text{rows}}$ through the harvest channel.
 
 ### 7.2  Class Balance
 
@@ -365,14 +384,17 @@ Oracle fires when all four gates pass simultaneously.  In the 2024–2026 backte
 | $\mathcal{W}^{(A_k)} \ge 30$ | 100% (structural) |
 
 The gates are **anti-correlated**: conditions that create harvest opportunities (market
-decline → losses) also deplete $G^{\text{YTD}}$ (harvesting losses reduces it).  Empirically:
+decline → losses) also deplete $G^{\text{YTD}}$ (harvesting losses reduces it).  Empirically,
+with the \$1M (10%) G_YTD seed:
 
 $$
-\text{Y\_Oracle=1 rate} \approx 0.8\%, \qquad N_{\text{positive}} \approx 986
+\text{Y\_Oracle=1 rate} \approx 1.6\%, \qquad N_{\text{positive}} \approx 2{,}730
+\qquad (N_{\text{rows}} = 170{,}751)
 $$
 
-Handling in ML: use class-weighted loss (positive class weight $\approx 120$) or focus on
-the soft label regressions `Y_Soft_GBM` (31% non-zero) as the primary training target.
+Handling in ML: use class-weighted loss (balanced weights $\approx 30$:$1$ for the positive
+class) or focus on the soft labels — `Y_Soft_BT` > 0 on ~20% of labeled rows,
+`Y_Soft_GBM` > 0 on ~65% of rows — as the primary training targets.
 
 ### 7.3  Conditional Independence
 
