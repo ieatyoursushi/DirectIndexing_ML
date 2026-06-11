@@ -54,6 +54,9 @@ def main() -> int:
     ap.add_argument("--out",       required=True)
     ap.add_argument("--no-data", action="store_true",
                     help="omit data/lots.csv if an upload size cap bites")
+    ap.add_argument("--no-raw", action="store_true",
+                    help="omit data/raw/ price JSONs (FMP is a paid API, so they are "
+                         "included by default; submission goes via email if too large)")
     args = ap.parse_args()
 
     root = Path(args.repo_root).resolve()
@@ -75,7 +78,7 @@ def main() -> int:
             n += 1
 
         # Top-level project files + math memos.
-        for f in ("README.md", "DirectIndexing.sln"):
+        for f in ("README.md", "DirectIndexing.sln", "AI_USAGE.md"):
             if (root / f).exists():
                 zf.write(root / f, f)
                 n += 1
@@ -95,6 +98,11 @@ def main() -> int:
         # ML artifacts: JSON + CSV only — model .zip binaries are regenerable.
         n += add_tree(zf, root, "data/artifacts-mlnet",
                       keep=lambda rel: rel.suffix in (".json", ".csv"))
+
+        # Raw price cache: included by default — FMP is a paid API, so the grader
+        # should never need a key to rerun the pipeline from `dotnet run simulate`.
+        if not args.no_raw:
+            n += add_tree(zf, root, "data/raw")
 
     size_mb = out.stat().st_size / 1e6
     print(f"[submission] wrote {out} — {n} files, {size_mb:.1f} MB")

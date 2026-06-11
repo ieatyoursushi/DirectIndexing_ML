@@ -7850,26 +7850,26 @@ report layer rendered in Python. Mathematical derivations live in the repository
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="Introduction">Introduction<a class="anchor-link" href="#Introduction">¶</a></h2><p><strong>Direct indexing</strong> is a portfolio strategy in which an investor, instead of buying a single
-index fund like SPY, holds the index's constituent stocks directly — five hundred individual
+index fund like SPY, holds the index's constituent stocks directly, five hundred individual
 positions that together track the S&amp;P 500. Holding the pieces rather than the whole unlocks a
-tax strategy unavailable to fund holders: <strong>tax-loss harvesting</strong> (TLH). When an individual
-stock dips below its purchase price, the investor can sell it, <em>realize</em> the paper loss, and
-use that loss to offset capital gains elsewhere — reducing this year's tax bill — while the
-overall portfolio barely moves, because one stock out of five hundred was momentarily replaced.
+tax strategy unavailable to fund holders, that is the methodology of <strong>tax-loss harvesting</strong> (TLH). When an individual
+stock dips below its purchase price, the investor can sell it, realize the paper loss, and
+use that loss to offset capital gains elsewhere, allowing the reduction of a year's tax bill all while the
+overall DI portfolio barely deviates from the index its tracking, because one stock out of five hundred was momentarily replaced.
 The unit of bookkeeping is the <strong>lot</strong>: a parcel of shares of one stock bought on one day at one
 price (its <strong>cost basis</strong>). Every harvesting decision is made lot by lot.</p>
-<p>The strategy has a clean formulation in the language of the <strong>Capital Asset Pricing Model</strong>
-(CAPM). Write a portfolio's excess return as</p>
+<p>The strategy has a clean formulation through the mechanistic language of the <strong>Capital Asset Pricing Model</strong>
+(CAPM). Here, we write a portfolio's excess return as</p>
 <p>$$
 R_p - r_f \;=\; \alpha_p + \beta_p\,(R_B - r_f) + \varepsilon_p,
 \qquad
 \beta_p = \frac{\operatorname{Cov}(R_p,\, R_B)}{\operatorname{Var}(R_B)},
 $$</p>
 <p>where $R_B$ is the benchmark index return, <strong>beta</strong> ($\beta_p$) measures systematic
-co-movement with the index, and <strong>alpha</strong> ($\alpha_p$) is return <em>not</em> explained by that
+co-movement with the index, and alpha ($\alpha_p$) is return not explained by that
 co-movement. An index fund is the degenerate case $\beta = 1$, $\alpha = 0$,
-$\varepsilon = 0$ <em>by construction</em> — it simply is the index. A direct-indexing portfolio is
-better thought of as an <strong>estimator of the index</strong>: call its realized exposure
+$\varepsilon = 0$ by construction - it simply is the index. A direct-indexing portfolio is
+better thought of as an <strong>estimator of the index</strong>: called its realized exposure
 $\hat\beta_{DI}$. Built from the constituents themselves, it keeps
 $\hat\beta_{DI} \approx 1$ while the harvesting engine adds an after-tax
 $\alpha_{\text{tax}} &gt; 0$ that comes from the tax code rather than from security selection.
@@ -7886,13 +7886,12 @@ simulator's equal-dollar construction — holding every name gives $\hat\beta_{D
 $\sigma_{TE} = 0$ identically, so all tracking error here is harvest-induced.) Direct
 indexing in one line: <strong>hold $\hat\beta \approx 1$, and harvest $\alpha$ from the tax
 code.</strong></p>
-<p>Harvesting is not a free lunch; it is a constrained decision. The IRS <strong>wash-sale rule</strong>
+<p>However, harvesting a loss is not a free lunch but a constrained decision with a direct tradeoff. For one, the IRS wash-sale rule
 disallows the tax loss if a substantially identical security is repurchased within 30 days,
-so each harvest locks the ticker out for a month. Losses are only worth realizing when there
-are realized <strong>gains to offset</strong> (tracked as $G^{\mathrm{YTD}}$, net realized gain/loss
+so each harvest locks the ticker out for a month. This 0.2v simulator assumes oracle-ruled harvested losses are economically valuable only when positive realized gains exist within the current tax year (tracked as $G^{\mathrm{YTD}}$, net realized gain/loss
 year-to-date). And every stock temporarily removed from the portfolio pushes the holdings away
-from the index, consuming the annualized <strong>tracking-error</strong> budget $\sigma_{TE}$ defined
-above — the price of letting $\hat\beta_{DI}$ drift from 1. In this project the
+from the index (estimator deviation from $\beta_p$), consuming the annualized <strong>tracking-error</strong> budget $\sigma_{TE}$ defined
+above; the result of letting $\hat\beta_{DI}$ drift from 1 or awawy from $\beta_p$. In this project the
 "correct" decision is encoded as a deterministic <strong>oracle</strong>: harvest lot $k$ on day $t$ exactly
 when all four gates are open,</p>
 <p>$$
@@ -7900,36 +7899,38 @@ f^*(x) \;=\; \mathbb{1}[L \le -0.02]\;\cdot\;\mathbb{1}[\sigma_{TE} \le 0.05]\;\
 \mathbb{1}[G^{\mathrm{YTD}} &gt; 0]\;\cdot\;\mathbb{1}[\mathcal{W} \ge 30],
 $$</p>
 <p>where $L$ is the lot's unrealized return and $\mathcal{W}$ its ticker's wash-sale clock
-(days since last harvest). The oracle and its surrounding portfolio mathematics are formalized
+(days since last harvest). The oracle singularly on its own isn't the the main goal of when it comes to training but acts more as a boundary or set of rules of what obvoiusly shouldn't be done (like harvesting a gain), the oracle when used for the correct decision is moreso used as a unit in a data structure used to signal patterns / trends in the hisotrical data, specifcally through <strong>backtesting</strong> / forward rolling per ~independent lot that model learns from. The oracle and its surrounding portfolio mathematics are formalized
 in the repository memos <code>DataMemo/PortfolioMath.md</code> and <code>DataMemo/SimulationMath.md</code>
 (developed in PRs <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/pull/1">#1</a> and
-<a href="https://github.com/ieatyoursushi/DirectIndexing_ML/pull/2">#2</a>, with the ML-facing
-derivations consolidated under issue
+<a href="https://github.com/ieatyoursushi/DirectIndexing_ML/pull/2">#2</a>, with the label
+mechansitic justifications in
 <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/9">#9</a>).</p>
-<p><strong>The research questions.</strong> First: can supervised models <em>recover</em> the oracle's decision
-boundary from the lot's observable state alone — i.e., learn $f^*$ from data? Because the
+<p>.</p>
+<p><strong>The research questions.</strong> Firstly: can supervised models even <em>recover</em> the oracle's decision boundary in the first place?
+as in from the lot's observable state alone such as an empriically driven $f^*$ from this data? Because the
 oracle is a deterministic function of four of the fifteen features, this is a sanity check
 with a known answer, and any model that fails it is misconfigured. Second, and genuinely
-hard: can models predict the <strong>forward-looking propensity to harvest</strong> — the probability
+hard: can models predict the <strong>forward-looking propensity to harvest</strong> as in the probability
 that the oracle will fire on this lot <em>sometime in the next 30 trading days</em>? That target,
 a <em>soft label</em> in $[0,1]$, depends on where prices go next, which no feature reveals. It is
 the practically interesting question (an advisor wants to know which lots are <em>approaching</em>
-harvestability, not just which ones the rulebook flags today), and it gives the models room
+harvestability, not just which ones the oracle blindly flags), giving the models room
 to be genuinely good or bad. Two soft labels are constructed: <code>Y_Soft_GBM</code>, a Monte-Carlo
 probability under simulated geometric-Brownian-motion price paths, and <code>Y_Soft_BT</code>, the
 realized fraction of the next 30 actual trading days on which the oracle fires. The
-classification target used for modeling is <code>Y_Soft_BT &gt; 0</code> — "will this lot become
+classification target used for modeling is <code>Y_Soft_BT &gt; 0</code> as in "will this lot become
 harvestable within 30 days?"</p>
-<p><strong>Why the data is simulated (and how honestly).</strong> No public dataset records lot-level
+<p><strong>Why the data is simulated:</strong> No public dataset records lot-level
 harvesting decisions, so the training data comes from a backtesting engine that replays two
 years of <em>real</em> daily S&amp;P 500 prices through a $10M equal-dollar portfolio, applying the
-oracle each day and logging every open lot's state as one observation. The simulation is the
-project's physics engine, not a toy: it enforces the wash-sale clock across year-end (as the
-IRS does), re-seeds realized gains each January, and estimates tracking error from the full
+oracle each day and logging every open lot's state as one observation. The simulation is essentially the
+first iteration of the live harvesting system by simulating the mechanistic rules of the oracle (where the oracle represents a typical mechanistic DI strategy) on the portfolio and lot states.</p>
+<p>The simulator replicates this mechanistic DI rule (like by big institutions) by enforcing the wash-sale clock across year-end (as the
+IRS does), re-seeding realized gains each January, and estimating/calculating tracking error from the full
 covariance matrix of constituent returns ($\sigma_{TE} = \sqrt{\delta w^\top \hat\Sigma\,
 \delta w \cdot 252}$). An earlier version of that estimator computed portfolio returns from
 total dollar value, which made every harvest look like a price crash and silently disabled
-the tracking-error gate; the bug and its fix are documented in <code>SimulationMath.md</code> §5.4 —
+the tracking-error gate; the bug and its fix are documented in <code>SimulationMath.md</code> §5.4,
 a useful reminder that in simulated-data projects, the simulator <em>is</em> the data quality.</p>
 </div>
 </div>
@@ -7965,13 +7966,14 @@ steps through each real trading day: it marks every lot to market, updates the s
 portfolio state ($G^{\mathrm{YTD}}$, $\sigma_{TE}$, wash-sale clocks), evaluates the oracle,
 executes any harvests, and writes one row per open lot per day to <strong><code>data/lots.csv</code></strong> —
 170,751 rows × 21 columns spanning simulation days 200–699. Note that the row count is
-<strong>endogenous to the market path</strong>, not the static 503 lots × 500 days = 251,500: a harvested
-lot emits no rows during its 30-day wash-sale window, so each of the run's 2,730 harvests
+<strong>endogenous to the market path</strong>, not the static 503 lots × 500 days = 251,500 as a harvested
+lot emits no rows during its 30-day wash-sale window, so each of the run's for example 2,730 harvests (early june 2024-2026 time period)
 deletes up to 30 lot-days (80,426 in total, with a 0.13% residual from days a ticker has no
 quoted price). A market window with more drawdowns therefore produces a <em>smaller</em> dataset. A second pass fills in the two
 soft labels by looking 30 days ahead (simulated paths for <code>Y_Soft_GBM</code>, the real price path
 for <code>Y_Soft_BT</code>). Every column is defined in the <a href="#Codebook">Codebook</a> below and in the
 standalone <code>codebook.md</code>/<code>codebook.html</code> shipped with this submission.</p>
+<p><strong>Reason for this intentional missingness/dynamic row construction:</strong> A harvested lot simply does not exist in the portfolio, where the simulation layer represents the portfolio state evolution over time. There is no decision to make about an absent figure. Writing rows for it during its 30-day absence would be training models on observations that could never appear in actual deployment. The rows if included would induce a counterfactual state the system cannot be in.</p>
 </div>
 </div>
 </div>
@@ -8215,11 +8217,11 @@ to <code>DirectIndexing.sln</code>), so it runs identically under <code>dotnet r
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Codebook">Codebook<a class="anchor-link" href="#Codebook">¶</a></h2><p>One row of <code>lots.csv</code> is a <strong>lot snapshot</strong> — the state of one tax lot on one simulated
+<h2 id="Codebook">Codebook<a class="anchor-link" href="#Codebook">¶</a></h2><p>One row of <code>lots.csv</code> is a <strong>lot snapshot</strong> vector (in $\mathbb{R^n}$ vector space), the state of one tax lot on one simulated
 trading day. The 21 columns split into fifteen numeric features (lot-level, portfolio-level,
 asset-level, and derived), one categorical feature, three metadata columns dropped before
 modeling, and the labels. The table below renders the same schema definition that generates
-the standalone codebook, so the two cannot drift apart.</p>
+the codebook, so the two cannot drift apart.</p>
 </div>
 </div>
 </div>
@@ -8248,167 +8250,167 @@ the standalone codebook, so the two cannot drift apart.</p>
 <div class="jp-OutputPrompt jp-OutputArea-prompt">Out[2]:</div>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output jp-OutputArea-executeResult" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
-#T_e95f1_row0_col0, #T_e95f1_row0_col1, #T_e95f1_row0_col2, #T_e95f1_row0_col3, #T_e95f1_row0_col4, #T_e95f1_row1_col0, #T_e95f1_row1_col1, #T_e95f1_row1_col2, #T_e95f1_row1_col3, #T_e95f1_row1_col4, #T_e95f1_row2_col0, #T_e95f1_row2_col1, #T_e95f1_row2_col2, #T_e95f1_row2_col3, #T_e95f1_row2_col4, #T_e95f1_row3_col0, #T_e95f1_row3_col1, #T_e95f1_row3_col2, #T_e95f1_row3_col3, #T_e95f1_row3_col4, #T_e95f1_row4_col0, #T_e95f1_row4_col1, #T_e95f1_row4_col2, #T_e95f1_row4_col3, #T_e95f1_row4_col4, #T_e95f1_row5_col0, #T_e95f1_row5_col1, #T_e95f1_row5_col2, #T_e95f1_row5_col3, #T_e95f1_row5_col4, #T_e95f1_row6_col0, #T_e95f1_row6_col1, #T_e95f1_row6_col2, #T_e95f1_row6_col3, #T_e95f1_row6_col4, #T_e95f1_row7_col0, #T_e95f1_row7_col1, #T_e95f1_row7_col2, #T_e95f1_row7_col3, #T_e95f1_row7_col4, #T_e95f1_row8_col0, #T_e95f1_row8_col1, #T_e95f1_row8_col2, #T_e95f1_row8_col3, #T_e95f1_row8_col4, #T_e95f1_row9_col0, #T_e95f1_row9_col1, #T_e95f1_row9_col2, #T_e95f1_row9_col3, #T_e95f1_row9_col4, #T_e95f1_row10_col0, #T_e95f1_row10_col1, #T_e95f1_row10_col2, #T_e95f1_row10_col3, #T_e95f1_row10_col4, #T_e95f1_row11_col0, #T_e95f1_row11_col1, #T_e95f1_row11_col2, #T_e95f1_row11_col3, #T_e95f1_row11_col4, #T_e95f1_row12_col0, #T_e95f1_row12_col1, #T_e95f1_row12_col2, #T_e95f1_row12_col3, #T_e95f1_row12_col4, #T_e95f1_row13_col0, #T_e95f1_row13_col1, #T_e95f1_row13_col2, #T_e95f1_row13_col3, #T_e95f1_row13_col4, #T_e95f1_row14_col0, #T_e95f1_row14_col1, #T_e95f1_row14_col2, #T_e95f1_row14_col3, #T_e95f1_row14_col4, #T_e95f1_row15_col0, #T_e95f1_row15_col1, #T_e95f1_row15_col2, #T_e95f1_row15_col3, #T_e95f1_row15_col4, #T_e95f1_row16_col0, #T_e95f1_row16_col1, #T_e95f1_row16_col2, #T_e95f1_row16_col3, #T_e95f1_row16_col4, #T_e95f1_row17_col0, #T_e95f1_row17_col1, #T_e95f1_row17_col2, #T_e95f1_row17_col3, #T_e95f1_row17_col4, #T_e95f1_row18_col0, #T_e95f1_row18_col1, #T_e95f1_row18_col2, #T_e95f1_row18_col3, #T_e95f1_row18_col4, #T_e95f1_row19_col0, #T_e95f1_row19_col1, #T_e95f1_row19_col2, #T_e95f1_row19_col3, #T_e95f1_row19_col4, #T_e95f1_row20_col0, #T_e95f1_row20_col1, #T_e95f1_row20_col2, #T_e95f1_row20_col3, #T_e95f1_row20_col4 {
+#T_e90c5_row0_col0, #T_e90c5_row0_col1, #T_e90c5_row0_col2, #T_e90c5_row0_col3, #T_e90c5_row0_col4, #T_e90c5_row1_col0, #T_e90c5_row1_col1, #T_e90c5_row1_col2, #T_e90c5_row1_col3, #T_e90c5_row1_col4, #T_e90c5_row2_col0, #T_e90c5_row2_col1, #T_e90c5_row2_col2, #T_e90c5_row2_col3, #T_e90c5_row2_col4, #T_e90c5_row3_col0, #T_e90c5_row3_col1, #T_e90c5_row3_col2, #T_e90c5_row3_col3, #T_e90c5_row3_col4, #T_e90c5_row4_col0, #T_e90c5_row4_col1, #T_e90c5_row4_col2, #T_e90c5_row4_col3, #T_e90c5_row4_col4, #T_e90c5_row5_col0, #T_e90c5_row5_col1, #T_e90c5_row5_col2, #T_e90c5_row5_col3, #T_e90c5_row5_col4, #T_e90c5_row6_col0, #T_e90c5_row6_col1, #T_e90c5_row6_col2, #T_e90c5_row6_col3, #T_e90c5_row6_col4, #T_e90c5_row7_col0, #T_e90c5_row7_col1, #T_e90c5_row7_col2, #T_e90c5_row7_col3, #T_e90c5_row7_col4, #T_e90c5_row8_col0, #T_e90c5_row8_col1, #T_e90c5_row8_col2, #T_e90c5_row8_col3, #T_e90c5_row8_col4, #T_e90c5_row9_col0, #T_e90c5_row9_col1, #T_e90c5_row9_col2, #T_e90c5_row9_col3, #T_e90c5_row9_col4, #T_e90c5_row10_col0, #T_e90c5_row10_col1, #T_e90c5_row10_col2, #T_e90c5_row10_col3, #T_e90c5_row10_col4, #T_e90c5_row11_col0, #T_e90c5_row11_col1, #T_e90c5_row11_col2, #T_e90c5_row11_col3, #T_e90c5_row11_col4, #T_e90c5_row12_col0, #T_e90c5_row12_col1, #T_e90c5_row12_col2, #T_e90c5_row12_col3, #T_e90c5_row12_col4, #T_e90c5_row13_col0, #T_e90c5_row13_col1, #T_e90c5_row13_col2, #T_e90c5_row13_col3, #T_e90c5_row13_col4, #T_e90c5_row14_col0, #T_e90c5_row14_col1, #T_e90c5_row14_col2, #T_e90c5_row14_col3, #T_e90c5_row14_col4, #T_e90c5_row15_col0, #T_e90c5_row15_col1, #T_e90c5_row15_col2, #T_e90c5_row15_col3, #T_e90c5_row15_col4, #T_e90c5_row16_col0, #T_e90c5_row16_col1, #T_e90c5_row16_col2, #T_e90c5_row16_col3, #T_e90c5_row16_col4, #T_e90c5_row17_col0, #T_e90c5_row17_col1, #T_e90c5_row17_col2, #T_e90c5_row17_col3, #T_e90c5_row17_col4, #T_e90c5_row18_col0, #T_e90c5_row18_col1, #T_e90c5_row18_col2, #T_e90c5_row18_col3, #T_e90c5_row18_col4, #T_e90c5_row19_col0, #T_e90c5_row19_col1, #T_e90c5_row19_col2, #T_e90c5_row19_col3, #T_e90c5_row19_col4, #T_e90c5_row20_col0, #T_e90c5_row20_col1, #T_e90c5_row20_col2, #T_e90c5_row20_col3, #T_e90c5_row20_col4 {
   text-align: left;
 }
 </style>
-<table id="T_e95f1">
+<table id="T_e90c5">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_e95f1_level0_col0">name</th>
-<th class="col_heading level0 col1" id="T_e95f1_level0_col1">dtype</th>
-<th class="col_heading level0 col2" id="T_e95f1_level0_col2">units</th>
-<th class="col_heading level0 col3" id="T_e95f1_level0_col3">role</th>
-<th class="col_heading level0 col4" id="T_e95f1_level0_col4">encoding</th>
+<th class="col_heading level0 col0" id="T_e90c5_level0_col0">name</th>
+<th class="col_heading level0 col1" id="T_e90c5_level0_col1">dtype</th>
+<th class="col_heading level0 col2" id="T_e90c5_level0_col2">units</th>
+<th class="col_heading level0 col3" id="T_e90c5_level0_col3">role</th>
+<th class="col_heading level0 col4" id="T_e90c5_level0_col4">encoding</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_e95f1_row0_col0">L</td>
-<td class="data row0 col1" id="T_e95f1_row0_col1">float</td>
-<td class="data row0 col2" id="T_e95f1_row0_col2">unitless (fractional return)</td>
-<td class="data row0 col3" id="T_e95f1_row0_col3">feature (lot-level)</td>
-<td class="data row0 col4" id="T_e95f1_row0_col4">Continuous in (−1, ∞). Negative = loss position.</td>
+<td class="data row0 col0" id="T_e90c5_row0_col0">L</td>
+<td class="data row0 col1" id="T_e90c5_row0_col1">float</td>
+<td class="data row0 col2" id="T_e90c5_row0_col2">unitless (fractional return)</td>
+<td class="data row0 col3" id="T_e90c5_row0_col3">feature (lot-level)</td>
+<td class="data row0 col4" id="T_e90c5_row0_col4">Continuous in (−1, ∞). Negative = loss position.</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_e95f1_row1_col0">H</td>
-<td class="data row1 col1" id="T_e95f1_row1_col1">int</td>
-<td class="data row1 col2" id="T_e95f1_row1_col2">trading days</td>
-<td class="data row1 col3" id="T_e95f1_row1_col3">feature (lot-level)</td>
-<td class="data row1 col4" id="T_e95f1_row1_col4">Non-negative integer.</td>
+<td class="data row1 col0" id="T_e90c5_row1_col0">H</td>
+<td class="data row1 col1" id="T_e90c5_row1_col1">int</td>
+<td class="data row1 col2" id="T_e90c5_row1_col2">trading days</td>
+<td class="data row1 col3" id="T_e90c5_row1_col3">feature (lot-level)</td>
+<td class="data row1 col4" id="T_e90c5_row1_col4">Non-negative integer.</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_e95f1_row2_col0">S</td>
-<td class="data row2 col1" id="T_e95f1_row2_col1">int (binary)</td>
-<td class="data row2 col2" id="T_e95f1_row2_col2">—</td>
-<td class="data row2 col3" id="T_e95f1_row2_col3">feature (lot-level)</td>
-<td class="data row2 col4" id="T_e95f1_row2_col4">0 = short-term (&lt; 365 days), 1 = long-term (≥ 365 days).</td>
+<td class="data row2 col0" id="T_e90c5_row2_col0">S</td>
+<td class="data row2 col1" id="T_e90c5_row2_col1">int (binary)</td>
+<td class="data row2 col2" id="T_e90c5_row2_col2">—</td>
+<td class="data row2 col3" id="T_e90c5_row2_col3">feature (lot-level)</td>
+<td class="data row2 col4" id="T_e90c5_row2_col4">0 = short-term (&lt; 365 days), 1 = long-term (≥ 365 days).</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_e95f1_row3_col0">B</td>
-<td class="data row3 col1" id="T_e95f1_row3_col1">float</td>
-<td class="data row3 col2" id="T_e95f1_row3_col2">US dollars per share</td>
-<td class="data row3 col3" id="T_e95f1_row3_col3">feature (lot-level)</td>
-<td class="data row3 col4" id="T_e95f1_row3_col4">Positive continuous.</td>
+<td class="data row3 col0" id="T_e90c5_row3_col0">B</td>
+<td class="data row3 col1" id="T_e90c5_row3_col1">float</td>
+<td class="data row3 col2" id="T_e90c5_row3_col2">US dollars per share</td>
+<td class="data row3 col3" id="T_e90c5_row3_col3">feature (lot-level)</td>
+<td class="data row3 col4" id="T_e90c5_row3_col4">Positive continuous.</td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_e95f1_row4_col0">W</td>
-<td class="data row4 col1" id="T_e95f1_row4_col1">float</td>
-<td class="data row4 col2" id="T_e95f1_row4_col2">unitless (portfolio fraction)</td>
-<td class="data row4 col3" id="T_e95f1_row4_col3">feature (lot-level)</td>
-<td class="data row4 col4" id="T_e95f1_row4_col4">Continuous in (0, 1).</td>
+<td class="data row4 col0" id="T_e90c5_row4_col0">W</td>
+<td class="data row4 col1" id="T_e90c5_row4_col1">float</td>
+<td class="data row4 col2" id="T_e90c5_row4_col2">unitless (portfolio fraction)</td>
+<td class="data row4 col3" id="T_e90c5_row4_col3">feature (lot-level)</td>
+<td class="data row4 col4" id="T_e90c5_row4_col4">Continuous in (0, 1).</td>
 </tr>
 <tr>
-<td class="data row5 col0" id="T_e95f1_row5_col0">K</td>
-<td class="data row5 col1" id="T_e95f1_row5_col1">int</td>
-<td class="data row5 col2" id="T_e95f1_row5_col2">count</td>
-<td class="data row5 col3" id="T_e95f1_row5_col3">feature (lot-level)</td>
-<td class="data row5 col4" id="T_e95f1_row5_col4">Positive integer.</td>
+<td class="data row5 col0" id="T_e90c5_row5_col0">K</td>
+<td class="data row5 col1" id="T_e90c5_row5_col1">int</td>
+<td class="data row5 col2" id="T_e90c5_row5_col2">count</td>
+<td class="data row5 col3" id="T_e90c5_row5_col3">feature (lot-level)</td>
+<td class="data row5 col4" id="T_e90c5_row5_col4">Positive integer.</td>
 </tr>
 <tr>
-<td class="data row6 col0" id="T_e95f1_row6_col0">G_YTD</td>
-<td class="data row6 col1" id="T_e95f1_row6_col1">float</td>
-<td class="data row6 col2" id="T_e95f1_row6_col2">US dollars</td>
-<td class="data row6 col3" id="T_e95f1_row6_col3">feature (portfolio-level)</td>
-<td class="data row6 col4" id="T_e95f1_row6_col4">Signed continuous. Positive = net realized gains.</td>
+<td class="data row6 col0" id="T_e90c5_row6_col0">G_YTD</td>
+<td class="data row6 col1" id="T_e90c5_row6_col1">float</td>
+<td class="data row6 col2" id="T_e90c5_row6_col2">US dollars</td>
+<td class="data row6 col3" id="T_e90c5_row6_col3">feature (portfolio-level)</td>
+<td class="data row6 col4" id="T_e90c5_row6_col4">Signed continuous. Positive = net realized gains.</td>
 </tr>
 <tr>
-<td class="data row7 col0" id="T_e95f1_row7_col0">Sigma_TE</td>
-<td class="data row7 col1" id="T_e95f1_row7_col1">float</td>
-<td class="data row7 col2" id="T_e95f1_row7_col2">annualized volatility (fraction)</td>
-<td class="data row7 col3" id="T_e95f1_row7_col3">feature (portfolio-level)</td>
-<td class="data row7 col4" id="T_e95f1_row7_col4">Positive continuous; 0.05 = 5% annualized TE.</td>
+<td class="data row7 col0" id="T_e90c5_row7_col0">Sigma_TE</td>
+<td class="data row7 col1" id="T_e90c5_row7_col1">float</td>
+<td class="data row7 col2" id="T_e90c5_row7_col2">annualized volatility (fraction)</td>
+<td class="data row7 col3" id="T_e90c5_row7_col3">feature (portfolio-level)</td>
+<td class="data row7 col4" id="T_e90c5_row7_col4">Positive continuous; 0.05 = 5% annualized TE.</td>
 </tr>
 <tr>
-<td class="data row8 col0" id="T_e95f1_row8_col0">WashClock</td>
-<td class="data row8 col1" id="T_e95f1_row8_col1">int</td>
-<td class="data row8 col2" id="T_e95f1_row8_col2">calendar days</td>
-<td class="data row8 col3" id="T_e95f1_row8_col3">feature (portfolio-level)</td>
-<td class="data row8 col4" id="T_e95f1_row8_col4">Non-negative integer. Sentinel 999 = ticker never harvested.</td>
+<td class="data row8 col0" id="T_e90c5_row8_col0">WashClock</td>
+<td class="data row8 col1" id="T_e90c5_row8_col1">int</td>
+<td class="data row8 col2" id="T_e90c5_row8_col2">calendar days</td>
+<td class="data row8 col3" id="T_e90c5_row8_col3">feature (portfolio-level)</td>
+<td class="data row8 col4" id="T_e90c5_row8_col4">Non-negative integer. Sentinel 999 = ticker never harvested.</td>
 </tr>
 <tr>
-<td class="data row9 col0" id="T_e95f1_row9_col0">R_t</td>
-<td class="data row9 col1" id="T_e95f1_row9_col1">float</td>
-<td class="data row9 col2" id="T_e95f1_row9_col2">unitless (daily return)</td>
-<td class="data row9 col3" id="T_e95f1_row9_col3">feature (asset-level)</td>
-<td class="data row9 col4" id="T_e95f1_row9_col4">Signed continuous.</td>
+<td class="data row9 col0" id="T_e90c5_row9_col0">R_t</td>
+<td class="data row9 col1" id="T_e90c5_row9_col1">float</td>
+<td class="data row9 col2" id="T_e90c5_row9_col2">unitless (daily return)</td>
+<td class="data row9 col3" id="T_e90c5_row9_col3">feature (asset-level)</td>
+<td class="data row9 col4" id="T_e90c5_row9_col4">Signed continuous.</td>
 </tr>
 <tr>
-<td class="data row10 col0" id="T_e95f1_row10_col0">SigmaRange</td>
-<td class="data row10 col1" id="T_e95f1_row10_col1">float</td>
-<td class="data row10 col2" id="T_e95f1_row10_col2">unitless (fraction of price)</td>
-<td class="data row10 col3" id="T_e95f1_row10_col3">feature (asset-level)</td>
-<td class="data row10 col4" id="T_e95f1_row10_col4">Positive continuous.</td>
+<td class="data row10 col0" id="T_e90c5_row10_col0">SigmaRange</td>
+<td class="data row10 col1" id="T_e90c5_row10_col1">float</td>
+<td class="data row10 col2" id="T_e90c5_row10_col2">unitless (fraction of price)</td>
+<td class="data row10 col3" id="T_e90c5_row10_col3">feature (asset-level)</td>
+<td class="data row10 col4" id="T_e90c5_row10_col4">Positive continuous.</td>
 </tr>
 <tr>
-<td class="data row11 col0" id="T_e95f1_row11_col0">DeltaMA50</td>
-<td class="data row11 col1" id="T_e95f1_row11_col1">float</td>
-<td class="data row11 col2" id="T_e95f1_row11_col2">unitless (fractional deviation)</td>
-<td class="data row11 col3" id="T_e95f1_row11_col3">feature (asset-level)</td>
-<td class="data row11 col4" id="T_e95f1_row11_col4">Signed continuous.</td>
+<td class="data row11 col0" id="T_e90c5_row11_col0">DeltaMA50</td>
+<td class="data row11 col1" id="T_e90c5_row11_col1">float</td>
+<td class="data row11 col2" id="T_e90c5_row11_col2">unitless (fractional deviation)</td>
+<td class="data row11 col3" id="T_e90c5_row11_col3">feature (asset-level)</td>
+<td class="data row11 col4" id="T_e90c5_row11_col4">Signed continuous.</td>
 </tr>
 <tr>
-<td class="data row12 col0" id="T_e95f1_row12_col0">DeltaMA200</td>
-<td class="data row12 col1" id="T_e95f1_row12_col1">float</td>
-<td class="data row12 col2" id="T_e95f1_row12_col2">unitless (fractional deviation)</td>
-<td class="data row12 col3" id="T_e95f1_row12_col3">feature (asset-level)</td>
-<td class="data row12 col4" id="T_e95f1_row12_col4">Signed continuous.</td>
+<td class="data row12 col0" id="T_e90c5_row12_col0">DeltaMA200</td>
+<td class="data row12 col1" id="T_e90c5_row12_col1">float</td>
+<td class="data row12 col2" id="T_e90c5_row12_col2">unitless (fractional deviation)</td>
+<td class="data row12 col3" id="T_e90c5_row12_col3">feature (asset-level)</td>
+<td class="data row12 col4" id="T_e90c5_row12_col4">Signed continuous.</td>
 </tr>
 <tr>
-<td class="data row13 col0" id="T_e95f1_row13_col0">TaxAlpha</td>
-<td class="data row13 col1" id="T_e95f1_row13_col1">float</td>
-<td class="data row13 col2" id="T_e95f1_row13_col2">US dollars</td>
-<td class="data row13 col3" id="T_e95f1_row13_col3">feature (derived)</td>
-<td class="data row13 col4" id="T_e95f1_row13_col4">Non-negative continuous; 0 when the lot has no loss or no gains exist to offset.</td>
+<td class="data row13 col0" id="T_e90c5_row13_col0">TaxAlpha</td>
+<td class="data row13 col1" id="T_e90c5_row13_col1">float</td>
+<td class="data row13 col2" id="T_e90c5_row13_col2">US dollars</td>
+<td class="data row13 col3" id="T_e90c5_row13_col3">feature (derived)</td>
+<td class="data row13 col4" id="T_e90c5_row13_col4">Non-negative continuous; 0 when the lot has no loss or no gains exist to offset.</td>
 </tr>
 <tr>
-<td class="data row14 col0" id="T_e95f1_row14_col0">DaysToYE</td>
-<td class="data row14 col1" id="T_e95f1_row14_col1">int</td>
-<td class="data row14 col2" id="T_e95f1_row14_col2">calendar days</td>
-<td class="data row14 col3" id="T_e95f1_row14_col3">feature (derived)</td>
-<td class="data row14 col4" id="T_e95f1_row14_col4">Integer in [0, 365].</td>
+<td class="data row14 col0" id="T_e90c5_row14_col0">DaysToYE</td>
+<td class="data row14 col1" id="T_e90c5_row14_col1">int</td>
+<td class="data row14 col2" id="T_e90c5_row14_col2">calendar days</td>
+<td class="data row14 col3" id="T_e90c5_row14_col3">feature (derived)</td>
+<td class="data row14 col4" id="T_e90c5_row14_col4">Integer in [0, 365].</td>
 </tr>
 <tr>
-<td class="data row15 col0" id="T_e95f1_row15_col0">Y_Oracle</td>
-<td class="data row15 col1" id="T_e95f1_row15_col1">int (binary)</td>
-<td class="data row15 col2" id="T_e95f1_row15_col2">—</td>
-<td class="data row15 col3" id="T_e95f1_row15_col3">label (hard)</td>
-<td class="data row15 col4" id="T_e95f1_row15_col4">0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.</td>
+<td class="data row15 col0" id="T_e90c5_row15_col0">Y_Oracle</td>
+<td class="data row15 col1" id="T_e90c5_row15_col1">int (binary)</td>
+<td class="data row15 col2" id="T_e90c5_row15_col2">—</td>
+<td class="data row15 col3" id="T_e90c5_row15_col3">label (hard)</td>
+<td class="data row15 col4" id="T_e90c5_row15_col4">0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.</td>
 </tr>
 <tr>
-<td class="data row16 col0" id="T_e95f1_row16_col0">Y_Soft_GBM</td>
-<td class="data row16 col1" id="T_e95f1_row16_col1">float</td>
-<td class="data row16 col2" id="T_e95f1_row16_col2">probability</td>
-<td class="data row16 col3" id="T_e95f1_row16_col3">label (soft, stochastic)</td>
-<td class="data row16 col4" id="T_e95f1_row16_col4">Continuous in [0, 1] in increments of 1/200.</td>
+<td class="data row16 col0" id="T_e90c5_row16_col0">Y_Soft_GBM</td>
+<td class="data row16 col1" id="T_e90c5_row16_col1">float</td>
+<td class="data row16 col2" id="T_e90c5_row16_col2">probability</td>
+<td class="data row16 col3" id="T_e90c5_row16_col3">label (soft, stochastic)</td>
+<td class="data row16 col4" id="T_e90c5_row16_col4">Continuous in [0, 1] in increments of 1/200.</td>
 </tr>
 <tr>
-<td class="data row17 col0" id="T_e95f1_row17_col0">Y_Soft_BT</td>
-<td class="data row17 col1" id="T_e95f1_row17_col1">float</td>
-<td class="data row17 col2" id="T_e95f1_row17_col2">fraction of days</td>
-<td class="data row17 col3" id="T_e95f1_row17_col3">label (soft, deterministic)</td>
-<td class="data row17 col4" id="T_e95f1_row17_col4">Continuous in [0, 1] in increments of 1/30.</td>
+<td class="data row17 col0" id="T_e90c5_row17_col0">Y_Soft_BT</td>
+<td class="data row17 col1" id="T_e90c5_row17_col1">float</td>
+<td class="data row17 col2" id="T_e90c5_row17_col2">fraction of days</td>
+<td class="data row17 col3" id="T_e90c5_row17_col3">label (soft, deterministic)</td>
+<td class="data row17 col4" id="T_e90c5_row17_col4">Continuous in [0, 1] in increments of 1/30.</td>
 </tr>
 <tr>
-<td class="data row18 col0" id="T_e95f1_row18_col0">Symbol</td>
-<td class="data row18 col1" id="T_e95f1_row18_col1">string</td>
-<td class="data row18 col2" id="T_e95f1_row18_col2">—</td>
-<td class="data row18 col3" id="T_e95f1_row18_col3">metadata (dropped before modeling)</td>
-<td class="data row18 col4" id="T_e95f1_row18_col4">Uppercase ticker string.</td>
+<td class="data row18 col0" id="T_e90c5_row18_col0">Symbol</td>
+<td class="data row18 col1" id="T_e90c5_row18_col1">string</td>
+<td class="data row18 col2" id="T_e90c5_row18_col2">—</td>
+<td class="data row18 col3" id="T_e90c5_row18_col3">metadata (dropped before modeling)</td>
+<td class="data row18 col4" id="T_e90c5_row18_col4">Uppercase ticker string.</td>
 </tr>
 <tr>
-<td class="data row19 col0" id="T_e95f1_row19_col0">Sector</td>
-<td class="data row19 col1" id="T_e95f1_row19_col1">string (categorical)</td>
-<td class="data row19 col2" id="T_e95f1_row19_col2">—</td>
-<td class="data row19 col3" id="T_e95f1_row19_col3">categorical feature</td>
-<td class="data row19 col4" id="T_e95f1_row19_col4">'-' or empty → 'Unknown' before one-hot encoding (vocabulary fit on the training fold only).</td>
+<td class="data row19 col0" id="T_e90c5_row19_col0">Sector</td>
+<td class="data row19 col1" id="T_e90c5_row19_col1">string (categorical)</td>
+<td class="data row19 col2" id="T_e90c5_row19_col2">—</td>
+<td class="data row19 col3" id="T_e90c5_row19_col3">categorical feature</td>
+<td class="data row19 col4" id="T_e90c5_row19_col4">'-' or empty → 'Unknown' before one-hot encoding (vocabulary fit on the training fold only).</td>
 </tr>
 <tr>
-<td class="data row20 col0" id="T_e95f1_row20_col0">Timestep</td>
-<td class="data row20 col1" id="T_e95f1_row20_col1">int</td>
-<td class="data row20 col2" id="T_e95f1_row20_col2">trading-day index</td>
-<td class="data row20 col3" id="T_e95f1_row20_col3">metadata (dropped before modeling)</td>
-<td class="data row20 col4" id="T_e95f1_row20_col4">Integer in [200, 699].</td>
+<td class="data row20 col0" id="T_e90c5_row20_col0">Timestep</td>
+<td class="data row20 col1" id="T_e90c5_row20_col1">int</td>
+<td class="data row20 col2" id="T_e90c5_row20_col2">trading-day index</td>
+<td class="data row20 col3" id="T_e90c5_row20_col3">metadata (dropped before modeling)</td>
+<td class="data row20 col4" id="T_e90c5_row20_col4">Integer in [200, 699].</td>
 </tr>
 </tbody>
 </table>
@@ -8423,11 +8425,15 @@ the standalone codebook, so the two cannot drift apart.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Exploratory-Data-Analysis">Exploratory Data Analysis<a class="anchor-link" href="#Exploratory-Data-Analysis">¶</a></h2><p>The EDA asks four questions, each answered by a figure or table below: <em>How rare is the
-event we are predicting?</em> (class balance), <em>Where is data missing and why?</em> (missingness has
-a structural cause here, not a collection accident), <em>Do the features the oracle actually
+<h2 id="Exploratory-Data-Analysis">Exploratory Data Analysis<a class="anchor-link" href="#Exploratory-Data-Analysis">¶</a></h2><p>The EDA asks four questions, each answered by a figure or table below:
+<em>How rare is the
+event we are predicting?</em> (class balance)</p>
+<p><em>Where is data missing and why?</em> (missingness has
+a structural cause here, not a collection accident)</p>
+<p><em>Do the features the oracle actually
 uses separate the classes, and do the ones it ignores still carry signal?</em> (outcome-predictor
-relationships), and <em>How redundant are the features?</em> (correlation structure).</p>
+relationships)</p>
+<p><em>How redundant are the features?</em> (correlation structure)</p>
 </div>
 </div>
 </div>
@@ -8512,21 +8518,21 @@ Y_Soft_BT  &gt; 0 (of non-NaN): 19.90% of rows
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>The hard label is <strong>severely imbalanced</strong>: the oracle fires on only ~1.6% of lot-days. That
-is by construction — all four gates must be open at once. (In principle the gates also fight
-each other — harvesting losses drains $G^{\mathrm{YTD}}$, closing the third gate — though in
+<p>The hard label is <strong>severely imbalanced</strong>: the oracle fires on only ~1.60% of lot-days in this early june 2024-2026 test case. That
+is a natural result of the oracle's conditions that all four gates must be open at once. (In principle the gates also fight
+each other where harvesting losses drains $G^{\mathrm{YTD}}$, closing the third gate; though in
 this run the $1M gains seed keeps $G^{\mathrm{YTD}}$ positive all year, so the rarity is
 driven by the −2% loss gate and the wash-sale lockouts.) This single number drives most of
 the methodology downstream: accuracy would be a useless metric (predicting "never harvest"
-scores 98.4%), so model selection uses <strong>PR-AUC</strong>, and training uses balanced class weights
+scores 98.4%), so model selection uses <strong>PR-AUC</strong> as the primary benchmark instead of <strong>ROC-AUC</strong>, with training using balanced class weights
 and stratified splits.</p>
-<p>Both soft labels pile up at 0 (note the log scale) with a long right tail and a small spike
-at 1 — lots that are deep underwater and certain to stay harvestable all month. <code>Y_Soft_BT</code>
+<p>Both soft labels pile up at 0 (note the logarithmic scaling) with a long right tail and a small spike
+at 1 describes lots that are deep underwater and certain to stay harvestable all month. <code>Y_Soft_BT</code>
 is the realized analogue of the Monte-Carlo <code>Y_Soft_GBM</code>, takes values in multiples of
 $1/30$, and is noticeably <em>less</em> zero-heavy among its nonzero values: when a lot does become
 harvestable on the real path, it tends to stay so for several of the next 30 days, while
 independent GBM paths wash that persistence out. Binarized as <code>Y_Soft_BT &gt; 0</code>, the modeling
-target has a ~19.9% positive rate among labeled rows — imbalanced, but an order of magnitude
+target has a ~19.9% positive rate among labeled rows, still imbalanced, but an order of magnitude
 friendlier than the hard label.</p>
 </div>
 </div>
@@ -8538,8 +8544,8 @@ friendlier than the hard label.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="Missing-data">Missing data<a class="anchor-link" href="#Missing-data">¶</a></h3><p>Missingness in this dataset is <strong>structural, not accidental</strong> — each missing cell is implied
-by a definition, which is the best kind of missing data to have because it can be reasoned
+<h3 id="Missing-data">Missing data<a class="anchor-link" href="#Missing-data">¶</a></h3><p>Missingness in this dataset is <strong>structural, not accidental</strong>, each missing cell is implied
+by a definition, which is the most useful kind of missing data to have because it can be reasoned
 about exactly.</p>
 </div>
 </div>
@@ -8693,9 +8699,7 @@ zero eigenvalue we will meet again in the <a href="#Unsupervised-Structure">PCA 
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="Outcome-versus-predictors">Outcome versus predictors<a class="anchor-link" href="#Outcome-versus-predictors">¶</a></h3><p>The oracle reads four features; the models see fifteen. The interesting questions are whether
-the gating features separate the classes the way the rulebook says they must (they do — and
-how sharply is worth seeing), and whether the <em>non</em>-gating features carry indirect signal.</p>
+<h3 id="Outcome-versus-predictors">Outcome versus predictors<a class="anchor-link" href="#Outcome-versus-predictors">¶</a></h3><p>The oracle lives in $\mathbb{R^4}$ subset of the feature space whilst the models live in the full $\mathbb{R^{15}}$. The interesting question here is how much that extra dimensinailty (and therefore information) is actually contributing.</p>
 </div>
 </div>
 </div>
@@ -8882,14 +8886,14 @@ do they overlap?</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>The heatmap shows mostly <em>modest</em> correlations — the feature families are genuinely
-complementary — with a few interpretable exceptions. <code>H</code> and <code>S</code> are strongly positively
+<p>The heatmap shows mostly moderate or no correlations at all: the feature families are genuinely
+complementary with a few interpretable exceptions. <code>H</code> and <code>S</code> are strongly positively
 correlated by definition ($S = \mathbb{1}[H \ge 365]$ is a deterministic step function of
 <code>H</code>). <code>DeltaMA50</code> and <code>DeltaMA200</code> co-move (a stock above its 50-day average tends to be
 above its 200-day average), and both correlate positively with <code>L</code>: all three are
 denominated in "how far has this price drifted up," differing in baseline (cost basis vs
 moving averages). The portfolio-level features <code>G_YTD</code>, <code>Sigma_TE</code>, and <code>DaysToYE</code> correlate
-with each other through the shared calendar — they are constant across all lots within a day
+with each other through the shared calendar and state space in which they are constant across all lots within a day
 and evolve slowly, a reminder (from <code>PortfolioMath.md</code> §3.5) that the rows are <em>conditionally</em>
 independent given the features rather than i.i.d. draws. Nothing approaches the |0.95|+
 territory that would force dropping a feature for the regularized linear models; elastic
@@ -8956,15 +8960,15 @@ gains-to-offset gate behave as designed?</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>Harvests arrive in <strong>bursts</strong> — clusters of days where a market dip pushes many lots through
-the loss gate simultaneously — and each burst visibly bites a step out of $G^{\mathrm{YTD}}$
+<p>Harvests arrive in bursts clusters of days where a market dip pushes many lots through
+the loss gate simultaneously (the best example would be the market correction thats been happening for the past week but that will only realize after a month from now in which another spike is expected) where each burst visibly bites a step out of $G^{\mathrm{YTD}}$
 (every harvest realizes a loss, reducing the budget). With the $1M seed the budget never
-actually reaches zero in this window — gate 3 stays open all year (the January re-seed is
-the visible jump) — but the depletion dynamic is exactly the self-limiting mechanism that
+actually reaches zero in this window, gate 3 stays open all year (the January re-seed is
+the visible jump) but the depletion dynamic is exactly the self-limiting mechanism that
 would throttle harvesting in a deeper drawdown. This self-limiting dynamic
 is the main source of <em>label interactions across lots</em> — whether lot A is harvested today
-affects whether lot B can be tomorrow — and it is exactly why the portfolio state is encoded
-<em>into</em> each row's features rather than left as a hidden confounder.</p>
+affects whether lot B can be tomorrow. This is exactly why the portfolio state is encoded
+into each row's features rather than left as a hidden confounder.</p>
 </div>
 </div>
 </div>
@@ -8975,7 +8979,7 @@ affects whether lot B can be tomorrow — and it is exactly why the portfolio st
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Data-Splitting-and-Cross-Validation">Data Splitting and Cross-Validation<a class="anchor-link" href="#Data-Splitting-and-Cross-Validation">¶</a></h2><p><em>(This section is written for readers new to machine learning.)</em></p>
+<h2 id="Data-Splitting-and-Cross-Validation">Data Splitting and Cross-Validation<a class="anchor-link" href="#Data-Splitting-and-Cross-Validation">¶</a></h2><p><em>(This section is written for readers new to machine learning)</em></p>
 <p><strong>Why split at all?</strong> A model graded on the same data it studied is like a student graded on
 the exact homework problems they memorized — the score says nothing about new problems. So
 before any model sees the data, we lock <strong>20% of rows away as a test set</strong> and never touch it
@@ -9218,7 +9222,7 @@ the continuous <code>Y_Soft_BT</code> kept as a cautionary comparison.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Model-Fitting-and-Tuning">Model Fitting and Tuning<a class="anchor-link" href="#Model-Fitting-and-Tuning">¶</a></h2><p>Five model types were fit — four serious classifiers spanning the linear-to-ensemble
+<h2 id="Model-Fitting-and-Tuning">Model Fitting and Tuning<a class="anchor-link" href="#Model-Fitting-and-Tuning">¶</a></h2><p>Five model types were fit: four serious classifiers spanning the linear-to-ensemble
 spectrum, plus the linear-regression demonstration (model menu debated in repo issue
 <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/4">#4</a>; the ML.NET implementation
 landed in PR <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/pull/11">#11</a> after issue
@@ -9262,7 +9266,7 @@ scored by mean PR-AUC across the stratified 5-fold CV described above:</p>
 </tbody>
 </table>
 <p>Both targets get the full treatment: the <strong>oracle target</strong> as the recoverability sanity
-check, and the <strong>soft target</strong> as the real problem.</p>
+check, and the <strong>soft target</strong> as the real target / primary classification benchmark in this version of the project.</p>
 </div>
 </div>
 </div>
@@ -9305,57 +9309,57 @@ check, and the <strong>soft target</strong> as the real problem.</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_c5872">
+<table id="T_0292a">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_c5872_level0_col0">model</th>
-<th class="col_heading level0 col1" id="T_c5872_level0_col1">type</th>
-<th class="col_heading level0 col2" id="T_c5872_level0_col2">mean CV PR-AUC</th>
-<th class="col_heading level0 col3" id="T_c5872_level0_col3">fold std</th>
-<th class="col_heading level0 col4" id="T_c5872_level0_col4">configs tried</th>
-<th class="col_heading level0 col5" id="T_c5872_level0_col5">champion</th>
+<th class="col_heading level0 col0" id="T_0292a_level0_col0">model</th>
+<th class="col_heading level0 col1" id="T_0292a_level0_col1">type</th>
+<th class="col_heading level0 col2" id="T_0292a_level0_col2">mean CV PR-AUC</th>
+<th class="col_heading level0 col3" id="T_0292a_level0_col3">fold std</th>
+<th class="col_heading level0 col4" id="T_0292a_level0_col4">configs tried</th>
+<th class="col_heading level0 col5" id="T_0292a_level0_col5">champion</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_c5872_row0_col0">Gradient Boosted Trees</td>
-<td class="data row0 col1" id="T_c5872_row0_col1">classifier</td>
-<td class="data row0 col2" id="T_c5872_row0_col2">0.8576</td>
-<td class="data row0 col3" id="T_c5872_row0_col3">0.0045</td>
-<td class="data row0 col4" id="T_c5872_row0_col4">8</td>
-<td class="data row0 col5" id="T_c5872_row0_col5">★</td>
+<td class="data row0 col0" id="T_0292a_row0_col0">Gradient Boosted Trees</td>
+<td class="data row0 col1" id="T_0292a_row0_col1">classifier</td>
+<td class="data row0 col2" id="T_0292a_row0_col2">0.8576</td>
+<td class="data row0 col3" id="T_0292a_row0_col3">0.0045</td>
+<td class="data row0 col4" id="T_0292a_row0_col4">8</td>
+<td class="data row0 col5" id="T_0292a_row0_col5">★</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_c5872_row1_col0">Random Forest</td>
-<td class="data row1 col1" id="T_c5872_row1_col1">classifier</td>
-<td class="data row1 col2" id="T_c5872_row1_col2">0.6940</td>
-<td class="data row1 col3" id="T_c5872_row1_col3">0.0059</td>
-<td class="data row1 col4" id="T_c5872_row1_col4">4</td>
-<td class="data row1 col5" id="T_c5872_row1_col5">★</td>
+<td class="data row1 col0" id="T_0292a_row1_col0">Random Forest</td>
+<td class="data row1 col1" id="T_0292a_row1_col1">classifier</td>
+<td class="data row1 col2" id="T_0292a_row1_col2">0.6940</td>
+<td class="data row1 col3" id="T_0292a_row1_col3">0.0059</td>
+<td class="data row1 col4" id="T_0292a_row1_col4">4</td>
+<td class="data row1 col5" id="T_0292a_row1_col5">★</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_c5872_row2_col0">Logistic Regression (L2)</td>
-<td class="data row2 col1" id="T_c5872_row2_col1">classifier</td>
-<td class="data row2 col2" id="T_c5872_row2_col2">0.6496</td>
-<td class="data row2 col3" id="T_c5872_row2_col3">0.0084</td>
-<td class="data row2 col4" id="T_c5872_row2_col4">4</td>
-<td class="data row2 col5" id="T_c5872_row2_col5"></td>
+<td class="data row2 col0" id="T_0292a_row2_col0">Logistic Regression (L2)</td>
+<td class="data row2 col1" id="T_0292a_row2_col1">classifier</td>
+<td class="data row2 col2" id="T_0292a_row2_col2">0.6496</td>
+<td class="data row2 col3" id="T_0292a_row2_col3">0.0084</td>
+<td class="data row2 col4" id="T_0292a_row2_col4">4</td>
+<td class="data row2 col5" id="T_0292a_row2_col5"></td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_c5872_row3_col0">Elastic Net</td>
-<td class="data row3 col1" id="T_c5872_row3_col1">classifier</td>
-<td class="data row3 col2" id="T_c5872_row3_col2">0.6346</td>
-<td class="data row3 col3" id="T_c5872_row3_col3">0.0090</td>
-<td class="data row3 col4" id="T_c5872_row3_col4">9</td>
-<td class="data row3 col5" id="T_c5872_row3_col5"></td>
+<td class="data row3 col0" id="T_0292a_row3_col0">Elastic Net</td>
+<td class="data row3 col1" id="T_0292a_row3_col1">classifier</td>
+<td class="data row3 col2" id="T_0292a_row3_col2">0.6346</td>
+<td class="data row3 col3" id="T_0292a_row3_col3">0.0090</td>
+<td class="data row3 col4" id="T_0292a_row3_col4">9</td>
+<td class="data row3 col5" id="T_0292a_row3_col5"></td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_c5872_row4_col0">Linear Regression</td>
-<td class="data row4 col1" id="T_c5872_row4_col1">regression_demonstration</td>
-<td class="data row4 col2" id="T_c5872_row4_col2">0.5594</td>
-<td class="data row4 col3" id="T_c5872_row4_col3">0.0098</td>
-<td class="data row4 col4" id="T_c5872_row4_col4">3</td>
-<td class="data row4 col5" id="T_c5872_row4_col5"></td>
+<td class="data row4 col0" id="T_0292a_row4_col0">Linear Regression</td>
+<td class="data row4 col1" id="T_0292a_row4_col1">regression_demonstration</td>
+<td class="data row4 col2" id="T_0292a_row4_col2">0.5594</td>
+<td class="data row4 col3" id="T_0292a_row4_col3">0.0098</td>
+<td class="data row4 col4" id="T_0292a_row4_col4">3</td>
+<td class="data row4 col5" id="T_0292a_row4_col5"></td>
 </tr>
 </tbody>
 </table>
@@ -9373,57 +9377,57 @@ check, and the <strong>soft target</strong> as the real problem.</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_8d82e">
+<table id="T_b8404">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_8d82e_level0_col0">model</th>
-<th class="col_heading level0 col1" id="T_8d82e_level0_col1">type</th>
-<th class="col_heading level0 col2" id="T_8d82e_level0_col2">mean CV PR-AUC</th>
-<th class="col_heading level0 col3" id="T_8d82e_level0_col3">fold std</th>
-<th class="col_heading level0 col4" id="T_8d82e_level0_col4">configs tried</th>
-<th class="col_heading level0 col5" id="T_8d82e_level0_col5">champion</th>
+<th class="col_heading level0 col0" id="T_b8404_level0_col0">model</th>
+<th class="col_heading level0 col1" id="T_b8404_level0_col1">type</th>
+<th class="col_heading level0 col2" id="T_b8404_level0_col2">mean CV PR-AUC</th>
+<th class="col_heading level0 col3" id="T_b8404_level0_col3">fold std</th>
+<th class="col_heading level0 col4" id="T_b8404_level0_col4">configs tried</th>
+<th class="col_heading level0 col5" id="T_b8404_level0_col5">champion</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_8d82e_row0_col0">Gradient Boosted Trees</td>
-<td class="data row0 col1" id="T_8d82e_row0_col1">classifier</td>
-<td class="data row0 col2" id="T_8d82e_row0_col2">0.9997</td>
-<td class="data row0 col3" id="T_8d82e_row0_col3">0.0004</td>
-<td class="data row0 col4" id="T_8d82e_row0_col4">8</td>
-<td class="data row0 col5" id="T_8d82e_row0_col5">★</td>
+<td class="data row0 col0" id="T_b8404_row0_col0">Gradient Boosted Trees</td>
+<td class="data row0 col1" id="T_b8404_row0_col1">classifier</td>
+<td class="data row0 col2" id="T_b8404_row0_col2">0.9997</td>
+<td class="data row0 col3" id="T_b8404_row0_col3">0.0004</td>
+<td class="data row0 col4" id="T_b8404_row0_col4">8</td>
+<td class="data row0 col5" id="T_b8404_row0_col5">★</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_8d82e_row1_col0">Random Forest</td>
-<td class="data row1 col1" id="T_8d82e_row1_col1">classifier</td>
-<td class="data row1 col2" id="T_8d82e_row1_col2">0.9987</td>
-<td class="data row1 col3" id="T_8d82e_row1_col3">0.0018</td>
-<td class="data row1 col4" id="T_8d82e_row1_col4">4</td>
-<td class="data row1 col5" id="T_8d82e_row1_col5">★</td>
+<td class="data row1 col0" id="T_b8404_row1_col0">Random Forest</td>
+<td class="data row1 col1" id="T_b8404_row1_col1">classifier</td>
+<td class="data row1 col2" id="T_b8404_row1_col2">0.9987</td>
+<td class="data row1 col3" id="T_b8404_row1_col3">0.0018</td>
+<td class="data row1 col4" id="T_b8404_row1_col4">4</td>
+<td class="data row1 col5" id="T_b8404_row1_col5">★</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_8d82e_row2_col0">Logistic Regression (L2)</td>
-<td class="data row2 col1" id="T_8d82e_row2_col1">classifier</td>
-<td class="data row2 col2" id="T_8d82e_row2_col2">0.9867</td>
-<td class="data row2 col3" id="T_8d82e_row2_col3">0.0061</td>
-<td class="data row2 col4" id="T_8d82e_row2_col4">4</td>
-<td class="data row2 col5" id="T_8d82e_row2_col5"></td>
+<td class="data row2 col0" id="T_b8404_row2_col0">Logistic Regression (L2)</td>
+<td class="data row2 col1" id="T_b8404_row2_col1">classifier</td>
+<td class="data row2 col2" id="T_b8404_row2_col2">0.9867</td>
+<td class="data row2 col3" id="T_b8404_row2_col3">0.0061</td>
+<td class="data row2 col4" id="T_b8404_row2_col4">4</td>
+<td class="data row2 col5" id="T_b8404_row2_col5"></td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_8d82e_row3_col0">Elastic Net</td>
-<td class="data row3 col1" id="T_8d82e_row3_col1">classifier</td>
-<td class="data row3 col2" id="T_8d82e_row3_col2">0.4418</td>
-<td class="data row3 col3" id="T_8d82e_row3_col3">0.0243</td>
-<td class="data row3 col4" id="T_8d82e_row3_col4">9</td>
-<td class="data row3 col5" id="T_8d82e_row3_col5"></td>
+<td class="data row3 col0" id="T_b8404_row3_col0">Elastic Net</td>
+<td class="data row3 col1" id="T_b8404_row3_col1">classifier</td>
+<td class="data row3 col2" id="T_b8404_row3_col2">0.4418</td>
+<td class="data row3 col3" id="T_b8404_row3_col3">0.0243</td>
+<td class="data row3 col4" id="T_b8404_row3_col4">9</td>
+<td class="data row3 col5" id="T_b8404_row3_col5"></td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_8d82e_row4_col0">Linear Regression</td>
-<td class="data row4 col1" id="T_8d82e_row4_col1">regression_demonstration</td>
-<td class="data row4 col2" id="T_8d82e_row4_col2">0.3715</td>
-<td class="data row4 col3" id="T_8d82e_row4_col3">0.0219</td>
-<td class="data row4 col4" id="T_8d82e_row4_col4">3</td>
-<td class="data row4 col5" id="T_8d82e_row4_col5"></td>
+<td class="data row4 col0" id="T_b8404_row4_col0">Linear Regression</td>
+<td class="data row4 col1" id="T_b8404_row4_col1">regression_demonstration</td>
+<td class="data row4 col2" id="T_b8404_row4_col2">0.3715</td>
+<td class="data row4 col3" id="T_b8404_row4_col3">0.0219</td>
+<td class="data row4 col4" id="T_b8404_row4_col4">3</td>
+<td class="data row4 col5" id="T_b8404_row4_col5"></td>
 </tr>
 </tbody>
 </table>
@@ -9473,19 +9477,19 @@ check, and the <strong>soft target</strong> as the real problem.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>The fold-level view adds the stability dimension the leaderboard means hide: every model's
+<p>This EDA-visiual brings clarity to the difference between the models and their test deviations: every model's
 five folds cluster tightly (fold-to-fold standard deviations of well under 0.02), so the
-ranking is not an artifact of one lucky fold — the gaps <em>between</em> models dwarf the spread
-<em>within</em> them.</p>
-<p>Two findings stand out. On the <strong>soft target</strong>, there is a three-tier structure: gradient
+ranking is not an artifact of one lucky fold, the gaps between models dwarf the spread
+within them.</p>
+<p>Two findings stand out: On the <strong>soft target (or oracle data-structure target)</strong>, there is a three-tier structure: gradient
 boosting (0.858) far ahead, random forest (0.694) in the middle, and the linear models at
 0.56–0.65. Within the linear tier, plain logistic (0.650) edges out elastic net (0.635) —
 the extra L1 penalty only removes capacity the model needs — and both sit ~0.21 of PR-AUC
 below the boosted trees: "will this lot become harvestable within 30 days?" depends on
 interactions (a loss near the gate <em>and</em> slack in the TE budget <em>and</em> wash-sale clearance)
-that no weighted sum of features can fully express.</p>
+that no weighted sum of features can fully express, which is far more fitting of a tree based model that encodes conditions/decisions.</p>
 <p>The <strong>oracle target</strong> is more subtle, and more interesting. The tree ensembles essentially
-solve it (PR-AUC ≥ 0.999) — as they must, since the label is a conjunction of four
+solve it (PR-AUC ≥ 0.999) since the label is a conjunction of four
 axis-aligned thresholds, literally a depth-4 decision tree. But plain logistic also lands
 high (0.987), which seems to contradict the "a hyperplane cannot express an AND" argument —
 until you notice <em>which gates actually bind in this run</em>. With the $1M gains seed,
@@ -9495,7 +9499,7 @@ the effective decision boundary nearly collapses to the single half-space $L \le
 which a logistic model expresses exactly. Elastic net (0.442) and least squares (0.372)
 still fail: the elastic net's penalties shrink the one coefficient that matters, and least
 squares is structurally miscalibrated. The lesson is sharper than the original story: the
-oracle's <em>geometry</em> is not fixed — how non-linear the problem is depends on how many of its
+oracle's <em>geometry</em> is not fixed as in how non-linear the problem is depends on how many of its
 gates actually bind, which is set by the gains-budget calibration.</p>
 </div>
 </div>
@@ -9508,7 +9512,7 @@ gates actually bind, which is set by the gains-budget calibration.</p>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="Tuning-results-per-model">Tuning results per model<a class="anchor-link" href="#Tuning-results-per-model">¶</a></h3><p>The grids below show every configuration's mean CV PR-AUC on the soft target (the tables are
-read directly from the tuning artifacts; the oracle-target grids behave analogously with
+read directly from the ML.NET-layer produced tuning artifacts; the oracle-target grids behave analogously with
 compressed differences).</p>
 </div>
 </div>
@@ -9522,7 +9526,7 @@ compressed differences).</p>
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
 <div class="highlight hl-ipython3"><pre><span></span><span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"gbt"</span><span class="p">,</span> <span class="s2">"rf"</span><span class="p">,</span> <span class="s2">"elnet"</span><span class="p">,</span> <span class="s2">"logistic"</span><span class="p">,</span> <span class="s2">"linreg"</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"--- </span><span class="si">{</span><span class="n">rh</span><span class="o">.</span><span class="n">MODEL_NAMES</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="si">}</span><span class="s2"> — grid search, target = Y_Soft_BT &gt; 0 ---"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"--- </span><span class="si">{</span><span class="n">rh</span><span class="o">.</span><span class="n">MODEL_NAMES</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="si">}</span><span class="s2"> — grid search, target = Y_Soft_BT &gt; 0"</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">rh</span><span class="o">.</span><span class="n">tuning_table</span><span class="p">(</span><span class="n">rh</span><span class="o">.</span><span class="n">lb_entry</span><span class="p">(</span><span class="n">lb_soft</span><span class="p">,</span> <span class="n">key</span><span class="p">))</span><span class="o">.</span><span class="n">style</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
         <span class="p">{</span><span class="s2">"mean CV PR-AUC"</span><span class="p">:</span> <span class="s2">"</span><span class="si">{:.4f}</span><span class="s2">"</span><span class="p">})</span><span class="o">.</span><span class="n">hide</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s2">"index"</span><span class="p">))</span>
 </pre></div>
@@ -9537,7 +9541,7 @@ compressed differences).</p>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>--- Gradient Boosted Trees — grid search, target = Y_Soft_BT &gt; 0 ---
+<pre>--- Gradient Boosted Trees — grid search, target = Y_Soft_BT &gt; 0
 </pre>
 </div>
 </div>
@@ -9546,63 +9550,63 @@ compressed differences).</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_1afd8">
+<table id="T_643af">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_1afd8_level0_col0">numberOfTrees</th>
-<th class="col_heading level0 col1" id="T_1afd8_level0_col1">learningRate</th>
-<th class="col_heading level0 col2" id="T_1afd8_level0_col2">numberOfLeaves</th>
-<th class="col_heading level0 col3" id="T_1afd8_level0_col3">mean CV PR-AUC</th>
+<th class="col_heading level0 col0" id="T_643af_level0_col0">numberOfTrees</th>
+<th class="col_heading level0 col1" id="T_643af_level0_col1">learningRate</th>
+<th class="col_heading level0 col2" id="T_643af_level0_col2">numberOfLeaves</th>
+<th class="col_heading level0 col3" id="T_643af_level0_col3">mean CV PR-AUC</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_1afd8_row0_col0">200</td>
-<td class="data row0 col1" id="T_1afd8_row0_col1">0.100000</td>
-<td class="data row0 col2" id="T_1afd8_row0_col2">31</td>
-<td class="data row0 col3" id="T_1afd8_row0_col3">0.8576</td>
+<td class="data row0 col0" id="T_643af_row0_col0">200</td>
+<td class="data row0 col1" id="T_643af_row0_col1">0.100000</td>
+<td class="data row0 col2" id="T_643af_row0_col2">31</td>
+<td class="data row0 col3" id="T_643af_row0_col3">0.8576</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_1afd8_row1_col0">200</td>
-<td class="data row1 col1" id="T_1afd8_row1_col1">0.100000</td>
-<td class="data row1 col2" id="T_1afd8_row1_col2">20</td>
-<td class="data row1 col3" id="T_1afd8_row1_col3">0.8257</td>
+<td class="data row1 col0" id="T_643af_row1_col0">200</td>
+<td class="data row1 col1" id="T_643af_row1_col1">0.100000</td>
+<td class="data row1 col2" id="T_643af_row1_col2">20</td>
+<td class="data row1 col3" id="T_643af_row1_col3">0.8257</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_1afd8_row2_col0">200</td>
-<td class="data row2 col1" id="T_1afd8_row2_col1">0.050000</td>
-<td class="data row2 col2" id="T_1afd8_row2_col2">31</td>
-<td class="data row2 col3" id="T_1afd8_row2_col3">0.8152</td>
+<td class="data row2 col0" id="T_643af_row2_col0">200</td>
+<td class="data row2 col1" id="T_643af_row2_col1">0.050000</td>
+<td class="data row2 col2" id="T_643af_row2_col2">31</td>
+<td class="data row2 col3" id="T_643af_row2_col3">0.8152</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_1afd8_row3_col0">100</td>
-<td class="data row3 col1" id="T_1afd8_row3_col1">0.100000</td>
-<td class="data row3 col2" id="T_1afd8_row3_col2">31</td>
-<td class="data row3 col3" id="T_1afd8_row3_col3">0.8141</td>
+<td class="data row3 col0" id="T_643af_row3_col0">100</td>
+<td class="data row3 col1" id="T_643af_row3_col1">0.100000</td>
+<td class="data row3 col2" id="T_643af_row3_col2">31</td>
+<td class="data row3 col3" id="T_643af_row3_col3">0.8141</td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_1afd8_row4_col0">200</td>
-<td class="data row4 col1" id="T_1afd8_row4_col1">0.050000</td>
-<td class="data row4 col2" id="T_1afd8_row4_col2">20</td>
-<td class="data row4 col3" id="T_1afd8_row4_col3">0.7916</td>
+<td class="data row4 col0" id="T_643af_row4_col0">200</td>
+<td class="data row4 col1" id="T_643af_row4_col1">0.050000</td>
+<td class="data row4 col2" id="T_643af_row4_col2">20</td>
+<td class="data row4 col3" id="T_643af_row4_col3">0.7916</td>
 </tr>
 <tr>
-<td class="data row5 col0" id="T_1afd8_row5_col0">100</td>
-<td class="data row5 col1" id="T_1afd8_row5_col1">0.100000</td>
-<td class="data row5 col2" id="T_1afd8_row5_col2">20</td>
-<td class="data row5 col3" id="T_1afd8_row5_col3">0.7911</td>
+<td class="data row5 col0" id="T_643af_row5_col0">100</td>
+<td class="data row5 col1" id="T_643af_row5_col1">0.100000</td>
+<td class="data row5 col2" id="T_643af_row5_col2">20</td>
+<td class="data row5 col3" id="T_643af_row5_col3">0.7911</td>
 </tr>
 <tr>
-<td class="data row6 col0" id="T_1afd8_row6_col0">100</td>
-<td class="data row6 col1" id="T_1afd8_row6_col1">0.050000</td>
-<td class="data row6 col2" id="T_1afd8_row6_col2">31</td>
-<td class="data row6 col3" id="T_1afd8_row6_col3">0.7792</td>
+<td class="data row6 col0" id="T_643af_row6_col0">100</td>
+<td class="data row6 col1" id="T_643af_row6_col1">0.050000</td>
+<td class="data row6 col2" id="T_643af_row6_col2">31</td>
+<td class="data row6 col3" id="T_643af_row6_col3">0.7792</td>
 </tr>
 <tr>
-<td class="data row7 col0" id="T_1afd8_row7_col0">100</td>
-<td class="data row7 col1" id="T_1afd8_row7_col1">0.050000</td>
-<td class="data row7 col2" id="T_1afd8_row7_col2">20</td>
-<td class="data row7 col3" id="T_1afd8_row7_col3">0.7626</td>
+<td class="data row7 col0" id="T_643af_row7_col0">100</td>
+<td class="data row7 col1" id="T_643af_row7_col1">0.050000</td>
+<td class="data row7 col2" id="T_643af_row7_col2">20</td>
+<td class="data row7 col3" id="T_643af_row7_col3">0.7626</td>
 </tr>
 </tbody>
 </table>
@@ -9611,7 +9615,7 @@ compressed differences).</p>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>--- Random Forest — grid search, target = Y_Soft_BT &gt; 0 ---
+<pre>--- Random Forest — grid search, target = Y_Soft_BT &gt; 0
 </pre>
 </div>
 </div>
@@ -9620,34 +9624,34 @@ compressed differences).</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_5261f">
+<table id="T_428fa">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_5261f_level0_col0">numberOfTrees</th>
-<th class="col_heading level0 col1" id="T_5261f_level0_col1">numberOfLeaves</th>
-<th class="col_heading level0 col2" id="T_5261f_level0_col2">mean CV PR-AUC</th>
+<th class="col_heading level0 col0" id="T_428fa_level0_col0">numberOfTrees</th>
+<th class="col_heading level0 col1" id="T_428fa_level0_col1">numberOfLeaves</th>
+<th class="col_heading level0 col2" id="T_428fa_level0_col2">mean CV PR-AUC</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_5261f_row0_col0">100</td>
-<td class="data row0 col1" id="T_5261f_row0_col1">31</td>
-<td class="data row0 col2" id="T_5261f_row0_col2">0.6940</td>
+<td class="data row0 col0" id="T_428fa_row0_col0">100</td>
+<td class="data row0 col1" id="T_428fa_row0_col1">31</td>
+<td class="data row0 col2" id="T_428fa_row0_col2">0.6940</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_5261f_row1_col0">200</td>
-<td class="data row1 col1" id="T_5261f_row1_col1">31</td>
-<td class="data row1 col2" id="T_5261f_row1_col2">0.6933</td>
+<td class="data row1 col0" id="T_428fa_row1_col0">200</td>
+<td class="data row1 col1" id="T_428fa_row1_col1">31</td>
+<td class="data row1 col2" id="T_428fa_row1_col2">0.6933</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_5261f_row2_col0">100</td>
-<td class="data row2 col1" id="T_5261f_row2_col1">20</td>
-<td class="data row2 col2" id="T_5261f_row2_col2">0.6800</td>
+<td class="data row2 col0" id="T_428fa_row2_col0">100</td>
+<td class="data row2 col1" id="T_428fa_row2_col1">20</td>
+<td class="data row2 col2" id="T_428fa_row2_col2">0.6800</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_5261f_row3_col0">200</td>
-<td class="data row3 col1" id="T_5261f_row3_col1">20</td>
-<td class="data row3 col2" id="T_5261f_row3_col2">0.6795</td>
+<td class="data row3 col0" id="T_428fa_row3_col0">200</td>
+<td class="data row3 col1" id="T_428fa_row3_col1">20</td>
+<td class="data row3 col2" id="T_428fa_row3_col2">0.6795</td>
 </tr>
 </tbody>
 </table>
@@ -9656,7 +9660,7 @@ compressed differences).</p>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>--- Elastic Net — grid search, target = Y_Soft_BT &gt; 0 ---
+<pre>--- Elastic Net — grid search, target = Y_Soft_BT &gt; 0
 </pre>
 </div>
 </div>
@@ -9665,59 +9669,59 @@ compressed differences).</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_f162e">
+<table id="T_f4b22">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_f162e_level0_col0">l1Regularization</th>
-<th class="col_heading level0 col1" id="T_f162e_level0_col1">l2Regularization</th>
-<th class="col_heading level0 col2" id="T_f162e_level0_col2">mean CV PR-AUC</th>
+<th class="col_heading level0 col0" id="T_f4b22_level0_col0">l1Regularization</th>
+<th class="col_heading level0 col1" id="T_f4b22_level0_col1">l2Regularization</th>
+<th class="col_heading level0 col2" id="T_f4b22_level0_col2">mean CV PR-AUC</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_f162e_row0_col0">0.010000</td>
-<td class="data row0 col1" id="T_f162e_row0_col1">0.001000</td>
-<td class="data row0 col2" id="T_f162e_row0_col2">0.6346</td>
+<td class="data row0 col0" id="T_f4b22_row0_col0">0.010000</td>
+<td class="data row0 col1" id="T_f4b22_row0_col1">0.001000</td>
+<td class="data row0 col2" id="T_f4b22_row0_col2">0.6346</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_f162e_row1_col0">0.100000</td>
-<td class="data row1 col1" id="T_f162e_row1_col1">0.001000</td>
-<td class="data row1 col2" id="T_f162e_row1_col2">0.6344</td>
+<td class="data row1 col0" id="T_f4b22_row1_col0">0.100000</td>
+<td class="data row1 col1" id="T_f4b22_row1_col1">0.001000</td>
+<td class="data row1 col2" id="T_f4b22_row1_col2">0.6344</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_f162e_row2_col0">0.001000</td>
-<td class="data row2 col1" id="T_f162e_row2_col1">0.001000</td>
-<td class="data row2 col2" id="T_f162e_row2_col2">0.6318</td>
+<td class="data row2 col0" id="T_f4b22_row2_col0">0.001000</td>
+<td class="data row2 col1" id="T_f4b22_row2_col1">0.001000</td>
+<td class="data row2 col2" id="T_f4b22_row2_col2">0.6318</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_f162e_row3_col0">0.001000</td>
-<td class="data row3 col1" id="T_f162e_row3_col1">0.010000</td>
-<td class="data row3 col2" id="T_f162e_row3_col2">0.6030</td>
+<td class="data row3 col0" id="T_f4b22_row3_col0">0.001000</td>
+<td class="data row3 col1" id="T_f4b22_row3_col1">0.010000</td>
+<td class="data row3 col2" id="T_f4b22_row3_col2">0.6030</td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_f162e_row4_col0">0.010000</td>
-<td class="data row4 col1" id="T_f162e_row4_col1">0.010000</td>
-<td class="data row4 col2" id="T_f162e_row4_col2">0.6021</td>
+<td class="data row4 col0" id="T_f4b22_row4_col0">0.010000</td>
+<td class="data row4 col1" id="T_f4b22_row4_col1">0.010000</td>
+<td class="data row4 col2" id="T_f4b22_row4_col2">0.6021</td>
 </tr>
 <tr>
-<td class="data row5 col0" id="T_f162e_row5_col0">0.100000</td>
-<td class="data row5 col1" id="T_f162e_row5_col1">0.010000</td>
-<td class="data row5 col2" id="T_f162e_row5_col2">0.5983</td>
+<td class="data row5 col0" id="T_f4b22_row5_col0">0.100000</td>
+<td class="data row5 col1" id="T_f4b22_row5_col1">0.010000</td>
+<td class="data row5 col2" id="T_f4b22_row5_col2">0.5983</td>
 </tr>
 <tr>
-<td class="data row6 col0" id="T_f162e_row6_col0">0.100000</td>
-<td class="data row6 col1" id="T_f162e_row6_col1">0.100000</td>
-<td class="data row6 col2" id="T_f162e_row6_col2">0.5544</td>
+<td class="data row6 col0" id="T_f4b22_row6_col0">0.100000</td>
+<td class="data row6 col1" id="T_f4b22_row6_col1">0.100000</td>
+<td class="data row6 col2" id="T_f4b22_row6_col2">0.5544</td>
 </tr>
 <tr>
-<td class="data row7 col0" id="T_f162e_row7_col0">0.010000</td>
-<td class="data row7 col1" id="T_f162e_row7_col1">0.100000</td>
-<td class="data row7 col2" id="T_f162e_row7_col2">0.5521</td>
+<td class="data row7 col0" id="T_f4b22_row7_col0">0.010000</td>
+<td class="data row7 col1" id="T_f4b22_row7_col1">0.100000</td>
+<td class="data row7 col2" id="T_f4b22_row7_col2">0.5521</td>
 </tr>
 <tr>
-<td class="data row8 col0" id="T_f162e_row8_col0">0.001000</td>
-<td class="data row8 col1" id="T_f162e_row8_col1">0.100000</td>
-<td class="data row8 col2" id="T_f162e_row8_col2">0.5521</td>
+<td class="data row8 col0" id="T_f4b22_row8_col0">0.001000</td>
+<td class="data row8 col1" id="T_f4b22_row8_col1">0.100000</td>
+<td class="data row8 col2" id="T_f4b22_row8_col2">0.5521</td>
 </tr>
 </tbody>
 </table>
@@ -9726,7 +9730,7 @@ compressed differences).</p>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>--- Logistic Regression (L2) — grid search, target = Y_Soft_BT &gt; 0 ---
+<pre>--- Logistic Regression (L2) — grid search, target = Y_Soft_BT &gt; 0
 </pre>
 </div>
 </div>
@@ -9735,29 +9739,29 @@ compressed differences).</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_87d29">
+<table id="T_8834e">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_87d29_level0_col0">C</th>
-<th class="col_heading level0 col1" id="T_87d29_level0_col1">mean CV PR-AUC</th>
+<th class="col_heading level0 col0" id="T_8834e_level0_col0">C</th>
+<th class="col_heading level0 col1" id="T_8834e_level0_col1">mean CV PR-AUC</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_87d29_row0_col0">10.000000</td>
-<td class="data row0 col1" id="T_87d29_row0_col1">0.6496</td>
+<td class="data row0 col0" id="T_8834e_row0_col0">10.000000</td>
+<td class="data row0 col1" id="T_8834e_row0_col1">0.6496</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_87d29_row1_col0">1.000000</td>
-<td class="data row1 col1" id="T_87d29_row1_col1">0.6477</td>
+<td class="data row1 col0" id="T_8834e_row1_col0">1.000000</td>
+<td class="data row1 col1" id="T_8834e_row1_col1">0.6477</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_87d29_row2_col0">0.100000</td>
-<td class="data row2 col1" id="T_87d29_row2_col1">0.6405</td>
+<td class="data row2 col0" id="T_8834e_row2_col0">0.100000</td>
+<td class="data row2 col1" id="T_8834e_row2_col1">0.6405</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_87d29_row3_col0">0.010000</td>
-<td class="data row3 col1" id="T_87d29_row3_col1">0.6327</td>
+<td class="data row3 col0" id="T_8834e_row3_col0">0.010000</td>
+<td class="data row3 col1" id="T_8834e_row3_col1">0.6327</td>
 </tr>
 </tbody>
 </table>
@@ -9766,7 +9770,7 @@ compressed differences).</p>
 <div class="jp-OutputArea-child">
 <div class="jp-OutputPrompt jp-OutputArea-prompt"></div>
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
-<pre>--- Linear Regression — grid search, target = Y_Soft_BT &gt; 0 ---
+<pre>--- Linear Regression — grid search, target = Y_Soft_BT &gt; 0
 </pre>
 </div>
 </div>
@@ -9775,25 +9779,25 @@ compressed differences).</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_23a30">
+<table id="T_ab75d">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_23a30_level0_col0">l2Regularization</th>
-<th class="col_heading level0 col1" id="T_23a30_level0_col1">mean CV PR-AUC</th>
+<th class="col_heading level0 col0" id="T_ab75d_level0_col0">l2Regularization</th>
+<th class="col_heading level0 col1" id="T_ab75d_level0_col1">mean CV PR-AUC</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_23a30_row0_col0">0.010000</td>
-<td class="data row0 col1" id="T_23a30_row0_col1">0.5594</td>
+<td class="data row0 col0" id="T_ab75d_row0_col0">0.010000</td>
+<td class="data row0 col1" id="T_ab75d_row0_col1">0.5594</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_23a30_row1_col0">0.001000</td>
-<td class="data row1 col1" id="T_23a30_row1_col1">0.5585</td>
+<td class="data row1 col0" id="T_ab75d_row1_col0">0.001000</td>
+<td class="data row1 col1" id="T_ab75d_row1_col1">0.5585</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_23a30_row2_col0">0.000100</td>
-<td class="data row2 col1" id="T_23a30_row2_col1">0.5492</td>
+<td class="data row2 col0" id="T_ab75d_row2_col0">0.000100</td>
+<td class="data row2 col1" id="T_ab75d_row2_col1">0.5492</td>
 </tr>
 </tbody>
 </table>
@@ -9882,7 +9886,7 @@ values were nearly indistinguishable.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Model-Selection-and-Test-Set-Performance">Model Selection and Test-Set Performance<a class="anchor-link" href="#Model-Selection-and-Test-Set-Performance">¶</a></h2><p>Only the <strong>two CV champions — gradient boosted trees and random forest</strong> — advance to the
+<h2 id="Model-Selection-and-Test-Set-Performance">Model Selection and Test-Set Performance<a class="anchor-link" href="#Model-Selection-and-Test-Set-Performance">¶</a></h2><p>Only the <strong>two CV champions: gradient boosted trees and random forest</strong> advance to the
 sealed test set; the linear models' CV scores eliminated them without spending test data
 (the ridge-regression demonstration is reported separately below). Test metrics come from
 each champion's final refit on the full 80% training split.</p>
@@ -9933,15 +9937,15 @@ each champion's final refit on the full 80% training split.</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_fb01a">
+<table id="T_0c000">
 <thead>
 <tr>
 <th class="blank level0"> </th>
-<th class="col_heading level0 col0" id="T_fb01a_level0_col0">test ROC-AUC</th>
-<th class="col_heading level0 col1" id="T_fb01a_level0_col1">test PR-AUC</th>
-<th class="col_heading level0 col2" id="T_fb01a_level0_col2">F1 @ 0.5</th>
-<th class="col_heading level0 col3" id="T_fb01a_level0_col3">F1 @ best threshold</th>
-<th class="col_heading level0 col4" id="T_fb01a_level0_col4">best threshold</th>
+<th class="col_heading level0 col0" id="T_0c000_level0_col0">test ROC-AUC</th>
+<th class="col_heading level0 col1" id="T_0c000_level0_col1">test PR-AUC</th>
+<th class="col_heading level0 col2" id="T_0c000_level0_col2">F1 @ 0.5</th>
+<th class="col_heading level0 col3" id="T_0c000_level0_col3">F1 @ best threshold</th>
+<th class="col_heading level0 col4" id="T_0c000_level0_col4">best threshold</th>
 </tr>
 <tr>
 <th class="index_name level0">model</th>
@@ -9954,20 +9958,20 @@ each champion's final refit on the full 80% training split.</p>
 </thead>
 <tbody>
 <tr>
-<th class="row_heading level0 row0" id="T_fb01a_level0_row0">Gradient Boosted Trees</th>
-<td class="data row0 col0" id="T_fb01a_row0_col0">0.9641</td>
-<td class="data row0 col1" id="T_fb01a_row0_col1">0.8615</td>
-<td class="data row0 col2" id="T_fb01a_row0_col2">0.7618</td>
-<td class="data row0 col3" id="T_fb01a_row0_col3">0.7933</td>
-<td class="data row0 col4" id="T_fb01a_row0_col4">0.6848</td>
+<th class="row_heading level0 row0" id="T_0c000_level0_row0">Gradient Boosted Trees</th>
+<td class="data row0 col0" id="T_0c000_row0_col0">0.9641</td>
+<td class="data row0 col1" id="T_0c000_row0_col1">0.8615</td>
+<td class="data row0 col2" id="T_0c000_row0_col2">0.7618</td>
+<td class="data row0 col3" id="T_0c000_row0_col3">0.7933</td>
+<td class="data row0 col4" id="T_0c000_row0_col4">0.6848</td>
 </tr>
 <tr>
-<th class="row_heading level0 row1" id="T_fb01a_level0_row1">Random Forest</th>
-<td class="data row1 col0" id="T_fb01a_row1_col0">0.9096</td>
-<td class="data row1 col1" id="T_fb01a_row1_col1">0.6969</td>
-<td class="data row1 col2" id="T_fb01a_row1_col2">0.6426</td>
-<td class="data row1 col3" id="T_fb01a_row1_col3">0.6747</td>
-<td class="data row1 col4" id="T_fb01a_row1_col4">31.3748</td>
+<th class="row_heading level0 row1" id="T_0c000_level0_row1">Random Forest</th>
+<td class="data row1 col0" id="T_0c000_row1_col0">0.9096</td>
+<td class="data row1 col1" id="T_0c000_row1_col1">0.6969</td>
+<td class="data row1 col2" id="T_0c000_row1_col2">0.6426</td>
+<td class="data row1 col3" id="T_0c000_row1_col3">0.6747</td>
+<td class="data row1 col4" id="T_0c000_row1_col4">31.3748</td>
 </tr>
 </tbody>
 </table>
@@ -9985,15 +9989,15 @@ each champion's final refit on the full 80% training split.</p>
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_ecba8">
+<table id="T_59132">
 <thead>
 <tr>
 <th class="blank level0"> </th>
-<th class="col_heading level0 col0" id="T_ecba8_level0_col0">test ROC-AUC</th>
-<th class="col_heading level0 col1" id="T_ecba8_level0_col1">test PR-AUC</th>
-<th class="col_heading level0 col2" id="T_ecba8_level0_col2">F1 @ 0.5</th>
-<th class="col_heading level0 col3" id="T_ecba8_level0_col3">F1 @ best threshold</th>
-<th class="col_heading level0 col4" id="T_ecba8_level0_col4">best threshold</th>
+<th class="col_heading level0 col0" id="T_59132_level0_col0">test ROC-AUC</th>
+<th class="col_heading level0 col1" id="T_59132_level0_col1">test PR-AUC</th>
+<th class="col_heading level0 col2" id="T_59132_level0_col2">F1 @ 0.5</th>
+<th class="col_heading level0 col3" id="T_59132_level0_col3">F1 @ best threshold</th>
+<th class="col_heading level0 col4" id="T_59132_level0_col4">best threshold</th>
 </tr>
 <tr>
 <th class="index_name level0">model</th>
@@ -10006,20 +10010,20 @@ each champion's final refit on the full 80% training split.</p>
 </thead>
 <tbody>
 <tr>
-<th class="row_heading level0 row0" id="T_ecba8_level0_row0">Gradient Boosted Trees</th>
-<td class="data row0 col0" id="T_ecba8_row0_col0">1.0000</td>
-<td class="data row0 col1" id="T_ecba8_row0_col1">0.9993</td>
-<td class="data row0 col2" id="T_ecba8_row0_col2">0.9973</td>
-<td class="data row0 col3" id="T_ecba8_row0_col3">0.9973</td>
-<td class="data row0 col4" id="T_ecba8_row0_col4">0.7392</td>
+<th class="row_heading level0 row0" id="T_59132_level0_row0">Gradient Boosted Trees</th>
+<td class="data row0 col0" id="T_59132_row0_col0">1.0000</td>
+<td class="data row0 col1" id="T_59132_row0_col1">0.9993</td>
+<td class="data row0 col2" id="T_59132_row0_col2">0.9973</td>
+<td class="data row0 col3" id="T_59132_row0_col3">0.9973</td>
+<td class="data row0 col4" id="T_59132_row0_col4">0.7392</td>
 </tr>
 <tr>
-<th class="row_heading level0 row1" id="T_ecba8_level0_row1">Random Forest</th>
-<td class="data row1 col0" id="T_ecba8_row1_col0">0.9999</td>
-<td class="data row1 col1" id="T_ecba8_row1_col1">0.9932</td>
-<td class="data row1 col2" id="T_ecba8_row1_col2">0.9954</td>
-<td class="data row1 col3" id="T_ecba8_row1_col3">0.9954</td>
-<td class="data row1 col4" id="T_ecba8_row1_col4">111.4962</td>
+<th class="row_heading level0 row1" id="T_59132_level0_row1">Random Forest</th>
+<td class="data row1 col0" id="T_59132_row1_col0">0.9999</td>
+<td class="data row1 col1" id="T_59132_row1_col1">0.9932</td>
+<td class="data row1 col2" id="T_59132_row1_col2">0.9954</td>
+<td class="data row1 col3" id="T_59132_row1_col3">0.9954</td>
+<td class="data row1 col4" id="T_59132_row1_col4">111.4962</td>
 </tr>
 </tbody>
 </table>
@@ -10047,15 +10051,15 @@ each champion's final refit on the full 80% training split.</p>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p>On the real (soft) task the <strong>gradient boosted ensemble generalizes slightly better than it
-cross-validated</strong> — test PR-AUC 0.862 vs CV 0.858 — which is the signature of a model that
-was tuned honestly: nothing was overfit to the folds. The ROC panel shows both models high
+cross-validated</strong> a test PR-AUC 0.862 vs CV 0.858, signature of a model that
+was well-tuned as in nothing was overfit to the folds. The ROC panel shows both models high
 (0.96 / 0.91), but the PR panel is where the ranking earns its keep: GBT holds its precision
-much deeper into the recall range while the forest's decays sooner — at equal recall, the
+much deeper into the recall range while the forest's decays sooner; at equal recall, the
 forest raises substantially more false alarms. (A note on the forest's odd "best threshold"
 of ~31: ML.NET's random forest emits uncalibrated vote scores rather than probabilities, so
-its threshold lives on the vote scale — the ranking metrics are unaffected.)</p>
+its threshold lives on the vote scale, the ranking metrics are unaffected.)</p>
 <p>On the oracle target both champions score perfectly to three decimals, confirming the
-boundary-recovery sanity check.</p>
+boundary-recovery sanity check of these fundamentally tree-decision-based models.</p>
 <p>The confusion matrices below make the soft-target trade-off concrete at two operating
 points: the default 0.5 cutoff and the F1-maximizing cutoff (0.685 for GBT).</p>
 </div>
@@ -10182,8 +10186,13 @@ flagged as post-course work in issue
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="The-cautionary-tale:-regression-on-a-probability">The cautionary tale: regression on a probability<a class="anchor-link" href="#The-cautionary-tale:-regression-on-a-probability">¶</a></h3><p>Ridge regression was fit on the <em>continuous</em> <code>Y_Soft_BT</code> — deliberately the wrong tool, kept
-in the lineup to show <em>why</em> it is wrong rather than assert it.</p>
+<h3 id="The-cautionary-tale:-regression-on-a-probability-(optional)">The cautionary tale: regression on a probability (optional)<a class="anchor-link" href="#The-cautionary-tale:-regression-on-a-probability-(optional)">¶</a></h3><p>Ridge regression was fit on the <em>continuous</em> <code>Y_Soft_BT</code> — deliberately the wrong tool, kept
+in the lineup to show <em>why</em> it is wrong rather than assert it. To be precise about test-set
+discipline: only the <strong>two CV champions above</strong> were evaluated on the test set for model
+selection and performance claims. The ridge model was eliminated by its CV score like the
+other linear models; the held-out diagnostic below (the fraction of its predictions falling
+outside $[0,1]$) is reported purely as a pedagogical exhibit of <em>why</em> regression is the
+wrong tool for a probability, not as a candidate's test performance.</p>
 </div>
 </div>
 </div>
@@ -10225,45 +10234,45 @@ Predictions outside [0, 1]: 10.1% (mean prediction 0.4030, bias 0.6313)
 <div class="jp-RenderedHTMLCommon jp-RenderedHTML jp-OutputArea-output" data-mime-type="text/html" tabindex="0">
 <style type="text/css">
 </style>
-<table id="T_59087">
+<table id="T_955fc">
 <thead>
 <tr>
-<th class="col_heading level0 col0" id="T_59087_level0_col0">feature</th>
-<th class="col_heading level0 col1" id="T_59087_level0_col1">coefficient</th>
+<th class="col_heading level0 col0" id="T_955fc_level0_col0">feature</th>
+<th class="col_heading level0 col1" id="T_955fc_level0_col1">coefficient</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td class="data row0 col0" id="T_59087_row0_col0">H</td>
-<td class="data row0 col1" id="T_59087_row0_col1">-0.392</td>
+<td class="data row0 col0" id="T_955fc_row0_col0">H</td>
+<td class="data row0 col1" id="T_955fc_row0_col1">-0.392</td>
 </tr>
 <tr>
-<td class="data row1 col0" id="T_59087_row1_col0">Sigma_TE</td>
-<td class="data row1 col1" id="T_59087_row1_col1">-0.141</td>
+<td class="data row1 col0" id="T_955fc_row1_col0">Sigma_TE</td>
+<td class="data row1 col1" id="T_955fc_row1_col1">-0.141</td>
 </tr>
 <tr>
-<td class="data row2 col0" id="T_59087_row2_col0">DeltaMA50</td>
-<td class="data row2 col1" id="T_59087_row2_col1">-0.099</td>
+<td class="data row2 col0" id="T_955fc_row2_col0">DeltaMA50</td>
+<td class="data row2 col1" id="T_955fc_row2_col1">-0.099</td>
 </tr>
 <tr>
-<td class="data row3 col0" id="T_59087_row3_col0">G_YTD</td>
-<td class="data row3 col1" id="T_59087_row3_col1">0.090</td>
+<td class="data row3 col0" id="T_955fc_row3_col0">G_YTD</td>
+<td class="data row3 col1" id="T_955fc_row3_col1">0.090</td>
 </tr>
 <tr>
-<td class="data row4 col0" id="T_59087_row4_col0">Sector_0</td>
-<td class="data row4 col1" id="T_59087_row4_col1">0.083</td>
+<td class="data row4 col0" id="T_955fc_row4_col0">Sector_0</td>
+<td class="data row4 col1" id="T_955fc_row4_col1">0.083</td>
 </tr>
 <tr>
-<td class="data row5 col0" id="T_59087_row5_col0">DeltaMA200</td>
-<td class="data row5 col1" id="T_59087_row5_col1">-0.083</td>
+<td class="data row5 col0" id="T_955fc_row5_col0">DeltaMA200</td>
+<td class="data row5 col1" id="T_955fc_row5_col1">-0.083</td>
 </tr>
 <tr>
-<td class="data row6 col0" id="T_59087_row6_col0">S</td>
-<td class="data row6 col1" id="T_59087_row6_col1">0.061</td>
+<td class="data row6 col0" id="T_955fc_row6_col0">S</td>
+<td class="data row6 col1" id="T_955fc_row6_col1">0.061</td>
 </tr>
 <tr>
-<td class="data row7 col0" id="T_59087_row7_col0">SigmaRange</td>
-<td class="data row7 col1" id="T_59087_row7_col1">0.055</td>
+<td class="data row7 col0" id="T_955fc_row7_col0">SigmaRange</td>
+<td class="data row7 col1" id="T_955fc_row7_col1">0.055</td>
 </tr>
 </tbody>
 </table>
@@ -10362,12 +10371,11 @@ whether lot-states cluster naturally.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>The scree plot says the feature space is <strong>genuinely high-dimensional</strong>: the first component
+<p>The screen plot says the feature space is <strong>genuinely high-dimensional</strong>: the first component
 explains only 26% of variance and it takes nine of the fifteen components to clear the 95%
-threshold — there is no two-dimensional summary hiding inside, consistent with the
-mostly-modest correlation heatmap. The fifteenth eigenvalue is numerically zero, the
+threshold. There is essentially no two-dimensional summary hiding inside as similarly explaind by the feature correlation matrix. The fifteenth eigenvalue is numerically zero, the
 algebraic echo of the constant <code>K</code> column found in the EDA. K-means prefers the smallest
-$k$ tried ($k=5$, silhouette ≈ 0.33 and falling with $k$) — weak clustering overall, which
+$k$ tried ($k=5$, silhouette ≈ 0.33 and falling with $k$), weak clustering overall, which
 makes sense for data that is a smooth panel of market states rather than a mixture of
 distinct regimes.</p>
 </div>
@@ -10380,53 +10388,51 @@ distinct regimes.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Conclusion">Conclusion<a class="anchor-link" href="#Conclusion">¶</a></h2><p>This project set out to learn the tax-loss-harvest decision from lot-level state, and the
-results split cleanly along the two research questions. On the sanity check — recovering the
-deterministic oracle — the tree ensembles were essentially perfect (test PR-AUC 0.999/0.993),
-and the <em>pattern</em> of linear performance turned out to be the more instructive result: plain
+<h2 id="Conclusion-/-TLDR">Conclusion / TLDR<a class="anchor-link" href="#Conclusion-/-TLDR">¶</a></h2><p>This project set out to learn the tax-loss-harvest decision at lot-level, with the
+results splitting cleanly for the two research questions. On the sanity check, recovering the
+deterministic oracle, the tree ensembles were essentially perfect (test PR-AUC 0.999/0.993),
+and the pattern of linear performance turned out to be the more instructive result: plain
 logistic nearly solved it too (CV 0.987), because with the $1M gains seed the
 $G^{\mathrm{YTD}}$ gate never closes and the four-gate conjunction effectively collapses to
-a single loss threshold — while elastic net (0.442) and least squares (0.372) still failed.
+a single loss threshold, while elastic net (0.442) and least squares (0.372) still failed.
 A conjunction is only as non-linear as the number of gates that actually bind. On the real
-question — predicting whether a lot becomes harvestable within 30 days — <strong>gradient boosted
-trees won decisively</strong>: 0.858 CV PR-AUC, 0.862 on the sealed test set against a 19.9% base
+question of predicting whether a lot becomes harvestable within 30 days, <strong>gradient boosted
+trees won without a question</strong>: 0.858 CV PR-AUC, 0.862 on the sealed test set against a 19.9% base
 rate, with 76% precision at 83% recall at the tuned operating point. Random forests took a
 clear second (0.694); the linear tier sat at 0.56–0.65, consistently preferring its weakest
 penalties; and ridge regression on the continuous label failed in the instructive way,
 sending 10% of its predictions outside $[0,1]$. In the CAPM framing of the introduction, the
-champion is the machinery behind the strategy's one-line promise — <em>hold
+champion is the machinery behind the strategy's one-line promise -&gt; <em>hold
 $\hat\beta_{DI} \approx 1$, harvest $\alpha$ from the tax code</em>: it ranks lots by expected
 harvestability so that $\alpha_{\text{tax}}$ can be collected while the tracking-error gate
-keeps the index estimator tight.</p>
-<p>Two results genuinely surprised us. First, the <strong>size of the GBT–RF gap</strong> (0.16 of PR-AUC):
+keeps the index estimator relatively stable to the index's movements.</p>
+<p>Two results genuinely suprising (as talked about in office hours): First, the <strong>size of the GBT–RF gap</strong> (0.16 of PR-AUC):
 both are tree ensembles with similar capacity per tree, but boosting's sequential
 error-correction evidently matters enormously when the positive class lives in a thin,
-sharply-bounded region — averaging independent trees blurs exactly the boundary that
-boosting sharpens. Second, <strong>how much the oracle's geometry depends on calibration</strong>: under
+sharply-bounded region rather than averaging independent trees which is less goal-oriented. Second, <strong>how much the oracle's geometry depends on calibration</strong>: under
 an earlier 5% ($500K) gains seed the budget was exhausted mid-year, all four gates bound,
 and every linear model collapsed on the oracle target; recalibrating the seed to the index's
 ~10% historical return left the gains gate permanently open and made the boundary nearly
-linear. The models did not change — the <em>economics</em> did, and the difficulty moved with it.
+linear. The models did not change but the <em>economics</em> did, and the difficulty moved with it.
 Meanwhile the champion's near-identical CV and test scores (0.858 / 0.862) say the soft
 target's predictable signal is stable across folds and the held-out set.</p>
 <p>The honest caveats double as the roadmap. The labels are <strong>semi-synthetic</strong> (real prices,
 simulated portfolio), the window is a single, mostly-bullish two-year span, the <code>Sector</code>
 column is degenerate and <code>K</code> constant in this run, and the random split's conditional-
-independence argument leans on the portfolio state being encoded in the features — a
+independence argument leans on the portfolio state being encoded in the features, a
 <strong>walk-forward temporal split</strong> (train on year one, test on year two) is the natural
-robustness check and is queued as post-course work. Beyond that, the next steps tracked in
+robustness check and is queued as post-course task. Beyond that, the next steps tracked in
 the repository are richer soft-label families (issue
 <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/17">#17</a>), longer price history
 (issue <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/19">#19</a>), portfolio-level
-economic evaluation — translating confusion matrices into realized tax alpha net of
-tracking error (issue <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/12">#12</a>) —
+economic evaluation, translating confusion matrices into realized tax alpha net of
+tracking error (issue <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/12">#12</a>)
 and, further out, Marchenko–Pastur covariance cleaning for the tracking-error model (issue
-<a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/5">#5</a>) and a reinforcement-
-learning policy layer that <em>acts</em> on these predictions (issue
+<a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/5">#5</a>) and a reinforcement-learning policy layer that acts on these predictions (issue
 <a href="https://github.com/ieatyoursushi/DirectIndexing_ML/issues/15">#15</a>). Within the scope this
-course grades, though, the central conclusion stands: the harvest decision boundary is
+course, the central conclusion stands that the harvest decision boundary is
 learnable, its 30-day forward propensity is largely predictable from current state, and
-gradient boosted trees are the right tool for both.</p>
+gradient boosted trees are the right tool for both for the current bullish market-schema obserevd.</p>
 </div>
 </div>
 </div>
@@ -10454,6 +10460,14 @@ wash-sale rule. <a href="https://www.irs.gov/publications/p550">https://www.irs.
 <code>DataMemo/MLNetLeakageAudit.md</code>, in the
 <a href="https://github.com/ieatyoursushi/DirectIndexing_ML">project repository</a>.</li>
 </ul>
+<p><strong>LLM use citation (per course policy).</strong> Claude (Anthropic) was used as a coding
+assistant for <strong>code portions</strong> of this project: portions of the C# simulation and ML.NET
+layers (see the co-authorship notes in <code>DataMemo/</code>), the Python report-layer scripts
+(<code>scripts/report.py</code>, <code>scripts/codebook.py</code>, <code>scripts/report_helpers.py</code>,
+<code>scripts/dependencies.py</code>, <code>scripts/package_submission.py</code>), and the code cells of this
+notebook. All AI-assisted code was reviewed, tested, and is documented in the repository's
+commit history. A full methodology statement — division of labor, file-level scope, and the
+verification process — is included with this submission as <code>AI_USAGE.md</code>.</p>
 <p><strong>Reproducing this report</strong> (commands run from <code>src/</code>; .NET 8 and
 <a href="https://docs.astral.sh/uv/">uv</a> required):</p>
 <div class="highlight"><pre><span></span>export FMP_API_KEY=...      # only needed to re-download raw prices
