@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DirectIndexing.Core.Simulation;
 using DirectIndexing.DataCollection;
 using DirectIndexing.Export;
@@ -10,16 +11,57 @@ switch (mode)
 {
     case "download":
     {
-        var apiKey = Environment.GetEnvironmentVariable("FMP_API_KEY")
-                     ?? throw new InvalidOperationException(
-                         "FMP_API_KEY environment variable is not set. " +
-                         "Export it before running: export FMP_API_KEY=your_key_here");
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var apiKey = Environment.GetEnvironmentVariable("FMP_API_KEY")
+                         ?? throw new InvalidOperationException(
+                             "FMP_API_KEY environment variable is not set. " +
+                             "Export it before running: export FMP_API_KEY=your_key_here");
 
-        await new MarketDataDownloader(apiKey).DownloadAllHistoricalData("../data/raw", years: 2); 
+            DateOnly? startDate = null;
+            DateOnly? endDate = null;
+            int years = 2;
+
+            if (args.Length >= 3 && args[1] == "--from" && args[2].Length == 10)
+            {
+                if (DateOnly.TryParseExact(args[2], "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var sd))
+                    startDate = sd;
+                else
+                    Console.WriteLine($"[WARN] Invalid start date format: {args[2]}. Expected yyyy-MM-dd");
+            }
+
+            if (args.Length >= 5 && args[3] == "--to" && args[4].Length == 10)
+            {
+                if (DateOnly.TryParseExact(args[4], "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var ed))
+                    endDate = ed;
+                else
+                    Console.WriteLine($"[WARN] Invalid end date format: {args[4]}. Expected yyyy-MM-dd");
+            }
+
+            if (startDate.HasValue != endDate.HasValue)
+                throw new InvalidOperationException("Both --from and --to dates must be specified together, or neither.");
+
+            await new MarketDataDownloader(apiKey)
+                .DownloadAllHistoricalData("../data/raw", years: years, startDate: startDate, endDate: endDate);
+
+            sw.Stop();
+            Console.WriteLine($"[download] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
+        }
+        catch (InvalidOperationException ex)
+        {
+            sw.Stop();
+            Console.WriteLine($"[ERROR] {ex.Message}");
+            if (ex.InnerException != null)
+                Console.WriteLine($"[ERROR] Details: {ex.InnerException.Message}");
+            Console.WriteLine($"[download] Failed after {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
+            Environment.ExitCode = 1;
+        }
     }
     break;
     case "simulate":
     {
+        var sw = Stopwatch.StartNew();
         var loader = new PriceLoader();
         loader.Load("../data/raw", "../data/constituents.json");
 
@@ -30,6 +72,8 @@ switch (mode)
         softLabeller.Label(snapshots);
 
         SimulationExporter.WriteCsv(snapshots, "../data/lots.csv");
+        sw.Stop();
+        Console.WriteLine($"[simulate] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
     }
     break;
     // Alternate: Monte Carlo simulation with synthetic GBM prices.
@@ -134,6 +178,7 @@ switch (mode)
     break;
     case "mlnet-all":
     {
+        var sw = Stopwatch.StartNew();
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
         MLnetPipeline.RunUnsupervised(data, "../data/artifacts-mlnet/");
         // Champion-selection: CV all supervised models, full eval for best 1-2 + linreg demonstration.
@@ -144,6 +189,8 @@ switch (mode)
             artifactsDir: "../../../data/artifacts-mlnet/",
             edaDir:       "../../Export/eda-mlnet/",
             modelsDir:    "../../Export/models-mlnet/");
+        sw.Stop();
+        Console.WriteLine($"[mlnet-all] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
         Environment.ExitCode = rc;
     }
     break;

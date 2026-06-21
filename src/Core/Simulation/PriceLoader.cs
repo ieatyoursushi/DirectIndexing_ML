@@ -145,6 +145,12 @@ public sealed class PriceLoader
             _ma200[symbol]    = ComputeMA(closes, 200);
         }
 
+        if (N <= WarmupDays)
+            throw new InvalidOperationException(
+                $"[PriceLoader] Only {N} calendar days loaded but {WarmupDays} are needed " +
+                $"for warmup alone (MA-200). Download a wider date range — the simulation " +
+                $"needs at least {WarmupDays + 1} trading days to produce any snapshots.");
+
         Console.WriteLine(
             $"[PriceLoader] {_close.Count} tickers loaded, {N} calendar days. " +
             $"Simulation starts at day {WarmupDays} ({GetDate(WarmupDays)}).");

@@ -106,13 +106,26 @@ public sealed class MarketDataDownloader
                   $"&to={to:yyyy-MM-dd}" +
                   $"&apikey={_apiKey}";
 
-        return await _http.GetStringAsync(url);
+        try
+        {
+            return await _http.GetStringAsync(url);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException(
+                $"API request failed for {symbol} ({from:yyyy-MM-dd} to {to:yyyy-MM-dd}). " +
+                $"This likely indicates the date range is too long or the API is unavailable. " +
+                $"Consider reducing the date range or check the API service status. " +
+                $"Original error: {ex.Message}", ex);
+        }
     }
 
     public async Task DownloadAllHistoricalData(
         string outputDir,
         int years = 2,
-        int warmupTradingDays = 200)
+        int warmupTradingDays = 200,
+        DateOnly? startDate = null,
+        DateOnly? endDate = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -125,13 +138,74 @@ public sealed class MarketDataDownloader
         await File.WriteAllTextAsync(constituentsPath,
             JsonSerializer.Serialize(constituents, new JsonSerializerOptions { WriteIndented = true }));
 
-        var to = DateOnly.FromDateTime(DateTime.Today);
+        DateOnly to, windowFrom;
 
-        // Extend the fetch window backward to cover the warmup period (e.g. 200 trading days
-        // for MA-200) so the warmup sits *before* the n-year simulation window rather than
-        // consuming part of it.  200 trading days ≈ 290 calendar days (200 × 365.25 / 252).
-        int extraCalendarDays = (int)Math.Ceiling(warmupTradingDays * 365.25 / 252.0);
-        var windowFrom = to.AddYears(-years).AddDays(-extraCalendarDays);  // rolling window floor
+        if (startDate.HasValue && endDate.HasValue)
+        {
+            windowFrom = startDate.Value;
+            to = endDate.Value;
+
+            int calendarSpan = to.DayNumber - windowFrom.DayNumber;
+            int estimatedTradingDays = (int)(calendarSpan * 252.0 / 365.25);
+
+            if (estimatedTradingDays <= warmupTradingDays)
+                Console.WriteLine(
+                    $"[WARN] Date range {windowFrom:yyyy-MM-dd} to {to:yyyy-MM-dd} spans ~{estimatedTradingDays} " +
+                    $"trading days, but {warmupTradingDays} are consumed by warmup (MA-200). " +
+                    $"The simulation will have zero or very few usable days. " +
+                    $"Consider starting at least {warmupTradingDays} trading days (~{(int)Math.Ceiling(warmupTradingDays * 365.25 / 252.0)} calendar days) earlier.");
+
+            Console.WriteLine($"Using explicit date range: {windowFrom:yyyy-MM-dd} to {to:yyyy-MM-dd}");
+        }
+        else
+        {
+            // Fall back to rolling window logic
+            to = DateOnly.FromDateTime(DateTime.Today);
+            // Extend the fetch window backward to cover the warmup period (e.g. 200 trading days
+            // for MA-200) so the warmup sits *before* the n-year simulation window rather than
+            // consuming part of it.  200 trading days ≈ 290 calendar days (200 × 365.25 / 252).
+            int extraCalendarDays = (int)Math.Ceiling(warmupTradingDays * 365.25 / 252.0);
+            windowFrom = to.AddYears(-years).AddDays(-extraCalendarDays);
+            Console.WriteLine($"Using rolling window: {years} year(s) + {extraCalendarDays} calendar day(s) warmup = {windowFrom:yyyy-MM-dd} to {to:yyyy-MM-dd}");
+        }
+
+        // ── Range-mismatch guard: sample one existing file to detect stale data ──
+        // If cached files cover a range that isn't a subset of the requested window,
+        // wipe them so the simulation doesn't mix date ranges across tickers.
+        var existingFiles = Directory.GetFiles(outputDir, "*.json");
+        if (existingFiles.Length > 0)
+        {
+            var samplePath = existingFiles[0];
+            try
+            {
+                var sampleJson  = await File.ReadAllTextAsync(samplePath);
+                var sampleData  = JsonSerializer.Deserialize<List<DailyPrice>>(sampleJson, JsonOpts);
+                if (sampleData is { Count: > 0 })
+                {
+                    var cachedMin = sampleData.Min(p => p.Date);
+                    var cachedMax = sampleData.Max(p => p.Date);
+                    bool isSubset = cachedMin >= windowFrom && cachedMax <= to;
+
+                    if (!isSubset)
+                    {
+                        Console.WriteLine(
+                            $"[RangeGuard] Cached data ({Path.GetFileNameWithoutExtension(samplePath)}: " +
+                            $"{cachedMin:yyyy-MM-dd}..{cachedMax:yyyy-MM-dd}) is not a subset of the " +
+                            $"requested window ({windowFrom:yyyy-MM-dd}..{to:yyyy-MM-dd}). " +
+                            $"Clearing {existingFiles.Length} cached files for clean re-download.");
+
+                        foreach (var f in existingFiles)
+                            File.Delete(f);
+                            }
+                }
+            }
+            catch (JsonException)
+            {
+                Console.WriteLine("[RangeGuard] Sample file corrupted, clearing cache.");
+                foreach (var f in existingFiles)
+                    File.Delete(f);
+            }
+        }
 
         int completed = 0;
         int skipped   = 0;
@@ -156,7 +230,6 @@ public sealed class MarketDataDownloader
                     }
                     catch (JsonException ex)
                     {
-                        // Corrupted or truncated file — discard it and do a full re-fetch
                         Console.WriteLine($"[WARN] Corrupted cache for {stock.Symbol}, re-fetching: {ex.Message}");
                         existing = null;
                     }
@@ -167,11 +240,10 @@ public sealed class MarketDataDownloader
                         var minDate = existing.Min(p => p.Date);
 
                         bool needsNewData = maxDate < to;
-                        bool needsOldData = minDate > windowFrom;  // file doesn't reach back far enough
+                        bool needsOldData = minDate > windowFrom;
 
                         if (!needsNewData && !needsOldData)
                         {
-                            // Both ends of the window are covered — no fetch needed
                             skipped++;
                             completed++;
                             if (completed % 50 == 0)
@@ -179,9 +251,6 @@ public sealed class MarketDataDownloader
                             continue;
                         }
 
-                        // If we need older history, start the fetch from the window floor so FMP
-                        // returns the full missing range; the merge+dedup step below reconciles it.
-                        // If we only need newer data, start the day after what we already have.
                         fetchFrom = needsOldData ? windowFrom : maxDate.AddDays(1);
                     }
                 }
@@ -192,19 +261,17 @@ public sealed class MarketDataDownloader
                 List<DailyPrice> merged;
                 if (existing is { Count: > 0 } && newPrices.Count > 0)
                 {
-                    // Merge: combine, deduplicate by date, apply rolling window, sort newest-first
                     merged = existing
                         .Concat(newPrices)
                         .GroupBy(p => p.Date)
                         .Select(g => g.First())
-                        .Where(p => p.Date >= windowFrom)
+                        .Where(p => p.Date >= windowFrom && p.Date <= to)
                         .OrderByDescending(p => p.Date)
                         .ToList();
                     updated++;
                 }
                 else
                 {
-                    // First download or no new data — write raw as-is (already newest-first from FMP)
                     merged = newPrices.Count > 0 ? newPrices : existing ?? [];
                 }
 
