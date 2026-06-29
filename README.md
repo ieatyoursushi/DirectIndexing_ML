@@ -7,8 +7,8 @@ every tax lot on every day with a harvesting rulebook, and trains supervised mod
 
 > **New here, or coming back after a while?** Read this README for the front-door tour (what it
 > is, how to run it, the methodology). For the full project recap, the comparison to the original
-> proposal, and the v0.3–v0.4 plan, see **[`PROJECT_RECAP.md`](PROJECT_RECAP.md)**. For the
-> first-principles math walk of the whole codebase, see **[`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md)**.
+> proposal, and the v0.3–v0.4 plan, see **[`PSTAT231_RECAP.md`](PSTAT231_RECAP.md)**. For the
+> first-principles math walk of the whole codebase, see **[`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md)**. (PSTAT 231 being the intro-ML grad project based course)
 
 **Status:** v0.1 + v0.2 complete (v0.2 was the PSTAT 231 final submission). Champion model (gradient-boosted trees) scores ~0.86 PR-AUC on the soft-label target. See [Results](#results).
 
