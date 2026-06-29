@@ -115,9 +115,29 @@ public static class BinaryMetrics
             BestThreshold = bestThresh,
             Tp05 = tp05, Fp05 = fp05, Tn05 = tn05, Fn05 = fn05,
             TpBest = tpB, FpBest = fpB, TnBest = tnB, FnBest = fnB,
-            RocCurve = roc.ToArray(),
-            PrCurve  = pr.ToArray(),
+            RocCurve = Downsample(roc),
+            PrCurve  = Downsample(pr),
         };
+    }
+
+    // Curves carry one point per distinct score threshold, which is ~O(n) for a
+    // model with continuous scores (e.g. linear regression on 1.8M rows → ~360k
+    // points → an 80MB+ JSON that stalls serialization). The AUC/F1 scalars above
+    // are computed over the FULL sweep and are unaffected by how many points we
+    // *store*; downsampling the stored polyline to a fixed cap keeps the curve
+    // visually identical (the Python renderer thins to ~500 anyway) while bounding
+    // artifact size. First and last points are always retained.
+    private const int MaxCurvePoints = 2000;
+
+    private static CurvePoint[] Downsample(List<CurvePoint> pts)
+    {
+        if (pts.Count <= MaxCurvePoints) return pts.ToArray();
+        var outp = new CurvePoint[MaxCurvePoints];
+        double stride = (double)(pts.Count - 1) / (MaxCurvePoints - 1);
+        for (int i = 0; i < MaxCurvePoints; i++)
+            outp[i] = pts[(int)Math.Round(i * stride)];
+        outp[MaxCurvePoints - 1] = pts[^1];   // guarantee the endpoint
+        return outp;
     }
 
     private static (int tp, int fp, int tn, int fn) Confusion(

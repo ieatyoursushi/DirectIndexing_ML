@@ -12,21 +12,23 @@ namespace DirectIndexing.ML.MLNet.Models;
 /// <summary>
 /// Random Forest binary classifier via <c>FastForestBinaryTrainer</c>.
 ///
-/// Grid (4 configs × 5 folds = 20 fits):
-///   numberOfTrees  ∈ {100, 200}
-///   numberOfLeaves ∈ {20, 31}
+/// Grid (12 configs × 5 folds = 60 fits):
+///   numberOfTrees   ∈ {100, 200}
+///   numberOfLeaves  ∈ {20, 31}
+///   featureFraction ∈ {0.3, 0.5, 0.7}   ← the ML.NET analogue of sklearn's
+///                                          mtry / max_features (m), the fraction
+///                                          of features sampled per split.
 ///
-/// FastForest uses random feature subsampling per split automatically
-/// (FeatureFraction ≈ sqrt(p)/p ≈ sklearn's <c>max_features='sqrt'</c>).
-/// The default FeatureFraction is used and documented in the output JSON.
+/// Tuning <c>featureFraction</c> is the decorrelation knob of a random forest:
+/// a lower fraction forces trees to disagree (lower variance, possibly higher
+/// bias). It is the single most important RF hyperparameter and is now searched
+/// rather than held at the FastForest default.
 ///
 /// <b>Preprocessing note:</b> NormalizeMeanVariance is scale-invariant for trees
 /// and kept only for schema consistency with linear trainers.
 /// </summary>
 public static class RandomForestTrainer
 {
-    private const double DefaultFeatureFraction = 0.7;  // FastForest default
-
     public record RfOutput(
         BinaryMetricsResult Metrics,
         int    BestNumberOfTrees,
@@ -93,7 +95,7 @@ public static class RandomForestTrainer
             Metrics:           metrics,
             BestNumberOfTrees:  (int)search.BestParams["numberOfTrees"],
             BestNumberOfLeaves: (int)search.BestParams["numberOfLeaves"],
-            FeatureFraction:   DefaultFeatureFraction,
+            FeatureFraction:   (double)search.BestParams["featureFraction"],
             PerFoldCvScores:   search.PerFoldScores,
             AllConfigs:        search.All.Select(a => (a.Params, a.MeanScore)).ToList(),
             RowsTrain:         train.Count,
@@ -103,8 +105,9 @@ public static class RandomForestTrainer
 
     private static Dictionary<string, object[]> BuildGrid() => new()
     {
-        ["numberOfTrees"]  = new object[] { 100, 200 },
-        ["numberOfLeaves"] = new object[] { 20,  31  },
+        ["numberOfTrees"]   = new object[] { 100, 200 },
+        ["numberOfLeaves"]  = new object[] { 20,  31  },
+        ["featureFraction"] = new object[] { 0.3, 0.5, 0.7 },
     };
 
     private static IEstimator<ITransformer> BuildEstimator(
@@ -117,7 +120,7 @@ public static class RandomForestTrainer
             ExampleWeightColumnName = FeatureLists.WeightCol,
             NumberOfTrees           = (int)cfg["numberOfTrees"],
             NumberOfLeaves          = (int)cfg["numberOfLeaves"],
-            FeatureFraction         = DefaultFeatureFraction,
+            FeatureFraction         = (double)cfg["featureFraction"],
         };
         return PreprocessingPipeline.Build(ml)
             .Append(ml.BinaryClassification.Trainers.FastForest(options));
