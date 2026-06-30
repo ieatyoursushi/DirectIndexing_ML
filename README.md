@@ -305,3 +305,9 @@ and v0.4 live in [`PROJECT_RECAP.md` §7–§9](PROJECT_RECAP.md).**
 | [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md) | The v0.3 design: promoting the gains gate to a continuous tax ledger. |
 | [`DataMemo/DataMemo.ipynb`](DataMemo/DataMemo.ipynb) | The original pre-implementation proposal (with the professor's feedback). |
 | [`AI_USAGE.md`](AI_USAGE.md) | AI-assistance disclosure for the course submission. |
+
+
+## Project Images: 
+
+<img width="1679" height="836" alt="Screenshot 2026-06-29 at 6 49 28 PM" src="https://github.com/user-attachments/assets/0ada718f-1cdb-43b0-a427-88d0c4615539" />
+
