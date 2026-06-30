@@ -1,0 +1,257 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>Codebook — lots.csv</title>
+<style>
+ body { font-family: -apple-system, system-ui, sans-serif; max-width: 1000px; margin: 2em auto; padding: 0 1em; color: #222; }
+ h1 { border-bottom: 2px solid #357; padding-bottom: .3em; }
+ h2 { color: #357; margin-top: 1.6em; }
+ table { border-collapse: collapse; margin: 1em 0; width: 100%; }
+ th, td { border: 1px solid #ddd; padding: 6px 12px; text-align: left; vertical-align: top; }
+ th { background: #f5f5f5; width: 11em; }
+ code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+ .note { color: #777; font-size: .9em; }
+</style></head><body>
+
+<h1>Codebook — <code>data/lots.csv</code></h1>
+<p><strong>170751</strong> rows × <strong>21</strong> columns.
+One row = one <em>lot snapshot</em>: the state of a single tax lot on a single
+simulated trading day. Missing values are empty cells (NaN).</p>
+
+
+<h2>1. <code>L</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (fractional return)</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Continuous in (−1, ∞). Negative = loss position.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>Lot.UnrealizedReturn(P_t)</code></td></tr>
+</table>
+<p>Unrealized return of the lot: L = (P_t − p_k) / p_k, where P_t is today's close and p_k is the lot's cost basis per share. Negative values are paper losses; L ≤ −0.02 is the oracle's loss gate.</p>
+
+<h2>2. <code>H</code></h2>
+<table>
+ <tr><th>Type</th><td>int</td></tr>
+ <tr><th>Units</th><td>trading days</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Non-negative integer.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>Lot.HoldingPeriod(t)</code></td></tr>
+</table>
+<p>Holding period of the lot: H = t − s_k, the number of simulation days since the lot was purchased.</p>
+
+<h2>3. <code>S</code></h2>
+<table>
+ <tr><th>Type</th><td>int (binary)</td></tr>
+ <tr><th>Units</th><td>—</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>0 = short-term (< 365 days), 1 = long-term (≥ 365 days).</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>Lot.IsLongTerm(t)</code></td></tr>
+</table>
+<p>Long-term holding flag: S = 1[H ≥ 365]. Determines whether the long-term or (higher) short-term capital-gains tax rate applies in the tax-alpha formula.</p>
+
+<h2>4. <code>B</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>US dollars per share</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Positive continuous.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>Lot.CostBasis</code></td></tr>
+</table>
+<p>Cost basis per share p_k — the price the lot was purchased at.</p>
+
+<h2>5. <code>W</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (portfolio fraction)</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Continuous in (0, 1).</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>derived in SimulationEngine</code></td></tr>
+</table>
+<p>Lot weight in the portfolio: W = q_k · P_t / V_t, the lot's share of total portfolio market value on day t.</p>
+
+<h2>6. <code>K</code></h2>
+<table>
+ <tr><th>Type</th><td>int</td></tr>
+ <tr><th>Units</th><td>count</td></tr>
+ <tr><th>Role</th><td>feature (lot-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Positive integer.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>counted from PortfolioState.OpenLots</code></td></tr>
+</table>
+<p>Number of open lots in the same ticker as this lot (including itself). Stays 1 in v0.1 unless harvested lots are re-opened.</p>
+
+<h2>7. <code>G_YTD</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>US dollars</td></tr>
+ <tr><th>Role</th><td>feature (portfolio-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Signed continuous. Positive = net realized gains.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>PortfolioState.G_YTD</code></td></tr>
+</table>
+<p>Net realized gain/loss for the calendar year to date, shared by every lot at the same timestep. Seeded at +$1,000,000 (10% of the $10M portfolio — the S&P 500's long-run annual return) at simulation start and re-seeded after each year-end reset to simulate externally realized gains. Harvesting a loss pushes G_YTD down; the oracle only fires while G_YTD > 0 (there must be gains to offset).</p>
+
+<h2>8. <code>Sigma_TE</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>annualized volatility (fraction)</td></tr>
+ <tr><th>Role</th><td>feature (portfolio-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Positive continuous; 0.05 = 5% annualized TE.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>TrackingErrorProxy.Update</code></td></tr>
+</table>
+<p>Forward-looking tracking-error estimate vs the equal-weight benchmark: σ_TE = sqrt(δwᵀ Σ̂ δw · 252), where Σ̂ is the daily return covariance matrix and δw the active-weight deviation from holding every constituent. Shared by every lot at the same timestep. The oracle requires σ_TE ≤ 0.05 (5% budget).</p>
+
+<h2>9. <code>WashClock</code></h2>
+<table>
+ <tr><th>Type</th><td>int</td></tr>
+ <tr><th>Units</th><td>calendar days</td></tr>
+ <tr><th>Role</th><td>feature (portfolio-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Non-negative integer. Sentinel 999 = ticker never harvested.</td></tr>
+ <tr><th>Missing</th><td>None (sentinel encodes 'never').</td></tr>
+ <tr><th>Source</th><td><code>PortfolioState.GetWashClock</code></td></tr>
+</table>
+<p>Days since the last harvest of this lot's ticker. The IRS wash-sale rule blocks re-claiming a loss within 30 days, so the oracle requires WashClock ≥ 30. Clocks persist across year-end.</p>
+
+<h2>10. <code>R_t</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (daily return)</td></tr>
+ <tr><th>Role</th><td>feature (asset-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>PriceLoader close series</code></td></tr>
+</table>
+<p>One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.</p>
+
+<h2>11. <code>SigmaRange</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (fraction of price)</td></tr>
+ <tr><th>Role</th><td>feature (asset-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Positive continuous.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>PriceLoader OHLC</code></td></tr>
+</table>
+<p>Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.</p>
+
+<h2>12. <code>DeltaMA50</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (fractional deviation)</td></tr>
+ <tr><th>Role</th><td>feature (asset-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 18 of 170751 rows (0.01%)</td></tr>
+ <tr><th>Source</th><td><code>computed in SimulationEngine</code></td></tr>
+</table>
+<p>Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentum / mean-reversion signal.</p>
+
+<h2>13. <code>DeltaMA200</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>unitless (fractional deviation)</td></tr>
+ <tr><th>Role</th><td>feature (asset-level)</td></tr>
+ <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 440 of 170751 rows (0.26%)</td></tr>
+ <tr><th>Source</th><td><code>computed in SimulationEngine</code></td></tr>
+</table>
+<p>Price deviation from the 200-day moving average: (P_t − MA_200) / MA_200. The 200-day warmup window exists so this is defined from the first active simulation day.</p>
+
+<h2>14. <code>TaxAlpha</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>US dollars</td></tr>
+ <tr><th>Role</th><td>feature (derived)</td></tr>
+ <tr><th>Values / encoding</th><td>Non-negative continuous; 0 when the lot has no loss or no gains exist to offset.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>derived in SimulationEngine</code></td></tr>
+</table>
+<p>Estimated tax savings from harvesting this lot today: TaxAlpha = τ(H) · |unrealized loss in dollars| · 1[G_YTD > 0], where τ(H) is the short- or long-term marginal tax rate selected by the holding period.</p>
+
+<h2>15. <code>DaysToYE</code></h2>
+<table>
+ <tr><th>Type</th><td>int</td></tr>
+ <tr><th>Units</th><td>calendar days</td></tr>
+ <tr><th>Role</th><td>feature (derived)</td></tr>
+ <tr><th>Values / encoding</th><td>Integer in [0, 365].</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>calendar arithmetic in SimulationEngine</code></td></tr>
+</table>
+<p>Calendar days remaining until December 31 of the simulated tax year. Year-end is when G_YTD resets, so harvest urgency varies with this clock.</p>
+
+<h2>16. <code>Y_Oracle</code></h2>
+<table>
+ <tr><th>Type</th><td>int (binary)</td></tr>
+ <tr><th>Units</th><td>—</td></tr>
+ <tr><th>Role</th><td>label (hard)</td></tr>
+ <tr><th>Values / encoding</th><td>0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>OracleBoundary.Label</code></td></tr>
+</table>
+<p>Deterministic oracle harvest decision — the conjunction of four gates: 1[L ≤ −0.02] · 1[Sigma_TE ≤ 0.05] · 1[G_YTD > 0] · 1[WashClock ≥ 30]. This is the decision boundary the supervised models try to learn. Never used as a model input.</p>
+
+<h2>17. <code>Y_Soft_GBM</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>probability</td></tr>
+ <tr><th>Role</th><td>label (soft, stochastic)</td></tr>
+ <tr><th>Values / encoding</th><td>Continuous in [0, 1] in increments of 1/200.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>SoftLabelBuilder + GbmSimulator.FractionFiring</code></td></tr>
+</table>
+<p>Probability the oracle fires within the next 30 trading days, estimated as the fraction of 200 geometric-Brownian-motion forward price paths (per-stock σ calibrated from trailing 21-day realized volatility) on which the oracle predicate is hit, with portfolio state frozen at the snapshot. First-passage semantics: each path counts at most once.</p>
+
+<h2>18. <code>Y_Soft_BT</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>fraction of days</td></tr>
+ <tr><th>Role</th><td>label (soft, deterministic)</td></tr>
+ <tr><th>Values / encoding</th><td>Continuous in [0, 1] in increments of 1/30.</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 11162 of 170751 rows (6.54%)</td></tr>
+ <tr><th>Source</th><td><code>SoftLabelBuilder (real forward window)</code></td></tr>
+</table>
+<p>Fraction of the next 30 actual trading days on which the oracle would fire, computed from the real forward price series with portfolio state frozen at the snapshot. The primary supervised training target (binarized as Y_Soft_BT > 0 for classification).</p>
+
+<h2>19. <code>Symbol</code></h2>
+<table>
+ <tr><th>Type</th><td>string</td></tr>
+ <tr><th>Units</th><td>—</td></tr>
+ <tr><th>Role</th><td>metadata (dropped before modeling)</td></tr>
+ <tr><th>Values / encoding</th><td>Uppercase ticker string.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>SPY holdings (constituents.json)</code></td></tr>
+</table>
+<p>Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.</p>
+
+<h2>20. <code>Sector</code></h2>
+<table>
+ <tr><th>Type</th><td>string (categorical)</td></tr>
+ <tr><th>Units</th><td>—</td></tr>
+ <tr><th>Role</th><td>categorical feature</td></tr>
+ <tr><th>Values / encoding</th><td>'-' or empty → 'Unknown' before one-hot encoding (vocabulary fit on the training fold only).</td></tr>
+ <tr><th>Missing</th><td>'-' placeholder ≈99.5% of rows; empty ≈0.5%. — observed: 961 of 170751 rows (0.56%)</td></tr>
+ <tr><th>Source</th><td><code>SPY holdings (constituents.json)</code></td></tr>
+</table>
+<p>GICS-style sector of the ticker from the SPY holdings file. In the v0.1 data this column is degenerate: ≈99.5% of rows carry the placeholder '-' and the rest are empty, so after cleaning it is effectively a single 'Unknown' category.</p>
+
+<h2>21. <code>Timestep</code></h2>
+<table>
+ <tr><th>Type</th><td>int</td></tr>
+ <tr><th>Units</th><td>trading-day index</td></tr>
+ <tr><th>Role</th><td>metadata (dropped before modeling)</td></tr>
+ <tr><th>Values / encoding</th><td>Integer in [200, 699].</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>SimulationEngine day loop</code></td></tr>
+</table>
+<p>Simulation day index t. Days 0–199 are the moving-average warmup (no rows emitted); active rows span t = 200–699, roughly two calendar years of real price history.</p>
+
+
+<p class="note">Generated by <code>scripts/codebook.py</code> from
+<code>scripts/codebook_schema.py</code>; the generator asserts the schema
+matches the CSV header, so this document always reflects the shipped dataset.</p>
+</body></html>

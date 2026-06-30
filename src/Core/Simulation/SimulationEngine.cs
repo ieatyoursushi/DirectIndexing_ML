@@ -213,9 +213,11 @@ public sealed class SimulationEngine
             _lotCount[symbol] = 1;
         }
 
-        // Seed G_YTD with 5 % of portfolio value to simulate prior-year or external gains.
+        // Seed G_YTD with 10 % of portfolio value to simulate prior-year or external
+        // realized gains — calibrated to the S&P 500's ~10% historical annual return
+        // (the client realizes gains elsewhere at roughly the index's pace).
         // Without this the oracle's gYtd > 0 gate is permanently closed and no harvests fire.
-        _seedAmount = totalValue * 0.05m;
+        _seedAmount = totalValue * 0.10m;
         _state.SeedGYTD(_seedAmount);
 
         Console.WriteLine(
