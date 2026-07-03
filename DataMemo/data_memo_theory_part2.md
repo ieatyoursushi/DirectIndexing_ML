@@ -137,7 +137,18 @@ The conditional independence argument from Part I §2.2 is operationalized by th
 
 ### A.3.3 The built oracle — a 4-gate polytope
 
-Part I §3 defined the oracle as a 3-gate conjunction. The built system has **four gates**:
+> **⚠ Superseded in v0.25 (issue #23, PRs #24–#26).** §§A.3.3–A.3.5 describe the v0.2
+> oracle, now the `--oracle=gated` ablation baseline. The canonical oracle replaced the
+> gains gate ($g_3$) and the fine-grained TE cap ($g_2$) with the scalarized objective
+> $U(x) = \mathrm{TaxValue} - \lambda\sigma_{TE}^2 - c_{\mathrm{trade}}$ behind three hard
+> gates (loss depth, wash clock, loose $\theta_{\max}$ ceiling): the boundary
+> $\partial\Omega$ became the level set $\{U=0\}$ — the same mathematical object as the
+> fitted-model level curves $L_c$ of §5.A, now appearing at the label-generating stage.
+> The polytope analysis below remains correct *for the gated arm*, and the §A.5 finding
+> (0.987 → 0.12) survives as the empirical trigger of the redesign; the measured
+> gated-vs-scalarized before/after lives in `GYTD_Redesign_Plan.md` v2 §6.1.
+
+Part I §3 defined the oracle as a 3-gate conjunction. The built system had **four gates**:
 
 $$
 f^*(x) = \underbrace{\mathbf{1}[L \leq -\theta_1]}_{g_1} \cdot \underbrace{\mathbf{1}[\sigma_{TE} \leq \theta_2]}_{g_2} \cdot \underbrace{\mathbf{1}[G^{\mathrm{YTD}} > 0]}_{g_3} \cdot \underbrace{\mathbf{1}[\mathcal{W} \geq \theta_3]}_{g_4},

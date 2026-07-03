@@ -106,6 +106,16 @@ with $\theta_1=0.02$, $\theta_2=0.05$ (named constants in `OracleBoundary`, neve
 numbers). Geometrically: the intersection of four half-spaces — a convex polytope
 $\Omega\subset\mathcal X$ — and $f^*=\mathbb 1_\Omega$.
 
+> **⚠ Superseded in v0.25 (issue #23, PRs #24–#26).** The four-gate box above is now the
+> `--oracle=gated` ablation baseline. The canonical oracle is the scalarized composite
+> $f^* = \mathbb 1[L\le-\theta_1]\cdot\mathbb 1[\mathcal W\ge30]\cdot
+> \mathbb 1[\sigma_{TE}\le\theta_{\max}]\cdot\mathbb 1[U>0]$ with
+> $U = \mathrm{TaxValue} - \lambda\sigma_{TE}^2 - c_{\mathrm{trade}}$: the boundary is the
+> level set $\{U=0\}$, not a box corner, and the gains gate is gone (its information lives
+> in the `TaxLedger`'s capacity-aware `TaxValue`). See `GYTD_Redesign_Plan.md` v2 and the
+> updated `PortfolioMath.md` §2.3/§4 and `SimulationMath.md` §2. This document otherwise
+> describes the v0.2 lifecycle as built.
+
 **P3 — Why a simulator.** No public dataset records lot-level state under this rulebook. But
 the rulebook is *executable*, so the data can be **generated**: replay real prices through a
 portfolio that obeys P2, and log every (lot, day) state. The simulation layer is not an
@@ -293,6 +303,16 @@ Notes that matter mathematically:
   $\alpha_{\text{tax}} = \tau(h)\cdot|q_k(P_t-p_k)|\cdot\mathbb 1[G^{\mathrm{YTD}}>0]$,
   $\tau(h)=0.37$ if $h<365$ else $0.20$.
 
+> **⚠ v0.25 changes to this loop.** The `G_YTD` scalar became the `TaxLedger`
+> (`RollYearEnd` banks net loss beyond \$3k into a persistent `LossCarryforward`; the seed
+> is applied only in gated mode); the oracle call routes through
+> `OracleBoundary.Label(snapshot, OracleConfig)`; `TaxAlpha` was replaced by the
+> capacity-aware `TaxValue = τ(h)·min(loss, capacity) + τ_f·max(loss−capacity,0)·δ` (the old
+> feature valued winners' |gains| as losses and ignored capacity); and every row now also
+> records `Y_TaxValue`, `Y_Utility` = U(x), and the spectator `Y_Oracle_GatedSpec`
+> (v0.2 predicate over counterfactual legacy-G_YTD bookkeeping). Schema: 21 → 26 columns,
+> d = 15 → 17. See `SimulationMath.md` §2.
+
 [^2]: The seed was 5% ($500K) through most of v0.1–0.2 development; it was recalibrated to 10% ($1M) — the index's historical annual return — just before the v0.2 freeze, roughly doubling the positive rates. `SimulationMath.md` §2.1–2.2 reflects the current value.
 
 The **lot lifecycle** as a state machine (this is the event-chain view of the same loop):
@@ -407,6 +427,13 @@ once, because once harvested, the rest of that path is counterfactual.
 There is **no ML and no optimization inside the labeler** — no extrema search, no "best day
 to harvest." It evaluates a fixed predicate forward and averages. The hindsight is
 legitimate by P5: labels are the answer key.
+
+> **⚠ v0.25 note.** The closures above are mode-aware: under the scalarized oracle the
+> frozen state is the ledger's offsetCapacity (not $G^{\mathrm{YTD}}$), the loss is
+> re-dollarized at each forward price via the snapshot's (non-exported) share count, and the
+> holding period advances with the step so $\tau(h)$ can flip short→long inside the window.
+> The Cesàro/first-passage machinery is unchanged — the payoff of the oracle staying a black
+> box $\mathcal X\to\{0,1\}$ (§3.4's statelessness invariant did its job).
 
 [^3]: Honesty footnote: `ComputeBT` skips forward days where the ticker has no price (`continue`) but still divides by 30 — missing forward days count as "did not fire". A defensible convention (absence of evidence → no harvest), but it slightly biases $Y_{\text{Soft\_BT}}$ downward for sparsely-traded tickers; worth revisiting alongside issue #17's richer soft-label families.
 
@@ -718,15 +745,26 @@ independent. The exporter is a dumb serializer over the snapshot list, by design
 | $(x,y)$ | $\mathcal X\times\mathcal Y$, immutable | `LotStateVector` = one csv row |
 | $\hat\eta$ | $\mathcal X\to(0,1)$ (or raw score $\mathbb R$) | `*_model.zip` |
 
-**Constants:** $\theta_1=2\%$ loss gate · $\theta_2=5\%$ TE cap · 30d wash window ·
+**Constants (v0.2):** $\theta_1=2\%$ loss gate · $\theta_2=5\%$ TE cap · 30d wash window ·
 $\tau=37\%/20\%$ short/long · \$10M start · \$1M (10%) G_YTD seed · 200-day warmup ·
 999 = never-harvested clock sentinel · seeds: 42 everywhere.
 
-**Headline results:** GBT champion — soft target CV 0.858 / test 0.862 PR-AUC (base rate
-19.9%); oracle target recovered at ≥0.999 by trees and 0.987 by logistic (the \$1M gains
-seed keeps $G^{\mathrm{YTD}}>0$ on 100% of rows, collapsing the conjunction toward the
-single loss gate), while elnet/linreg fail (0.44/0.37); every linear model prefers its
-weakest penalty ⇒ the linear tier is representation-limited.
+**Constants added/changed in v0.25:** $\theta_{\max}=15\%$ tail-only TE ceiling (replaces
+$\theta_2$ as the hard gate; binds on 0 rows in 20y) · $\lambda=\$90{,}000$ per unit
+$\sigma_{TE}^2$ · $c_{\mathrm{trade}}=\$10$ round-trip · \$3,000/yr ordinary allowance ·
+$\tau_f=20\%$, $\delta=0.5$ carryforward discount · seed applied in gated mode only.
+
+**Headline results (v0.2, 2-year window):** GBT champion — soft target CV 0.858 / test 0.862
+PR-AUC (base rate 19.9%); oracle target recovered at ≥0.999 by trees and 0.987 by logistic
+(the \$1M gains seed keeps $G^{\mathrm{YTD}}>0$ on 100% of rows, collapsing the conjunction
+toward the single loss gate), while elnet/linreg fail (0.44/0.37); every linear model prefers
+its weakest penalty ⇒ the linear tier is representation-limited.
+
+**Headline results (v0.25, 20-year window, gated vs scalarized under d=17):** oracle-target
+GBT−logistic gap 0.155 → 0.015 (linreg/elnet leap ≈0.10 → ≈0.82 — the box corner, not model
+capacity, was the killer); soft-target tree advantage oracle-invariant (≈0.16–0.19 both
+arms); value-function regression linreg R²≈0.10 vs boosted trees ≈0.9. Full table:
+`GYTD_Redesign_Plan.md` §6.1.
 
 **Commands:** `download → simulate → mlnet-all → report → submission` (each idempotent,
 each replayable from its on-disk inputs).
