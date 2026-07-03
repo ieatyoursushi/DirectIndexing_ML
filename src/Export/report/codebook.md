@@ -1,7 +1,7 @@
 # Codebook — `data/lots.csv`
 
 **Project:** DirectIndexing — learning the tax-loss-harvest decision boundary
-**Dataset:** 1846015 rows × 24 columns. One row = one *lot snapshot*:
+**Dataset:** 1837354 rows × 26 columns. One row = one *lot snapshot*:
 the state of a single tax lot on a single simulated trading day.
 
 Rows are produced by the backtesting simulation (`dotnet run simulate`) over a
@@ -164,7 +164,7 @@ Days since the last harvest of this lot's ticker. The IRS wash-sale rule blocks 
 | **Units** | unitless (daily return) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | None. — observed: 2 of 1846015 rows (0.00%) |
+| **Missing** | None. — observed: 2 of 1837354 rows (0.00%) |
 | **Source** | `PriceLoader close series` |
 
 One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.
@@ -177,7 +177,7 @@ One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.
 | **Units** | unitless (fraction of price) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Positive continuous. |
-| **Missing** | None. — observed: 2 of 1846015 rows (0.00%) |
+| **Missing** | None. — observed: 2 of 1837354 rows (0.00%) |
 | **Source** | `PriceLoader OHLC` |
 
 Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.
@@ -190,7 +190,7 @@ Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 99 of 1846015 rows (0.01%) |
+| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 93 of 1837354 rows (0.01%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentum / mean-reversion signal.
@@ -203,7 +203,7 @@ Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentu
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 577 of 1846015 rows (0.03%) |
+| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 626 of 1837354 rows (0.03%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 200-day moving average: (P_t − MA_200) / MA_200. The 200-day warmup window exists so this is defined from the first active simulation day.
@@ -268,7 +268,7 @@ Probability the oracle fires within the next 30 trading days, estimated as the f
 | **Units** | fraction of days |
 | **Role** | label (soft, deterministic) |
 | **Values / encoding** | Continuous in [0, 1] in increments of 1/30. |
-| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 12141 of 1846015 rows (0.66%) |
+| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 12186 of 1837354 rows (0.66%) |
 | **Source** | `SoftLabelBuilder (real forward window)` |
 
 Fraction of the next 30 actual trading days on which the oracle would fire, computed from the real forward price series with portfolio state frozen at the snapshot. The primary supervised training target (binarized as Y_Soft_BT > 0 for classification).
@@ -286,7 +286,33 @@ Fraction of the next 30 actual trading days on which the oracle would fire, comp
 
 Cross-sectional regression target: taxValue_k of this lot at this timestep — the capacity-aware harvest value from the TaxLedger. Numerically identical to the TaxValue feature by construction in v0.25, so regressions on this target MUST exclude TaxValue from the feature set (the task is recovering g(ledger, H, L) from raw features). First member of the issue #17 richer-label family.
 
-## 22. `Symbol`
+## 22. `Y_Utility`
+
+| | |
+|---|---|
+| **Type** | float |
+| **Units** | US dollars |
+| **Role** | label (diagnostic / RL reward) |
+| **Values / encoding** | Signed continuous dollars. |
+| **Missing** | None. |
+| **Source** | `OracleBoundary.Utility(TaxValue, Sigma_TE, config)` |
+
+Raw scalarized objective before thresholding: U(x) = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = 0 until v0.25 PR 3). The scalarized oracle fires iff U > 0 (plus the hard gates), so the decision boundary is the level set {U = 0}. Computed under the run's OracleConfig in both gated and scalarized runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; exported as the issue-#17 continuous target and the v0.4 RL per-decision reward.
+
+## 23. `Y_Oracle_GatedSpec`
+
+| | |
+|---|---|
+| **Type** | int (binary) |
+| **Units** | — |
+| **Role** | label (ablation spectator) |
+| **Values / encoding** | 0 = legacy oracle would not harvest, 1 = would harvest. |
+| **Missing** | None. |
+| **Source** | `OracleBoundary legacy overload over spectator G_YTD` |
+
+What the v0.2 four-gate oracle would decide on THIS row, with legacy G_YTD bookkeeping (seed + realized P&L of this run's harvests, re-seeded each year-end) carried counterfactually alongside the acting oracle. Equals Y_Oracle in gated runs; in scalarized runs it enables same-row boundary-geometry comparison. Spectator ≠ acting: the trajectory (which rows exist, wash clocks, ledger state) was produced by the acting oracle.
+
+## 24. `Symbol`
 
 | | |
 |---|---|
@@ -299,7 +325,7 @@ Cross-sectional regression target: taxValue_k of this lot at this timestep — t
 
 Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.
 
-## 23. `Sector`
+## 25. `Sector`
 
 | | |
 |---|---|
@@ -312,7 +338,7 @@ Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.
 
 GICS-style sector of the ticker from the SPY holdings file. In the v0.1 data this column is degenerate: ≈99.5% of rows carry the placeholder '-' and the rest are empty, so after cleaning it is effectively a single 'Unknown' category.
 
-## 24. `Timestep`
+## 26. `Timestep`
 
 | | |
 |---|---|

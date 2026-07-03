@@ -36,4 +36,14 @@ public static class FeatureLists
     /// target must exclude "TaxValue" from the feature set.
     /// </summary>
     public const string TargetTaxValue = "Y_TaxValue";
+
+    /// <summary>Raw scalarized objective U(x) — diagnostic/RL-reward export, never a feature.</summary>
+    public const string TargetUtility = "Y_Utility";
+
+    /// <summary>v0.2 gated predicate evaluated as a spectator on the acting run's rows.</summary>
+    public const string GatedSpectator = "Y_Oracle_GatedSpec";
+
+    /// <summary>Feature set for the Y_TaxValue regression: everything except TaxValue.</summary>
+    public static readonly string[] NumericFeaturesTaxValueRegression =
+        NumericFeatures.Where(f => f != "TaxValue").ToArray();
 }

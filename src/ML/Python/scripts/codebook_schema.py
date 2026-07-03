@@ -329,6 +329,43 @@ COLUMNS: list[dict] = [
         "source": "TaxLedger.ComputeTaxValue at snapshot time",
     },
     {
+        "name": "Y_Utility",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "label (diagnostic / RL reward)",
+        "description": (
+            "Raw scalarized objective before thresholding: "
+            "U(x) = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = 0 "
+            "until v0.25 PR 3). The scalarized oracle fires iff U > 0 (plus the "
+            "hard gates), so the decision boundary is the level set {U = 0}. "
+            "Computed under the run's OracleConfig in both gated and scalarized "
+            "runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
+            "exported as the issue-#17 continuous target and the v0.4 RL "
+            "per-decision reward."
+        ),
+        "encoding": "Signed continuous dollars.",
+        "missing": "None.",
+        "source": "OracleBoundary.Utility(TaxValue, Sigma_TE, config)",
+    },
+    {
+        "name": "Y_Oracle_GatedSpec",
+        "dtype": "int (binary)",
+        "units": "—",
+        "role": "label (ablation spectator)",
+        "description": (
+            "What the v0.2 four-gate oracle would decide on THIS row, with "
+            "legacy G_YTD bookkeeping (seed + realized P&L of this run's "
+            "harvests, re-seeded each year-end) carried counterfactually "
+            "alongside the acting oracle. Equals Y_Oracle in gated runs; in "
+            "scalarized runs it enables same-row boundary-geometry comparison. "
+            "Spectator ≠ acting: the trajectory (which rows exist, wash clocks, "
+            "ledger state) was produced by the acting oracle."
+        ),
+        "encoding": "0 = legacy oracle would not harvest, 1 = would harvest.",
+        "missing": "None.",
+        "source": "OracleBoundary legacy overload over spectator G_YTD",
+    },
+    {
         "name": "Symbol",
         "dtype": "string",
         "units": "—",

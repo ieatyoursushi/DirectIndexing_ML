@@ -45,10 +45,27 @@ public static class MedianImputer
         return medians;
     }
 
+    /// <summary>
+    /// Regression variant: FloatLabel takes a continuous value instead of 1f/0f
+    /// (bool Label is set to FloatLabel &gt; 0 so stratification helpers keep working).
+    /// </summary>
+    public static List<MLReadyRow> Apply(
+        IReadOnlyList<LotStateVector> rows,
+        Dictionary<string, float> medians,
+        Func<LotStateVector, float> floatLabelSelector)
+        => Apply(rows, medians, r => floatLabelSelector(r) > 0f, floatLabelSelector);
+
     public static List<MLReadyRow> Apply(
         IReadOnlyList<LotStateVector> rows,
         Dictionary<string, float> medians,
         Func<LotStateVector, bool> labelSelector)
+        => Apply(rows, medians, labelSelector, r => labelSelector(r) ? 1f : 0f);
+
+    private static List<MLReadyRow> Apply(
+        IReadOnlyList<LotStateVector> rows,
+        Dictionary<string, float> medians,
+        Func<LotStateVector, bool> labelSelector,
+        Func<LotStateVector, float> floatLabelSelector)
     {
         var result = new List<MLReadyRow>(rows.Count);
         foreach (var r in rows)
@@ -77,7 +94,7 @@ public static class MedianImputer
                 Sector     = r.Sector ?? "",
                 Symbol     = r.Symbol ?? "",
                 Label      = labelSelector(r),
-                FloatLabel = labelSelector(r) ? 1f : 0f,
+                FloatLabel = floatLabelSelector(r),
             });
         }
         return result;

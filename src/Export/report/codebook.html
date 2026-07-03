@@ -14,7 +14,7 @@
 </style></head><body>
 
 <h1>Codebook — <code>data/lots.csv</code></h1>
-<p><strong>1846015</strong> rows × <strong>24</strong> columns.
+<p><strong>1837354</strong> rows × <strong>26</strong> columns.
 One row = one <em>lot snapshot</em>: the state of a single tax lot on a single
 simulated trading day. Missing values are empty cells (NaN).</p>
 
@@ -146,7 +146,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
  <tr><th>Units</th><td>unitless (daily return)</td></tr>
  <tr><th>Role</th><td>feature (asset-level)</td></tr>
  <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
- <tr><th>Missing</th><td>None. — observed: 2 of 1846015 rows (0.00%)</td></tr>
+ <tr><th>Missing</th><td>None. — observed: 2 of 1837354 rows (0.00%)</td></tr>
  <tr><th>Source</th><td><code>PriceLoader close series</code></td></tr>
 </table>
 <p>One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.</p>
@@ -157,7 +157,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
  <tr><th>Units</th><td>unitless (fraction of price)</td></tr>
  <tr><th>Role</th><td>feature (asset-level)</td></tr>
  <tr><th>Values / encoding</th><td>Positive continuous.</td></tr>
- <tr><th>Missing</th><td>None. — observed: 2 of 1846015 rows (0.00%)</td></tr>
+ <tr><th>Missing</th><td>None. — observed: 2 of 1837354 rows (0.00%)</td></tr>
  <tr><th>Source</th><td><code>PriceLoader OHLC</code></td></tr>
 </table>
 <p>Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.</p>
@@ -168,7 +168,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
  <tr><th>Units</th><td>unitless (fractional deviation)</td></tr>
  <tr><th>Role</th><td>feature (asset-level)</td></tr>
  <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
- <tr><th>Missing</th><td>NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 99 of 1846015 rows (0.01%)</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 93 of 1837354 rows (0.01%)</td></tr>
  <tr><th>Source</th><td><code>computed in SimulationEngine</code></td></tr>
 </table>
 <p>Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentum / mean-reversion signal.</p>
@@ -179,7 +179,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
  <tr><th>Units</th><td>unitless (fractional deviation)</td></tr>
  <tr><th>Role</th><td>feature (asset-level)</td></tr>
  <tr><th>Values / encoding</th><td>Signed continuous.</td></tr>
- <tr><th>Missing</th><td>NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 577 of 1846015 rows (0.03%)</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 626 of 1837354 rows (0.03%)</td></tr>
  <tr><th>Source</th><td><code>computed in SimulationEngine</code></td></tr>
 </table>
 <p>Price deviation from the 200-day moving average: (P_t − MA_200) / MA_200. The 200-day warmup window exists so this is defined from the first active simulation day.</p>
@@ -234,7 +234,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
  <tr><th>Units</th><td>fraction of days</td></tr>
  <tr><th>Role</th><td>label (soft, deterministic)</td></tr>
  <tr><th>Values / encoding</th><td>Continuous in [0, 1] in increments of 1/30.</td></tr>
- <tr><th>Missing</th><td>NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 12141 of 1846015 rows (0.66%)</td></tr>
+ <tr><th>Missing</th><td>NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 12186 of 1837354 rows (0.66%)</td></tr>
  <tr><th>Source</th><td><code>SoftLabelBuilder (real forward window)</code></td></tr>
 </table>
 <p>Fraction of the next 30 actual trading days on which the oracle would fire, computed from the real forward price series with portfolio state frozen at the snapshot. The primary supervised training target (binarized as Y_Soft_BT > 0 for classification).</p>
@@ -250,7 +250,29 @@ simulated trading day. Missing values are empty cells (NaN).</p>
 </table>
 <p>Cross-sectional regression target: taxValue_k of this lot at this timestep — the capacity-aware harvest value from the TaxLedger. Numerically identical to the TaxValue feature by construction in v0.25, so regressions on this target MUST exclude TaxValue from the feature set (the task is recovering g(ledger, H, L) from raw features). First member of the issue #17 richer-label family.</p>
 
-<h2>22. <code>Symbol</code></h2>
+<h2>22. <code>Y_Utility</code></h2>
+<table>
+ <tr><th>Type</th><td>float</td></tr>
+ <tr><th>Units</th><td>US dollars</td></tr>
+ <tr><th>Role</th><td>label (diagnostic / RL reward)</td></tr>
+ <tr><th>Values / encoding</th><td>Signed continuous dollars.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>OracleBoundary.Utility(TaxValue, Sigma_TE, config)</code></td></tr>
+</table>
+<p>Raw scalarized objective before thresholding: U(x) = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = 0 until v0.25 PR 3). The scalarized oracle fires iff U > 0 (plus the hard gates), so the decision boundary is the level set {U = 0}. Computed under the run's OracleConfig in both gated and scalarized runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; exported as the issue-#17 continuous target and the v0.4 RL per-decision reward.</p>
+
+<h2>23. <code>Y_Oracle_GatedSpec</code></h2>
+<table>
+ <tr><th>Type</th><td>int (binary)</td></tr>
+ <tr><th>Units</th><td>—</td></tr>
+ <tr><th>Role</th><td>label (ablation spectator)</td></tr>
+ <tr><th>Values / encoding</th><td>0 = legacy oracle would not harvest, 1 = would harvest.</td></tr>
+ <tr><th>Missing</th><td>None.</td></tr>
+ <tr><th>Source</th><td><code>OracleBoundary legacy overload over spectator G_YTD</code></td></tr>
+</table>
+<p>What the v0.2 four-gate oracle would decide on THIS row, with legacy G_YTD bookkeeping (seed + realized P&L of this run's harvests, re-seeded each year-end) carried counterfactually alongside the acting oracle. Equals Y_Oracle in gated runs; in scalarized runs it enables same-row boundary-geometry comparison. Spectator ≠ acting: the trajectory (which rows exist, wash clocks, ledger state) was produced by the acting oracle.</p>
+
+<h2>24. <code>Symbol</code></h2>
 <table>
  <tr><th>Type</th><td>string</td></tr>
  <tr><th>Units</th><td>—</td></tr>
@@ -261,7 +283,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
 </table>
 <p>Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.</p>
 
-<h2>23. <code>Sector</code></h2>
+<h2>25. <code>Sector</code></h2>
 <table>
  <tr><th>Type</th><td>string (categorical)</td></tr>
  <tr><th>Units</th><td>—</td></tr>
@@ -272,7 +294,7 @@ simulated trading day. Missing values are empty cells (NaN).</p>
 </table>
 <p>GICS-style sector of the ticker from the SPY holdings file. In the v0.1 data this column is degenerate: ≈99.5% of rows carry the placeholder '-' and the rest are empty, so after cleaning it is effectively a single 'Unknown' category.</p>
 
-<h2>24. <code>Timestep</code></h2>
+<h2>26. <code>Timestep</code></h2>
 <table>
  <tr><th>Type</th><td>int</td></tr>
  <tr><th>Units</th><td>trading-day index</td></tr>

@@ -19,9 +19,10 @@ public record WeightedRow : LotStateVector
         Sigma_TE = v.Sigma_TE, WashClock = v.WashClock,
         R_t = v.R_t, SigmaRange = v.SigmaRange,
         DeltaMA50 = v.DeltaMA50, DeltaMA200 = v.DeltaMA200,
-        TaxValue = v.TaxValue, DaysToYE = v.DaysToYE,
+        TaxValue = v.TaxValue, DaysToYE = v.DaysToYE, Shares = v.Shares,
         Y_Oracle = v.Y_Oracle, Y_Soft_GBM = v.Y_Soft_GBM, Y_Soft_BT = v.Y_Soft_BT,
-        Y_TaxValue = v.Y_TaxValue,
+        Y_TaxValue = v.Y_TaxValue, Y_Utility = v.Y_Utility,
+        Y_Oracle_GatedSpec = v.Y_Oracle_GatedSpec,
         Symbol = v.Symbol, Sector = v.Sector, Timestep = v.Timestep,
         Weight = weight,
     };

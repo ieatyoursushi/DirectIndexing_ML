@@ -5,71 +5,115 @@ namespace DirectIndexing.Core.Oracle;
 /// <summary>
 /// The mechanistic oracle  f* : X → {0,1}  — the tax-loss harvesting decision rule.
 ///
-/// Formally this is the indicator of the harvest region Ω ⊂ X, and its threshold
-/// hypersurfaces collectively define the boundary ∂Ω  (see PortfolioMath.md §4).
-/// The oracle fires (returns 1) when the feature vector x sits strictly inside Ω,
-/// i.e. when all four gate conditions hold simultaneously:
+/// v0.25 (issue #23): two modes, selected by <see cref="OracleConfig.Mode"/>.
 ///
-///   f*(x) = 𝟙[ℓ ≤ −θ₁]  ·  𝟙[σ_TE ≤ θ₂]  ·  𝟙[G_YTD > 0]  ·  𝟙[𝒲 ≥ 30]
+/// GATED (v0.2-legacy, ablation baseline):
+///   f*(x) = 𝟙[ℓ ≤ −θ₁] · 𝟙[σ_TE ≤ θ₂] · 𝟙[G_YTD &gt; 0] · 𝟙[𝒲 ≥ 30]
 ///
-/// This class is STATELESS — a pure function over lot geometry.
-/// No fields, no constructors, no dependency injection.
+/// SCALARIZED (industry-faithful composite — Wealthfront/Betterment form):
+///   f*(x) = 𝟙[ℓ ≤ −θ₁] · 𝟙[𝒲 ≥ 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) &gt; 0]
+///   U(x)  = taxValueₖ(ledgerₜ, hₖ, ℓₖ) − λ·σ_TE² − c_trade
+///
+/// Hard gates survive only where they encode a genuine legal rule or threshold
+/// fact (loss depth, IRS §1091 wash clock, tail-risk TE ceiling); the gains
+/// gate is removed — its information lives inside taxValue's offset-capacity
+/// split (see TaxLedger). The boundary ∂Ω is the level set {x : U(x) = 0},
+/// not the corner of an axis-aligned box.
+///
+/// Note on notation: taxValueₖ already carries the tax rates τ(h)/τ_future
+/// internally (TaxLedger.ComputeTaxValue), so U applies no further rate factor.
+///
+/// This class is STATELESS — pure functions over lot geometry + config.
 /// </summary>
 public static class OracleBoundary
 {
-    // ── Named thresholds (never magic numbers) ───────────────────────────────
+    // ── Legacy named thresholds ──────────────────────────────────────────────
+    // Kept as the canonical v0.2 constants: they are the defaults inside
+    // OracleConfig and the parameters of the legacy overload below.
 
-    /// <summary>
-    /// θ₁ — minimum unrealized loss to justify harvesting.
-    /// Harvest fires when ℓ ≤ −LossThreshold (e.g. −0.02 = −2%).
-    /// </summary>
+    /// <summary>θ₁ — minimum unrealized loss to justify harvesting.</summary>
     public const decimal LossThreshold    = 0.02m;
 
-    /// <summary>
-    /// θ₂ — maximum tolerated annualised tracking error.
-    /// Harvest is blocked when σ_TE > TrackingErrorCap to prevent benchmark drift.
-    /// </summary>
+    /// <summary>θ₂ — the v0.2 fine-grained TE cap (gated mode only).</summary>
     public const decimal TrackingErrorCap = 0.05m;
 
-    /// <summary>
-    /// IRS wash-sale rule: cannot claim a loss if a substantially identical asset
-    /// is purchased within 30 calendar days before or after the sale.
-    /// </summary>
+    /// <summary>IRS wash-sale rule: 30 calendar days.</summary>
     public const int WashSaleDays = 30;
 
-    // ── Core predicate ───────────────────────────────────────────────────────
+    // ── Core predicate (config-driven) ───────────────────────────────────────
 
     /// <summary>
-    /// f*(x) = 𝟙[ℓ ≤ −θ₁]  ·  𝟙[σ_TE ≤ θ₂]  ·  𝟙[G_YTD &gt; 0]  ·  𝟙[𝒲 ≥ 30]
-    ///
-    /// During simulation, the engine extracts these four scalars from
-    /// (Lot, PortfolioState, currentPrice, sigmaTE) before calling Label().
+    /// Full oracle over explicit scalars. In gated mode <paramref name="taxValue"/>
+    /// is ignored; in scalarized mode <paramref name="netRealizedYtd"/> is ignored
+    /// (the ledger's information enters through taxValue instead).
     /// </summary>
     /// <param name="unrealizedReturn">ℓ = (P_t − p_k)/p_k — negative for a loss</param>
     /// <param name="sigmaTE">σ_TE — current annualised tracking error vs benchmark</param>
-    /// <param name="gYtd">G_YTD — net realised gain this calendar year; oracle blocked when ≤ 0</param>
+    /// <param name="netRealizedYtd">ledger net realized P&amp;L YTD (legacy G_YTD; gated gate 3)</param>
     /// <param name="washClock">𝒲_t^{A_i} — days since last harvest of this ticker</param>
-    /// <returns>1 if all gates open, 0 otherwise</returns>
-    public static int Label(decimal unrealizedReturn, float sigmaTE, decimal gYtd, int washClock)
+    /// <param name="taxValue">taxValueₖ — capacity-aware harvest value in dollars (scalarized)</param>
+    /// <param name="config">threshold/λ/mode configuration</param>
+    public static int Label(
+        decimal unrealizedReturn,
+        float   sigmaTE,
+        decimal netRealizedYtd,
+        int     washClock,
+        decimal taxValue,
+        OracleConfig config)
     {
-        bool lossDeepEnough = unrealizedReturn  <= -LossThreshold;
-        bool teWithinBudget = (decimal)sigmaTE  <= TrackingErrorCap;
-        bool gainsToOffset  = gYtd             >   0m;
-        bool washSaleClear  = washClock         >=  WashSaleDays;
+        bool lossDeepEnough = unrealizedReturn <= -config.LossThreshold;
+        bool washSaleClear  = washClock        >=  config.WashSaleDays;
 
-        return (lossDeepEnough && teWithinBudget && gainsToOffset && washSaleClear) ? 1 : 0;
+        if (config.Mode == OracleMode.Gated)
+        {
+            bool teWithinBudget = (decimal)sigmaTE <= config.LegacyTrackingErrorCap;
+            bool gainsToOffset  = netRealizedYtd   >  0m;
+            return (lossDeepEnough && teWithinBudget && gainsToOffset && washSaleClear) ? 1 : 0;
+        }
+
+        bool teBelowCeiling = (decimal)sigmaTE <= config.TrackingErrorCeiling;
+        bool netBenefit     = Utility(taxValue, sigmaTE, config) > 0m;
+        return (lossDeepEnough && washSaleClear && teBelowCeiling && netBenefit) ? 1 : 0;
     }
 
     /// <summary>
-    /// Convenience overload — works directly on a populated LotStateVector.
-    /// Useful for validation passes and tests; the simulation calls the
-    /// scalar overload above since it constructs the snapshot in the same pass.
+    /// U(x) = taxValue − λσ_TE² − c_trade. Exported as the Y_Utility label —
+    /// a genuine intermediate object (the v0.4 RL per-decision reward), not
+    /// just plumbing. f* = 𝟙[U &gt; 0] keeps the codomain {0,1}.
     /// </summary>
-    public static int Label(LotStateVector snapshot) =>
+    public static decimal Utility(decimal taxValue, float sigmaTE, OracleConfig config)
+    {
+        decimal s = (decimal)sigmaTE;
+        return taxValue - config.Lambda * s * s - config.CTrade;
+    }
+
+    // ── Legacy 4-scalar overload (gated semantics, v0.2 signature) ───────────
+
+    /// <summary>
+    /// v0.2-compatible gated oracle. Used by the engines' spectator-label
+    /// bookkeeping and by the legacy tests; behaviour is bit-identical to the
+    /// pre-v0.25 oracle.
+    /// </summary>
+    public static int Label(decimal unrealizedReturn, float sigmaTE, decimal gYtd, int washClock) =>
+        Label(unrealizedReturn, sigmaTE, gYtd, washClock, taxValue: 0m, OracleConfig.Gated);
+
+    // ── Snapshot overloads ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Config-driven convenience overload — the canonical call site coupling
+    /// (GYTD_Redesign_Plan.md v2 §5.3): new oracle inputs ride as snapshot
+    /// columns, so callers routed through here never change signature again.
+    /// </summary>
+    public static int Label(LotStateVector snapshot, OracleConfig config) =>
         Label(
             unrealizedReturn: (decimal)snapshot.L,
             sigmaTE:          snapshot.Sigma_TE,
-            gYtd:             (decimal)snapshot.RealizedGainsYTD,   // ledger net-realized (pre-v0.25 G_YTD)
-            washClock:        snapshot.WashClock
-        );
+            netRealizedYtd:   (decimal)snapshot.RealizedGainsYTD,
+            washClock:        snapshot.WashClock,
+            taxValue:         (decimal)snapshot.TaxValue,
+            config:           config);
+
+    /// <summary>Legacy snapshot overload — gated semantics (v0.2).</summary>
+    public static int Label(LotStateVector snapshot) =>
+        Label(snapshot, OracleConfig.Gated);
 }

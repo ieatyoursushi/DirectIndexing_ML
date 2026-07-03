@@ -7,6 +7,17 @@ using DirectIndexing.ML.MLNet;
 using DirectIndexing.ML.MLNet.Data;
 
 var mode = args.FirstOrDefault() ?? "simulate";
+
+// ── Oracle ablation flag (v0.25, issue #23) ─────────────────────────────────
+// --oracle=scalarized (default): 3 hard gates · 𝟙[U>0], no external-gains seed.
+// --oracle=gated: v0.2-legacy 4-gate oracle incl. G_YTD>0 + seed — the ablation
+// baseline. Datasets are kept apart (lots.csv vs lots_gated.csv) because the
+// ACTING oracle changes the trajectory itself; they are separate runs, not
+// two label columns of one run.
+var oracleCfg = args.Contains("--oracle=gated")
+    ? DirectIndexing.Core.Oracle.OracleConfig.Gated
+    : DirectIndexing.Core.Oracle.OracleConfig.Scalarized;
+
 switch (mode)
 {
     case "download":
@@ -65,15 +76,17 @@ switch (mode)
         var loader = new PriceLoader();
         loader.Load("../data/raw", "../data/constituents.json");
 
-        var engine    = new SimulationEngine(loader);
+        var engine    = new SimulationEngine(loader, oracleCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
-        var softLabeller = new SoftLabelBuilder(loader);
+        var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        SimulationExporter.WriteCsv(snapshots, "../data/lots.csv");
+        var outPath = $"../data/lots{oracleCfg.DatasetTag}.csv";
+        SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
-        Console.WriteLine($"[simulate] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
+        Console.WriteLine($"[simulate] oracle={oracleCfg.Mode} → {outPath}  " +
+                          $"({sw.Elapsed.TotalMinutes:F2} minutes, {sw.Elapsed.TotalSeconds:F0}s)");
     }
     break;
     // Alternate: Monte Carlo simulation with synthetic GBM prices.
@@ -89,9 +102,10 @@ switch (mode)
             initialPortfolioValue: 10_000_000m,
             simDays:    504,
             warmupDays: 200,
-            seed:       42);
+            seed:       42,
+            oracleConfig: oracleCfg);
 
-        SimulationExporter.WriteCsv(snapshots, "../data/lots-mc.csv");
+        SimulationExporter.WriteCsv(snapshots, $"../data/lots-mc{oracleCfg.DatasetTag}.csv");
     }
     break;
     case "train": throw new NotImplementedException("Training not yet built — use mlnet-supervised.");
@@ -178,6 +192,16 @@ switch (mode)
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
         MLnetPipeline.RunAllSupervised(data, target: "oracle", artifactsDir: "../data/artifacts-mlnet/");
+    }
+    break;
+    // Continuous regression on Y_TaxValue (v0.25, issue #17 family). Excludes the
+    // TaxValue feature — the target IS TaxValue by construction, so the task is
+    // recovering g(ledger, H, L) from raw features.
+    case "mlnet-tax":
+    {
+        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        DirectIndexing.ML.MLNet.Models.TaxValueRegressionPipeline.Run(
+            data, artifactsDir: "../data/artifacts-mlnet/");
     }
     break;
 
@@ -283,6 +307,15 @@ switch (mode)
         oracleTests.Test_Oracle_Blocked_WhenGYTD_Zero();
         oracleTests.Test_Oracle_Blocked_WhenWashSaleActive();
         oracleTests.Test_Oracle_Fires_AtWashSaleBoundary();
+
+        var scalarizedTests = new OracleScalarizedTests();
+        scalarizedTests.Test_Fires_WithoutRealizedGains();
+        scalarizedTests.Test_Blocked_WhenUtilityNegative();
+        scalarizedTests.Test_TradeOff_TaxValueVsTrackingError();
+        scalarizedTests.Test_HardCeiling_BindsInPathologicalRegimes();
+        scalarizedTests.Test_LossAndWashGates_StillBind();
+        scalarizedTests.Test_GatedMode_MatchesLegacyOverload();
+        scalarizedTests.Test_Utility_Arithmetic_And_CTrade();
 
         var teTests = new TrackingErrorProxyTests();
         teTests.Test_SigmaTE_Zero_WhenPortfolioEqualsFullBenchmark();
