@@ -99,15 +99,21 @@ $$
 
 where $L$ is the lot's unrealized return, $G^{\mathrm{YTD}}$ the net realized gain year-to-date,
 and $\mathcal W$ the wash-sale clock. (The full portfolio mathematics are in
-`DataMemo/PortfolioMath.md` and `DataMemo/SimulationMath.md`.)
+`DataMemo/PortfolioMath.md` and `DataMemo/SimulationMath.md`.) One caveat to carry through the
+whole report: the third gate, $G^{\mathrm{YTD}}>0$, is now a **tracked design defect** (issue
+#23) — the twenty-year run supplies the evidence against it, and a note in
+[Which gate actually binds?](#Which-gate-actually-binds?) explains why it is slated for
+removal/redesign in v0.25.
 
 **Why scale to twenty years.** The PSTAT 231 submission learned this decision from a single
 **two-year window (2024–2026)** — a smooth bull market with only micro-drawdowns. That run
 answered the academic question (yes, the boundary is learnable; gradient-boosted trees win)
 but left a glaring external-validity question: *does any of it survive a real bear market?* The
-download and simulation layers now accept an arbitrary date range (up to ~20 years), so this
-report re-runs the entire pipeline on roughly **two decades of history through three major
-crises** and asks three questions:
+**data window is now a parameter of the study**: the download layer accepts an arbitrary
+`--from`/`--to` date range (issues #19/#20), bounded in practice at ~20 years by the price
+API's ≈5,000-bars-per-ticker response cap, and the simulation adapts to whatever range the
+cache holds. This report re-runs the entire pipeline on roughly **two decades of history
+through three major crises** and asks three questions:
 
 1. **Robustness.** Does the champion model's forward-harvest-propensity skill survive 2008,
    2020, and 2022, or was it an artifact of a calm market?
@@ -131,9 +137,14 @@ md(r"""
 Two external sources feed the pipeline; everything else is derived. **Daily prices** are
 end-of-day OHLCV bars for the S&P 500 constituents from the Financial Modeling Prep (FMP) API
 (`/stable/historical-price-eod/full`), now pulled over a configurable date range via
-`dotnet run download --from YYYY-MM-DD --to YYYY-MM-DD` (the original run hardcoded two years;
-this one spans ~20). **Index membership** comes from State Street's SPDR S&P 500 ETF (SPY)
-daily holdings file.
+`dotnet run download --from YYYY-MM-DD --to YYYY-MM-DD` (the original run hardcoded two years).
+With no explicit dates the downloader falls back to a rolling `years`-long window; either way it
+extends the fetch backward by ≈200 trading days so the moving-average features are defined on
+the portfolio's first day, warns when a custom range is too short for that warmup, and
+re-aggregates an existing cache incrementally instead of re-downloading it. The practical
+ceiling is the API itself — ≈5,000 daily bars per ticker, which is what pins *this* run's
+window to **2006-07 through 2026-06**. **Index membership** comes from State Street's SPDR
+S&P 500 ETF (SPY) daily holdings file.
 
 > Financial Modeling Prep. (2026). *Historical Price EOD API* [Data set].
 > https://financialmodelingprep.com/
@@ -160,7 +171,7 @@ columns** across Timesteps 200–4999 (≈19 active years). Every column is defi
 
 | | PSTAT 231 run | This run |
 |---|---|---|
-| Window | 2024–2026 (≈2 yr) | ≈2005–2024 (≈19 yr) |
+| Window | 2024–2026 (≈2 yr) | 2006-07 – 2026-06 (≈19 active yr) |
 | Market character | smooth bull, micro-drawdowns | 2008 GFC, 2020 COVID, 2022 bear |
 | Constituents | 503 | «N_CONSTIT» |
 | Rows | ~170,751 | «N_ROWS» |
@@ -292,15 +303,16 @@ fig.tight_layout(); plt.show()
 """)
 
 md(r"""
-The left panel is the mechanism. The supply of harvestable losses — lots sitting at least 2%
-below their cost basis — **decays toward a low baseline between crises** and erupts in three
-sharp spikes that line up with the **2008 financial crisis, the 2020 COVID crash, and the 2022
-selloff**. Between those events, almost no lot is underwater. Why? The right panel: lots are
-opened once at the warmup day and **hold their cost basis indefinitely** (only a harvest-and-
-reopen resets it), so mean lot age climbs steadily and the un-harvested lots accumulate years
-of appreciation. A position bought at a 2006 basis is so far in the money by 2015 that no
-ordinary dip pushes it 2% below cost. The portfolio **ages out of harvestability** — harvests
-become rare, bursty, and concentrated in genuine crashes.
+The left panel is the mechanism, and it is starker than "spikes at every bear market." There is
+**one eruption** — the 2008–09 financial crisis, where at the March-2009 bottom roughly **90% of
+the book sits ≥ 2% underwater** — and then the signal never truly returns. The 2020 COVID crash
+(a 34% index drawdown) and the 2022 selloff barely register: their daily peaks put only ~1–2%
+and well under 1% of lots underwater, respectively. Why? The right panel: lots are opened once
+at the warmup day and **hold their cost basis indefinitely** (only a harvest-and-reopen resets
+it), so mean lot age climbs steadily and the un-harvested lots accumulate years of appreciation.
+A position carrying a 2007 basis is so deep in the money by 2020 that a one-third market crash
+cannot push it 2% below cost. The portfolio **ages out of harvestability** — harvests become
+rare, bursty, and (after the first decade) nearly extinct even in genuine crashes.
 
 This is the single most important finding of the scale-up, and it is a *simulation-design*
 finding, not a market finding: a real direct-indexing account receives ongoing contributions
@@ -329,11 +341,19 @@ fig.tight_layout(); plt.show()
 
 md(r"""
 Harvesting is **regime-clustered**: the red bars are nearly silent in the long expansions and
-fire in dense bursts during the three drawdowns — precisely when a tax-alpha engine earns its
-keep. The blue line is the gains budget `G_YTD`, re-seeded each January to \$1M (10% of the
-initial book) and drawn down by realized losses. Note that it **never approaches zero** across
-the entire window: the constant seed keeps it comfortably positive even through 2008. That
-observation sets up the next section.
+fire in dense bursts during the drawdowns — precisely when a tax-alpha engine earns its keep.
+Of the ≈3,750 oracle harvests in the whole run, some 2,900 happen in the first two simulation
+years (the GFC); no later year manages even 200.
+
+The blue line is the gains budget `G_YTD`, re-seeded each January to \$1M (10% of the initial
+book) and drawn down by realized losses — and it exposes a **self-strangling feedback loop**.
+During 2008–09 the harvest bursts realize losses fast enough to burn the \$1M seed to zero
+mid-year; the moment `G_YTD` hits the floor, gate 3 slams shut and **freezes all harvesting
+until the January re-seed** — in the richest loss environment of the entire window, the engine
+spends the majority of the crisis year forbidden to harvest by its own accounting rule. Outside
+those two GFC years the same gate never comes close to closing (the seed dwarfs realized
+losses). Both failure modes — shut exactly when losses are most abundant, vacuously open the
+other ~17 years — belong to the same defect, taken up in the note below.
 """)
 
 md(r"""
@@ -362,16 +382,58 @@ ax.invert_yaxis(); fig.tight_layout(); plt.show()
 """)
 
 md(r"""
-The gains gate `G_YTD > 0` is open on **«GYTD_OPEN» of rows** — it has become **near-vestigial**.
-The binding constraint over twenty years is the **loss gate**: the cost-basis aging above means
-very few lots are ever 2% underwater, so it is the loss condition, not the availability of
-gains, that starves the harvest signal. This matters for two reasons. First, it is a *modeling*
-fact — it reshapes which models can recover the boundary (see
-[the headline](#The-Headline:-Decision-Geometry-Is-Regime-Dependent)). Second, it is an
-*economic* fact: a gate that is 94% open is not doing its job, and the constant \$1M seed that
-keeps it open is the least defensible piece of the simulation. The
-[live-system section](#Toward-a-Live-Tax-Alpha-System) and the companion
-`DataMemo/GYTD_Redesign_Plan.md` lay out the fix.
+Marginal rates hide *when* a gate matters, and with twenty years of regimes the time dimension
+is the story — so the next chart re-computes each gate's pass rate **per simulation year**.
+""")
+
+code(r"""
+simyr = ((lots["Timestep"] - 200) // 252).astype(int)
+gate_by_year = pd.DataFrame({
+    "L ≤ −0.02  (loss)":       lots["L"] <= -0.02,
+    "σ_TE ≤ 0.05  (tracking)": lots["Sigma_TE"] <= 0.05,
+    "G_YTD > 0  (gains)":      lots["G_YTD"] > 0,
+    "WashClock ≥ 30  (wash)":  lots["WashClock"] >= 30,
+}).groupby(simyr).mean()
+
+fig, ax = plt.subplots(figsize=(11, 4))
+for name, color in zip(gate_by_year.columns, ["#a33", "#357", "#3a7", "#a37"]):
+    ax.plot(gate_by_year.index, gate_by_year[name], marker="o", ms=4, lw=1.6,
+            label=name, color=color)
+ax.set_xlabel("simulation year (0 ≈ 2007)"); ax.set_ylabel("fraction of rows gate is open")
+ax.set_ylim(-0.04, 1.09); ax.set_xticks(gate_by_year.index)
+ax.set_title("Oracle-gate pass rates by simulation year — binding is a regime property")
+ax.legend(fontsize=8, loc="center right"); fig.tight_layout(); plt.show()
+""")
+
+md(r"""
+The two charts together say the gate structure is **regime-dependent, and degenerately so**.
+The gains gate `G_YTD > 0` is open on **«GYTD_OPEN» of rows** overall — near-vestigial — but
+the per-year view shows *all* of its closure concentrated in simulation years 1–2 (the GFC and
+its aftermath), where it is shut on roughly 60% of lot-days. Every other year it is open on
+essentially 100% of rows. The binding constraint everywhere else is the **loss gate**: the
+cost-basis aging above means very few lots are ever 2% underwater, so it is the loss condition,
+not the availability of gains, that starves the harvest signal. This matters twice over. As a
+*modeling* fact, it reshapes which models can recover the boundary (see
+[the headline](#The-Headline:-Decision-Geometry-Is-Regime-Dependent)). As an *economic* fact,
+the gains gate's behavior is exactly backwards: it blocks harvesting only during the one regime
+where losses are abundant, and rubber-stamps it the other seventeen years.
+
+> **Note — the `G_YTD` gate is now a tracked defect (issue #23, targeted for v0.25).** The
+> twenty-year evidence above crystallized into a redesign of the oracle itself, on two counts.
+> **(1) The seed is a simulation artifact:** the constant \$1M January re-seed neither scales
+> with the growing book nor reflects any client's actual tax situation, so the gate's
+> open/closed state is an accounting fiction. **(2) The gate is conceptually misaligned with
+> beta-tracking direct indexing.** In production stock-level TLH engines (e.g., Wealthfront's),
+> the engine's mandate is to hold $\hat\beta_{DI} \approx 1$ and capture losses when they
+> exceed the trade-off threshold; *whether* those losses offset gains this year is the client
+> tax return's concern, since US tax law lets unused losses offset \$3k of ordinary income and
+> carry forward indefinitely. A hard "must have realized gains this year" trigger is therefore
+> **stricter than the tax code** and refuses real tax alpha — most visibly in this run's
+> 2008–09 self-strangulation. The redesign (`DataMemo/GYTD_Redesign_Plan.md`,
+> `DataMemo/data_memo_theory_part2.md` §C.2.5) removes `G_YTD` as a hard gate and replaces it
+> with either a dynamic seed, a continuous tax ledger (carryforward + ordinary-offset budget),
+> or gate-plus-reinforcement objectives; all models will be **retrained on the corrected
+> oracle**. Every result in this report is on the 4-gate oracle as built.
 """)
 
 md(r"""
@@ -676,6 +738,15 @@ happened to sample. The two-year bull market flattered the hyperplane; twenty ye
 regimes expose that it was a coincidence. Meanwhile the boosted trees are regime-invariant on both
 targets — the practical argument for why a production system should not lean on a linear harvest
 classifier no matter how good it looks in backtest on a calm window.
+
+The per-year gate chart earlier makes the mechanism visible: the only years in which the gains
+gate closes are the GFC years, so the "extra" gates a linear model must represent only exist in
+a sliver of the data — enough to destroy a hyperplane fit, too little for the hyperplane to
+learn from. This principle is formalized as the emergent finding of
+`DataMemo/data_memo_theory_part2.md` §A.5, and it is the empirical trigger for the v0.25 oracle
+redesign (issue #23): if a gate's binding behavior is an artifact of the accounting rather than
+the economics, the right response is to fix the gate, not to admire the non-linearity it
+manufactures.
 """)
 
 md(r"""
@@ -724,15 +795,20 @@ directly into the design backlog:
    current prices, which both *replenishes harvestable supply* and *realizes the gains* that the
    next point depends on. This is the highest-priority simulation change.
 
-2. **The vestigial gains gate → a continuous tax ledger.** `G_YTD > 0` being open «GYTD_OPEN» of
-   the time, kept open by a constant \$1M seed, is the least defensible piece of the model. US tax
-   lets losses carry forward indefinitely and offset \$3k/yr of ordinary income, so a strict
-   "need gains this year" gate is *more conservative than the tax code* and leaves tax alpha on
-   the table. The fix is to promote `G_YTD` from a binary gate to a continuous tax-accounting
-   state (realized gains + carryforward + ordinary-offset capacity) and make the *value of
-   harvesting* a continuous target — which is simultaneously more correct (business) and a richer
-   ML problem (academia). The full design, with three implementation options, is in
-   `DataMemo/GYTD_Redesign_Plan.md`.
+2. **The gains gate → out of the oracle entirely (v0.25, issue #23).** `G_YTD > 0` being open
+   «GYTD_OPEN» of the time — and shut *only* mid-crisis, when losses are most abundant — is the
+   least defensible piece of the model. US tax law lets losses carry forward indefinitely and
+   offset \$3k/yr of ordinary income, so a strict "need gains this year" gate is *more
+   conservative than the tax code* and refuses real tax alpha; production beta-tracking DI
+   engines condition the harvest trigger on the loss and the tracking budget, not on the
+   client's current-year gains. The immediate v0.25 step is to remove/replace the gate and
+   **retrain every model on the corrected oracle** (all numbers in this report are on the
+   4-gate rule). The fuller v0.3 design promotes the tax state into a continuous ledger
+   (realized gains + carryforward + ordinary-offset capacity) whose *harvest value* becomes a
+   continuous regression target — more correct as business logic and a richer ML problem — and
+   issue #23's second half points the oracle toward mixed gate-plus-reinforcement objectives.
+   The full designs are in `DataMemo/GYTD_Redesign_Plan.md` and
+   `DataMemo/data_memo_theory_part2.md` Part C.
 
 3. **Survivorship → point-in-time membership.** Restricting to «N_CONSTIT» names with full 20-year
    history biases the universe toward long-lived large caps and makes the tax-alpha and
@@ -762,9 +838,12 @@ identical oracle that linear models nearly solved on the calm two-year window (l
 becomes linearly *unrecoverable* over twenty years («LOGIT_ORACLE_CV»), while the trees stay
 near-perfect — a clean demonstration, now with two opposite data points, that a conjunction's
 non-linearity is a property of the sampled regime, not the rule. **Third, the long horizon
-exposed the simulation's two weakest design choices** — the cost-basis aging that thins the
-harvest signal between crises, and the vestigial \$1M gains gate open 94% of the time — both of
-which the live-system backlog and `GYTD_Redesign_Plan.md` now target.
+exposed the simulation's two weakest design choices** — the cost-basis aging that all but
+extinguishes the harvest signal after the first decade, and the \$1M gains gate that is
+vestigially open 94% of the time yet strangles harvesting mid-crisis. The second is now a filed
+defect (issue #23) with a concrete v0.25 remedy: correct the oracle, re-simulate, and retrain —
+made cheap by the fact that the whole pipeline is a replayable chain of file-to-file commands
+(single-target reruns via `mlnet-soft` / `mlnet-oracle`).
 
 The honest caveats are the roadmap: the universe is survivorship-biased toward long-lived large
 caps; the labels are semi-synthetic (real prices, simulated portfolio); the static cost basis and
@@ -787,18 +866,30 @@ md(r"""
 **Methodology**
 - James, Witten, Hastie & Tibshirani (2021). *An Introduction to Statistical Learning* (2nd ed.). Springer.
 - IRS Publication 550 — wash-sale rule and capital-loss carryforward. https://www.irs.gov/publications/p550
+- Moussawi, Lo & Weisberger — Wealthfront Research, *Stock-Level Tax-Loss Harvesting* whitepaper
+  (the production-DI reference behind the issue #23 oracle critique).
+  https://research.wealthfront.com/whitepapers/stock-level-tax-loss-harvesting/
 - Project memos: `DataMemo/SimulationMath.md`, `PortfolioMath.md`, `MLNetLeakageAudit.md`,
-  `Lifecycle_v02.md`, and the forward design plan `DataMemo/GYTD_Redesign_Plan.md`.
+  `Lifecycle_v02.md`; the theory pair `DataMemo/data_memo_theory.md` (pre-plan) and
+  `data_memo_theory_part2.md` (post-course reconciliation + v0.3–v0.4 program); and the
+  forward design plan `DataMemo/GYTD_Redesign_Plan.md`.
 
 **Reproducing this report** (from `src/`; .NET 8 + [uv](https://docs.astral.sh/uv/)):
 
 ```text
 export FMP_API_KEY=...
-dotnet run download --from 2005-01-01 --to 2024-12-31   # ~20-year price pull
+dotnet run download --from 2006-07-01 --to 2026-06-12   # custom window (≈20 yr = the API cap);
+                                                        # omit the flags for a rolling 2-yr pull
 dotnet run simulate                                     # backtest → data/lots.csv
 dotnet run mlnet-all                                    # CV all models, test champions, artifacts
+                                                        # (mlnet-soft / mlnet-oracle re-run one target)
+cd ML/Python && uv run python -m scripts.fill_report_tokens && cd ../..
 dotnet run report                                       # codebook + execute this notebook + HTML
 ```
+
+The notebook itself is generated by `scripts/build_report_notebook.py`; edit that script (not
+the `.ipynb`) and regenerate, so the prose, the token-filling, and the executed report cannot
+drift apart.
 """)
 
 code(r"""
