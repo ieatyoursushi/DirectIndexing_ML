@@ -111,16 +111,22 @@ public class OracleScalarizedTests
         Console.WriteLine("Scalarized Test 6 passed: gated mode bit-identical to legacy overload");
     }
 
-    // Test 7: Utility arithmetic, including the c_trade hook (PR 3 activates it).
+    // Test 7: Utility arithmetic — default-agnostic on CTrade so the PR-3
+    // calibration ($10 round-trip default) doesn't silently break the identity.
     public void Test_Utility_Arithmetic_And_CTrade()
     {
         decimal u = OracleBoundary.Utility(400m, 0.05f, Cfg);
-        Debug.Assert(u == 400m - Cfg.Lambda * 0.0025m,
-            $"U must equal taxValue − λσ², got {u}");
+        Debug.Assert(u == 400m - Cfg.Lambda * 0.0025m - Cfg.CTrade,
+            $"U must equal taxValue − λσ² − c_trade, got {u}");
 
-        var withCost = Cfg with { CTrade = 100m };
+        var withCost = Cfg with { CTrade = Cfg.CTrade + 100m };
         decimal uc = OracleBoundary.Utility(400m, 0.05f, withCost);
         Debug.Assert(uc == u - 100m, "c_trade must subtract additively from U");
+
+        var freeTrade = Cfg with { CTrade = 0m };
+        decimal uf = OracleBoundary.Utility(400m, 0.05f, freeTrade);
+        Debug.Assert(uf == 400m - Cfg.Lambda * 0.0025m,
+            "the --ctrade=0 ablation arm must recover the frictionless U");
 
         Console.WriteLine("Scalarized Test 7 passed: U = taxValue − λσ² − c_trade");
     }
