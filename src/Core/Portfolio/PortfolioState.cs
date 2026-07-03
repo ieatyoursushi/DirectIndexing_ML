@@ -1,26 +1,35 @@
 namespace DirectIndexing.Core.Portfolio;
 
 /// <summary>
-/// The complete portfolio state triple  𝒮_t = (μ_t, G_t^YTD, 𝒲_t):
+/// The complete portfolio state triple  𝒮_t = (μ_t, ledger_t, 𝒲_t):
 ///
-///   μ_t     = OpenLots              — full lot measure across all assets
-///   G_t^YTD = G_YTD                 — signed scalar: net realized P&amp;L this calendar year
-///   𝒲_t     = _washClocks           — function  ticker → days since last harvest
+///   μ_t      = OpenLots              — full lot measure across all assets
+///   ledger_t = Ledger                — TaxLedger: net realized P&amp;L, loss
+///                                      carryforward, ordinary-offset budget
+///   𝒲_t      = _washClocks           — function  ticker → days since last harvest
 ///
-/// Sign convention for G_YTD:
+/// v0.25: the bare G_YTD scalar became the TaxLedger (issue #23). The G_YTD
+/// property survives as a read alias of Ledger.RealizedGainsYTD — identical
+/// semantics and values to the pre-ledger engine, so the gated oracle and all
+/// logging are unchanged.
+///
+/// Sign convention for G_YTD / Ledger.RealizedGainsYTD:
 ///   Harvesting a LOSING lot contributes a NEGATIVE delta (currentPrice &lt; CostBasis).
-///   The oracle only fires when G_YTD &gt; 0, i.e. there are net realized gains
-///   available to offset.  G_YTD therefore oscillates throughout the year as gains
+///   The gated oracle only fires when G_YTD &gt; 0, i.e. there are net realized
+///   gains available to offset.  It oscillates throughout the year as gains
 ///   are realised and losses are harvested against them.
 ///
 /// AdvanceDay() implements the time evolution of 𝒲_t (increment every clock by 1).
 /// HarvestLot() implements the state transition:
-///   remove the atom from μ_t, update G_YTD, reset 𝒲_t^{A_i} ← 0.
+///   remove the atom from μ_t, record realized P&amp;L in the ledger, reset 𝒲_t^{A_i} ← 0.
 /// </summary>
 public class PortfolioState
 {
-    // G_t^YTD ∈ ℝ  (negative after net-loss harvests, positive when gains dominate)
-    public decimal G_YTD { get; private set; } = 0m;
+    // ledger_t — deterministic Schedule D bookkeeping (see TaxLedger)
+    public TaxLedger Ledger { get; } = new();
+
+    // Legacy alias: G_t^YTD ∈ ℝ (negative after net-loss harvests, positive when gains dominate)
+    public decimal G_YTD => Ledger.RealizedGainsYTD;
 
     // 𝒲_t : S → ℤ_{≥0}   (days since last harvest per ticker; 999 = never harvested)
     private readonly Dictionary<string, int> _washClocks = new();
@@ -59,7 +68,7 @@ public class PortfolioState
     public void HarvestLot(Lot lot, decimal currentPrice)
     {
         var gain = (currentPrice - lot.CostBasis) * lot.Shares;
-        G_YTD        += gain;   // negative delta for a loss — sign is self-consistent
+        Ledger.RecordRealized(gain);   // negative delta for a loss — sign is self-consistent
         lot.IsOpen    = false;
         OpenLots.Remove(lot);
         _washClocks[lot.Symbol] = 0;   // reset 𝒲_t^{A_i} ← 0
@@ -71,18 +80,20 @@ public class PortfolioState
         OpenLots.Sum(lot => lot.Shares * currentPrices[lot.Symbol]);
 
     /// <summary>
-    /// Reset G_YTD at year boundary (Jan 1).
+    /// Year boundary (Jan 1): roll the ledger — net loss beyond the $3k
+    /// ordinary allowance banks into LossCarryforward (which survives),
+    /// the annual accumulator resets to 0.
     /// Wash-sale clocks intentionally persist — the IRS window crosses year-end.
-    /// Production would carry forward unused losses; simulation resets cleanly.
     /// </summary>
     public void ResetForNewYear() =>
-        G_YTD = 0m;
+        Ledger.RollYearEnd();
 
     /// <summary>
-    /// Seed G_YTD with an external gain amount — used at simulation start and after
-    /// year-end resets to represent gains from other client activity (dividends,
-    /// rebalancing, other account sales) that are not modelled explicitly.
-    /// Without this, the oracle's G_YTD &gt; 0 gate is permanently closed.
+    /// Seed the ledger with an external gain amount — used at simulation start
+    /// and after year-end resets to represent gains from other client activity
+    /// (dividends, rebalancing, other account sales) that are not modelled
+    /// explicitly. Without this, the gated oracle's G_YTD &gt; 0 gate is
+    /// permanently closed. The scalarized oracle (v0.25+) runs with this OFF.
     /// </summary>
-    public void SeedGYTD(decimal amount) => G_YTD += amount;
+    public void SeedGYTD(decimal amount) => Ledger.RecordExternalGains(amount);
 }

@@ -14,11 +14,14 @@ public record WeightedRow : LotStateVector
     public static WeightedRow From(LotStateVector v, float weight) => new()
     {
         L = v.L, H = v.H, S = v.S, B = v.B, W = v.W, K = v.K,
-        G_YTD = v.G_YTD, Sigma_TE = v.Sigma_TE, WashClock = v.WashClock,
+        RealizedGainsYTD = v.RealizedGainsYTD, LossCarryforward = v.LossCarryforward,
+        OrdinaryOffsetBudget = v.OrdinaryOffsetBudget,
+        Sigma_TE = v.Sigma_TE, WashClock = v.WashClock,
         R_t = v.R_t, SigmaRange = v.SigmaRange,
         DeltaMA50 = v.DeltaMA50, DeltaMA200 = v.DeltaMA200,
-        TaxAlpha = v.TaxAlpha, DaysToYE = v.DaysToYE,
+        TaxValue = v.TaxValue, DaysToYE = v.DaysToYE,
         Y_Oracle = v.Y_Oracle, Y_Soft_GBM = v.Y_Soft_GBM, Y_Soft_BT = v.Y_Soft_BT,
+        Y_TaxValue = v.Y_TaxValue,
         Symbol = v.Symbol, Sector = v.Sector, Timestep = v.Timestep,
         Weight = weight,
     };

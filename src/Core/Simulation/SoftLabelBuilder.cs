@@ -8,7 +8,8 @@ namespace DirectIndexing.Core.Simulation;
 /// after the main backtesting day loop has set Y_Oracle.
 ///
 /// Both strategies freeze the portfolio state at the snapshot's timestep:
-///   - G_YTD and Sigma_TE are held constant (from the snapshot fields).
+///   - RealizedGainsYTD (the ledger's net-realized scalar, formerly G_YTD)
+///     and Sigma_TE are held constant (from the snapshot fields).
 ///   - The wash-sale clock advances by the number of days into the window.
 ///   - The cost basis p_k is held constant (from snapshot.B).
 ///
@@ -66,7 +67,7 @@ public sealed class SoftLabelBuilder
             annualSigma = 0.20f;   // fallback: 20% annual vol
 
         // Frozen state from snapshot — captured by the closure below
-        float gYtdF    = snap.G_YTD;
+        float gYtdF    = snap.RealizedGainsYTD;
         float sigmaTE  = snap.Sigma_TE;
         int   initClock= snap.WashClock;
         float costBasis= snap.B;
@@ -101,7 +102,7 @@ public sealed class SoftLabelBuilder
         // Not enough forward data — return NaN (will be excluded from training)
         if (t0 + Window >= tMax) return float.NaN;
 
-        float gYtdF   = snap.G_YTD;
+        float gYtdF   = snap.RealizedGainsYTD;
         float sigmaTE = snap.Sigma_TE;
         int   initClock = snap.WashClock;
         float costBasis = snap.B;

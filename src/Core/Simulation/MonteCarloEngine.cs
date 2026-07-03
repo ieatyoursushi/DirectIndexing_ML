@@ -424,7 +424,7 @@ public sealed class MonteCarloEngine
 
             var snap = ExtractSnapshot(
                 lot, t, price, portValue, sigmaTE,
-                gYtd, washClock,
+                gYtd, washClock, state.Ledger,
                 returns, rangeVol, ma50, ma200, closes);
 
             snapshots.Add(snap);
@@ -460,6 +460,7 @@ public sealed class MonteCarloEngine
         float   sigmaTE,
         decimal gYtd,
         int     washClock,
+        TaxLedger ledger,
         Dictionary<string, float[]> returns,
         Dictionary<string, float[]> rangeVol,
         Dictionary<string, float[]> ma50,
@@ -505,6 +506,10 @@ public sealed class MonteCarloEngine
 
         int lotK = 1;   // MC mode: one lot per ticker (no lot-count aggregation)
 
+        // taxValue_k = g(ledger_t, h_k, ℓ_k) — 0 for lots not at a loss
+        decimal lossDollars = unrealized < 0m ? (lot.CostBasis - price) * lot.Shares : 0m;
+        decimal taxValue    = ledger.ComputeTaxValue(lossDollars, holdingDays);
+
         return new LotStateVector
         {
             // Lot-level
@@ -515,8 +520,10 @@ public sealed class MonteCarloEngine
             W          = portValue > 0m ? (float)(lot.Shares * price / portValue) : 0f,
             K          = lotK,
 
-            // Portfolio-level
-            G_YTD      = gYtdF,
+            // Portfolio-level (shared TaxLedger + risk state)
+            RealizedGainsYTD     = gYtdF,
+            LossCarryforward     = (float)ledger.LossCarryforward,
+            OrdinaryOffsetBudget = (float)ledger.OrdinaryOffsetBudget,
             Sigma_TE   = sigmaTE,
             WashClock  = washClock,
 
@@ -527,13 +534,14 @@ public sealed class MonteCarloEngine
             DeltaMA200 = dMA200,
 
             // Derived
-            TaxAlpha   = ComputeTaxAlpha(lot, price, gYtd, holdingDays),
+            TaxValue   = (float)taxValue,
             DaysToYE   = daysToYE,
 
             // Labels
             Y_Oracle   = yOracle,
             Y_Soft_GBM = ySoftGbm,
             Y_Soft_BT  = float.NaN,   // not available in MC mode — requires real forward prices
+            Y_TaxValue = (float)taxValue,
 
             // Metadata
             Symbol   = lot.Symbol,
@@ -570,14 +578,6 @@ public sealed class MonteCarloEngine
 
     private static float DeviationFromMA(float price, float ma) =>
         float.IsNaN(ma) || ma == 0f ? float.NaN : (price - ma) / ma;
-
-    private static float ComputeTaxAlpha(Lot lot, decimal price, decimal gYtd, int holdingDays)
-    {
-        if (gYtd <= 0m) return 0f;
-        decimal absLoss = Math.Abs((price - lot.CostBasis) * lot.Shares);
-        decimal taxRate = holdingDays >= 365 ? 0.20m : 0.37m;
-        return (float)(taxRate * absLoss);
-    }
 
     // ── Private: σ_TE via quadratic form ─────────────────────────────────────
 

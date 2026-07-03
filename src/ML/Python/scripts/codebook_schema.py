@@ -90,22 +90,53 @@ COLUMNS: list[dict] = [
         "source": "counted from PortfolioState.OpenLots",
     },
     {
-        "name": "G_YTD",
+        "name": "RealizedGainsYTD",
         "dtype": "float",
         "units": "US dollars",
-        "role": "feature (portfolio-level)",
+        "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Net realized gain/loss for the calendar year to date, shared by "
-            "every lot at the same timestep. Seeded at +$1,000,000 (10% of the "
-            "$10M portfolio — the S&P 500's long-run annual return) at "
-            "simulation start and re-seeded after each year-end reset to "
-            "simulate externally realized gains. Harvesting a loss pushes "
-            "G_YTD down; the oracle only fires while G_YTD > 0 (there must be "
-            "gains to offset)."
+            "Signed net realized gain/loss for the calendar year to date "
+            "(the pre-v0.25 G_YTD), shared by every lot at the same timestep. "
+            "In gated-oracle runs it is seeded with external gains "
+            "(+$1,000,000 = 10% of the $10M portfolio) at simulation start and "
+            "after each year-end reset; harvesting a loss pushes it down. "
+            "Resets to 0 at year-end (net loss beyond the $3k ordinary "
+            "allowance rolls into LossCarryforward instead of vanishing)."
         ),
         "encoding": "Signed continuous. Positive = net realized gains.",
         "missing": "None.",
-        "source": "PortfolioState.G_YTD",
+        "source": "TaxLedger.RealizedGainsYTD (via PortfolioState.Ledger)",
+    },
+    {
+        "name": "LossCarryforward",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "Accumulated net capital losses beyond each year's $3,000 "
+            "ordinary-income allowance (26 USC §1212(b)). Carries forward "
+            "indefinitely — SURVIVES the year-end reset — which is the "
+            "tax-law mechanic making 'harvest now, use later' always weakly "
+            "correct for individual investors."
+        ),
+        "encoding": "Non-negative continuous, monotone non-decreasing within a run.",
+        "missing": "None.",
+        "source": "TaxLedger.LossCarryforward (updated at year-end roll)",
+    },
+    {
+        "name": "OrdinaryOffsetBudget",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "Remaining ordinary-income offset allowance for the year: "
+            "max(0, $3,000 − net loss realized so far) per 26 USC §1211(b). "
+            "Together with max(RealizedGainsYTD, 0) it forms offsetCapacity, "
+            "the dollars of a new harvested loss usable this tax year."
+        ),
+        "encoding": "Continuous in [0, 3000]. Resets to 3000 at year-end.",
+        "missing": "None.",
+        "source": "TaxLedger.OrdinaryOffsetBudget (derived)",
     },
     {
         "name": "Sigma_TE",
@@ -193,19 +224,23 @@ COLUMNS: list[dict] = [
         "source": "computed in SimulationEngine",
     },
     {
-        "name": "TaxAlpha",
+        "name": "TaxValue",
         "dtype": "float",
         "units": "US dollars",
-        "role": "feature (derived)",
+        "role": "feature (derived, lot-level × TaxLedger)",
         "description": (
-            "Estimated tax savings from harvesting this lot today: "
-            "TaxAlpha = τ(H) · |unrealized loss in dollars| · 1[G_YTD > 0], "
-            "where τ(H) is the short- or long-term marginal tax rate selected "
-            "by the holding period."
+            "Capacity-aware dollar value of harvesting this lot today: "
+            "TaxValue = τ(H)·min(loss, offsetCapacity) "
+            "+ τ_future·max(loss − offsetCapacity, 0)·δ, where "
+            "offsetCapacity = max(RealizedGainsYTD, 0) + OrdinaryOffsetBudget, "
+            "τ(H) is the short/long-term rate (0.37/0.20), τ_future = 0.20 and "
+            "δ = 0.5 discounts the banked (carried-forward) slice. Supersedes "
+            "the v0.2 TaxAlpha, which valued every loss dollar at the full "
+            "current-year rate and counted winners' |gains| as harvestable."
         ),
-        "encoding": "Non-negative continuous; 0 when the lot has no loss or no gains exist to offset.",
+        "encoding": "Non-negative continuous; 0 when the lot is not at a loss.",
         "missing": "None.",
-        "source": "derived in SimulationEngine",
+        "source": "TaxLedger.ComputeTaxValue(lossDollars, H)",
     },
     {
         "name": "DaysToYE",
@@ -214,8 +249,9 @@ COLUMNS: list[dict] = [
         "role": "feature (derived)",
         "description": (
             "Calendar days remaining until December 31 of the simulated tax "
-            "year. Year-end is when G_YTD resets, so harvest urgency varies "
-            "with this clock."
+            "year. Year-end is when the ledger's annual accumulators reset "
+            "(and net losses roll into LossCarryforward), so harvest urgency "
+            "varies with this clock."
         ),
         "encoding": "Integer in [0, 365].",
         "missing": "None.",
@@ -227,10 +263,13 @@ COLUMNS: list[dict] = [
         "units": "—",
         "role": "label (hard)",
         "description": (
-            "Deterministic oracle harvest decision — the conjunction of four "
-            "gates: 1[L ≤ −0.02] · 1[Sigma_TE ≤ 0.05] · 1[G_YTD > 0] · "
-            "1[WashClock ≥ 30]. This is the decision boundary the supervised "
-            "models try to learn. Never used as a model input."
+            "Deterministic oracle harvest decision — in gated (v0.2-legacy) "
+            "runs, the conjunction of four gates: 1[L ≤ −0.02] · "
+            "1[Sigma_TE ≤ 0.05] · 1[RealizedGainsYTD > 0] · 1[WashClock ≥ 30]. "
+            "The gains gate is a tracked defect (issue #23); the v0.25 "
+            "scalarized oracle replaces it with a utility threshold. This is "
+            "the decision boundary the supervised models try to learn. Never "
+            "used as a model input."
         ),
         "encoding": "0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.",
         "missing": "None.",
@@ -271,6 +310,23 @@ COLUMNS: list[dict] = [
             "(670–699). These rows are excluded from soft-label training."
         ),
         "source": "SoftLabelBuilder (real forward window)",
+    },
+    {
+        "name": "Y_TaxValue",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "label (continuous regression target)",
+        "description": (
+            "Cross-sectional regression target: taxValue_k of this lot at this "
+            "timestep — the capacity-aware harvest value from the TaxLedger. "
+            "Numerically identical to the TaxValue feature by construction in "
+            "v0.25, so regressions on this target MUST exclude TaxValue from "
+            "the feature set (the task is recovering g(ledger, H, L) from raw "
+            "features). First member of the issue #17 richer-label family."
+        ),
+        "encoding": "Non-negative continuous dollars.",
+        "missing": "None.",
+        "source": "TaxLedger.ComputeTaxValue at snapshot time",
     },
     {
         "name": "Symbol",

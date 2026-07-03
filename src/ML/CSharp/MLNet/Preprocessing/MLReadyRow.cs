@@ -21,14 +21,16 @@ public record MLReadyRow
     public float B { get; init; }
     public float W { get; init; }
     public float K { get; init; }
-    public float G_YTD { get; init; }
+    public float RealizedGainsYTD { get; init; }
+    public float LossCarryforward { get; init; }
+    public float OrdinaryOffsetBudget { get; init; }
     public float Sigma_TE { get; init; }
     public float WashClock { get; init; }
     public float R_t { get; init; }
     public float SigmaRange { get; init; }
     public float DeltaMA50 { get; init; }
     public float DeltaMA200 { get; init; }
-    public float TaxAlpha { get; init; }
+    public float TaxValue { get; init; }
     public float DaysToYE { get; init; }
 
     public string Sector { get; init; } = "";

@@ -20,15 +20,15 @@ public class LotStateVectorCsvReaderTests
         var rows = new List<LotStateVector>
         {
             new() { L = -0.12f, H = 30, S = 0, B = 100.5f, W = 0.02f, K = 2,
-                    G_YTD = 1234.5f, Sigma_TE = 0.015f, WashClock = 5,
+                    RealizedGainsYTD = 1234.5f, Sigma_TE = 0.015f, WashClock = 5,
                     R_t = 0.001f, SigmaRange = 0.02f, DeltaMA50 = -0.01f, DeltaMA200 = -0.05f,
-                    TaxAlpha = 12.3f, DaysToYE = 200, Y_Oracle = 1,
+                    TaxValue = 12.3f, DaysToYE = 200, Y_Oracle = 1,
                     Y_Soft_GBM = 0.7f, Y_Soft_BT = 0.3f,
                     Symbol = "AAPL", Sector = "Tech", Timestep = 42 },
             new() { L = float.NaN, H = 0, S = 1, B = 50.0f, W = 0.001f, K = 1,
-                    G_YTD = 0f, Sigma_TE = 0.01f, WashClock = 999,
+                    RealizedGainsYTD = 0f, Sigma_TE = 0.01f, WashClock = 999,
                     R_t = 0f, SigmaRange = 0.01f, DeltaMA50 = 0f, DeltaMA200 = 0f,
-                    TaxAlpha = 0f, DaysToYE = 100, Y_Oracle = 0,
+                    TaxValue = 0f, DaysToYE = 100, Y_Oracle = 0,
                     Y_Soft_GBM = float.NaN, Y_Soft_BT = float.NaN,
                     Symbol = "MSFT", Sector = "Tech", Timestep = 0 },
         };
@@ -77,10 +77,10 @@ public class StratifiedSplitTests
             {
                 L = (float)rng.NextDouble() - 0.5f,
                 H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
-                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 999,
+                RealizedGainsYTD = 100f, Sigma_TE = 0.01f, WashClock = 999,
                 R_t = (float)rng.NextDouble() * 0.01f,
                 SigmaRange = 0.02f, DeltaMA50 = 0f, DeltaMA200 = 0f,
-                TaxAlpha = 1f, DaysToYE = 200,
+                TaxValue = 1f, DaysToYE = 200,
                 Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y == 1 ? 0.5f : 0f,
                 Symbol = $"SYM{i % 50}", Sector = "Tech", Timestep = i,
             });
@@ -148,9 +148,9 @@ public class PreprocessingTests
         // Need at least all FloatNumericFeatures present; set the rest to 0 so medians compute.
         for (int i = 0; i < rows.Count; i++)
         {
-            rows[i] = rows[i] with { B = 100f, W = 0.01f, G_YTD = 0f, Sigma_TE = 0.01f,
+            rows[i] = rows[i] with { B = 100f, W = 0.01f, RealizedGainsYTD = 0f, Sigma_TE = 0.01f,
                                      R_t = 0f, SigmaRange = 0.01f,
-                                     DeltaMA50 = 0f, DeltaMA200 = 0f, TaxAlpha = 0f };
+                                     DeltaMA50 = 0f, DeltaMA200 = 0f, TaxValue = 0f };
         }
 
         var medians = MedianImputer.Fit(rows);
@@ -191,9 +191,9 @@ public class GridSearchTests
             data.Add(new LotStateVector
             {
                 L = l, H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
-                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 999,
+                RealizedGainsYTD = 100f, Sigma_TE = 0.01f, WashClock = 999,
                 R_t = 0f, SigmaRange = 0.01f, DeltaMA50 = 0f, DeltaMA200 = 0f,
-                TaxAlpha = 1f, DaysToYE = 200,
+                TaxValue = 1f, DaysToYE = 200,
                 Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y,
                 Symbol = $"SYM{i % 10}", Sector = "Tech", Timestep = i,
             });
@@ -247,10 +247,10 @@ public class GbtTrainerTests
             rows.Add(new LotStateVector
             {
                 L = l, H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
-                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
+                RealizedGainsYTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
                 R_t = (float)rng.NextDouble() * 0.01f,
                 SigmaRange = 0.02f, DeltaMA50 = 0f, DeltaMA200 = 0f,
-                TaxAlpha = 1f, DaysToYE = 200,
+                TaxValue = 1f, DaysToYE = 200,
                 Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y,
                 Symbol = $"SYM{i % 20}", Sector = "Tech", Timestep = i,
             });
@@ -325,10 +325,10 @@ public class LinRegTrainerTests
             data.Add(new LotStateVector
             {
                 L = l, H = 30, S = 0, B = 100f, W = 0.01f, K = 1,
-                G_YTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
+                RealizedGainsYTD = 100f, Sigma_TE = 0.01f, WashClock = 0,
                 R_t = (float)rng.NextDouble() * 0.01f,
                 SigmaRange = 0.02f, DeltaMA50 = 0f, DeltaMA200 = 0f,
-                TaxAlpha = 1f, DaysToYE = 200,
+                TaxValue = 1f, DaysToYE = 200,
                 Y_Oracle = y, Y_Soft_GBM = 0f, Y_Soft_BT = y,
                 Symbol = $"SYM{i % 20}", Sector = "Tech", Timestep = i,
             });
