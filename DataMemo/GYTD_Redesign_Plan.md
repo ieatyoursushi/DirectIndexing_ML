@@ -394,6 +394,40 @@ sharpen the thin positive region RF blurs. A tradeoff to measure. (Step-1 datum:
 **Positive-rate drift**: which lots clear changes ⇒ re-validate stratified CV and class
 weights against the new prevalence, not just re-run.
 
+### 6.1 MEASURED results (2026-07-03, 20y, schema v3 d = 17, c_trade = $10)
+
+CV PR-AUC, both arms retrained under the identical d = 17 feature set:
+
+| target | model | gated (rerun) | scalarized | Δ |
+|---|---|---|---|---|
+| oracle | GBT | 0.9865 | 0.9956 | +0.009 |
+| oracle | RF | 0.9710 | 0.9883 | +0.017 |
+| oracle | logistic | 0.8320 | 0.9804 | **+0.148** |
+| oracle | linreg | 0.1195 | 0.8227 | **+0.703** |
+| oracle | elnet | 0.0892 | 0.8107 | **+0.722** |
+| soft_bt | GBT | 0.8503 | 0.8158 | −0.035 |
+| soft_bt | logistic | 0.6904 | 0.6233 | −0.067 |
+| soft_bt | RF | 0.6713 | 0.6332 | −0.038 |
+
+**Attribution decomposition (two steps, not one).** The v0.2 anchor (LR 0.12) was measured
+under the d = 15 schema. The gated-arm *rerun* under d = 17 already lifts LR to 0.832 — a pure
+**feature-set effect** (capacity-aware TaxValue is a far more informative coordinate than the
+old TaxAlpha). The remaining lift to 0.980 — and the raw-linear leap (linreg/elnet ~0.10 →
+~0.82) — is the **oracle-swap effect**: the box-corner conjunction, not linear-model capacity,
+was what destroyed linear models. GBT–LR gap on the oracle target: 0.155 → 0.015. As
+predicted, honestly framed: the smooth economic boundary largely closes the oracle-target gap.
+
+**The v0.2 headline relocates rather than dies.** On the temporal soft target the tree
+advantage is oracle-invariant: GBT leads logistic by ~0.16 (gated) and ~0.19 (scalarized).
+The propensity problem — when will this lot clear a real cost-benefit test within 30 days —
+stays genuinely non-linear regardless of the cross-sectional boundary's smoothness. All soft
+scores shift down a few points under scalarized (different prevalence: 2.47% → 3.19%).
+
+**Regression datum (mlnet-tax, scalarized arm):** recovering g(ledger, H, ℓ) from raw
+features (TaxValue excluded): linreg R² = 0.10 vs FastTree R² = 0.88 — the min/max-kinked,
+rate-jumping value function is tree-recoverable only. Artifacts:
+`data/artifacts-mlnet/` (scalarized) and `data/artifacts-mlnet-gated/` (gated arm).
+
 ---
 
 ## 7. Sequencing — ship as independent ablations
