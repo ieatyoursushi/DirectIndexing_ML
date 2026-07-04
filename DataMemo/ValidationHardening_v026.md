@@ -71,6 +71,14 @@ No trainer, metric, or preprocessing code changed — only *where the row bounda
 | oracle · random | 0.9986 | 0.9951 |
 | oracle · **temporal** | **1.0000** | 0.9507 |
 
+**Decade walk-forward** (`--testfrac=0.5`, train ~2006–2016, test ~2016–2026 — a full
+decade of unseen regime, the harshest generalization test):
+
+| target · split | ROC-AUC | PR-AUC |
+|---|---|---|
+| soft · decade | **0.9609** | 0.4173 |
+| oracle · decade | **1.0000** | 0.9953 |
+
 **Positive-rate by period (the confound made explicit):**
 
 | region | rows | oracle+ | soft+ |
@@ -83,11 +91,22 @@ No trainer, metric, or preprocessing code changed — only *where the row bounda
 
 The PR-AUC collapse looks alarming (soft GBT 0.81 → 0.46) until you read it against ROC-AUC:
 
-1. **ROC-AUC did not drop — it rose.** ROC-AUC measures *ranking*: P(model scores a random
-   positive above a random negative). It is insensitive to class prevalence. If random splits
-   had been materially leaking future context into the ranking, removing the leak would
-   *lower* ROC-AUC. It held (0.9935 → 0.9970 soft; 0.9986 → 1.0000 oracle). **The champions'
-   ranking skill transfers across time; there was no material ranking leakage.**
+1. **ROC-AUC did not drop under the honest split — and the oracle target proves it isn't
+   leakage.** ROC-AUC measures *ranking*: P(model scores a random positive above a random
+   negative). It is insensitive to class prevalence. The **oracle target is the clean leakage
+   control**: it is a deterministic function of the current-timestep features, so if random
+   splits had leaked future context into the ranking, its ROC-AUC would read *inflated* under
+   random and *drop* under temporal. Instead it is flat and perfect across all three splits —
+   0.9986 (random) → 1.0000 (temporal 80/20) → 1.0000 (decade). **Leakage is ruled out.** The
+   soft target's ROC likewise holds under the mild 80/20 split (0.9935 → 0.9970). **The
+   champions' ranking skill transfers across time; there was no material ranking leakage.**
+
+   *Nuance the decade split adds:* under the harshest test — train on 2006–2016 only, predict
+   a full unseen decade — the *soft* ROC-AUC dips to 0.9609 (from ~0.997). That is **genuine
+   regime-generalization decay**, not leakage (the deterministic oracle stays 1.0000): a model
+   that never saw 2016–2026 ranks its harvest propensity slightly less sharply. 0.96 is still
+   strong ranking; the point is that the decade split *distinguishes* mild honest drift from
+   the leakage the 80/20 split alone could not isolate.
 
 2. **PR-AUC is prevalence-bounded, and the test-period prevalence crashed 18×.** The no-skill
    AUPRC *equals* the positive rate, and the whole PR curve scales with it. The temporal test
