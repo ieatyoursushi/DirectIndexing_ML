@@ -51,18 +51,30 @@ $$
 
 where $V_0 = \$10{,}000{,}000$ (default) and $N$ = number of tickers with valid prices.
 
-G_YTD is seeded at simulation start and after each year-end reset:
+**Tax state (v0.25, issue #23):** the engine's tax bookkeeping is the `TaxLedger`
+(`Core/Portfolio/TaxLedger.cs`), replacing the bare `G_YTD` scalar. Stored state:
+`RealizedGainsYTD` (signed net realized P&L this calendar year — identical semantics to the
+old G_YTD) and `LossCarryforward` (net losses beyond each year's ordinary allowance;
+survives year-end, 26 USC §1212(b)). Derived: `OrdinaryOffsetBudget`
+$= \max(0,\ \$3{,}000 - \max(0, -\text{net}))$ (§1211(b)) and
+$\text{offsetCapacity} = \max(\text{net}, 0) + \text{OrdinaryOffsetBudget}$.
 
-$$
-G_{t_0}^{\text{YTD}} \leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000
-$$
+Seeding is **mode-dependent** (`OracleConfig.SeedExternalGains`):
 
-This simulates prior-year or external gains the client has realised elsewhere (dividends
-reinvested, other account sales).  The 10% rate is calibrated to the S&P 500's long-run
-~10% annual total return — the client is assumed to realise gains elsewhere at roughly the
-index's pace.  Without seeding, the third oracle gate $G^{\text{YTD}} > 0$ is permanently
-closed and no harvests fire (index appreciation inside the portfolio is *unrealised* and
-never enters $G^{\text{YTD}}$).
+- **Gated mode** (v0.2-legacy ablation arm): external gains are seeded at start and after
+  each year-end reset, $\leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000$, simulating prior-year
+  or outside gains at roughly the S&P 500's long-run annual pace. Without the seed the
+  legacy gate $G^{\text{YTD}} > 0$ is permanently closed. The seed deliberately does NOT
+  net against carryforward, so gated-mode label trajectories are bit-identical to the
+  pre-ledger engine.
+- **Scalarized mode** (canonical): **no seed.** The book is honestly loss-only —
+  offsetCapacity collapses to the \$3k/yr ordinary allowance, the tax-code-accurate floor
+  for a client with no outside capital-gains activity (the conservative persona; stated in
+  the report).
+
+In both modes the engine also tracks a **spectator legacy-G_YTD** (seed + Σ realized P&L of
+*this run's* harvests, reset+reseeded at year-end) so the v0.2 four-gate predicate stays
+evaluable pointwise on every row (`Y_Oracle_GatedSpec`).
 
 ### 2.2  Day Loop  ($t = t_0, \ldots, T-1$)
 
@@ -74,15 +86,29 @@ For each trading day $t$:
 3. **Tracking error update** — call `TrackingErrorProxy.Update` with open-lot symbols  
    to get $\hat{\sigma}_{\text{TE},t}$ (see §5).
 4. **Feature extraction + oracle** — for each open lot $k$:
-   - Compute $\ell_k = (P_t^{(A_k)} - p_k) / p_k$
-   - Evaluate $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_2] \cdot \mathbf{1}[G^{\text{YTD}} > 0] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30]$
-   - Record snapshot $(k, t)$ as a `LotStateVector` row (Y_Soft labels are 0 placeholders)
+   - Compute $\ell_k = (P_t^{(A_k)} - p_k) / p_k$, loss dollars
+     $D_k = \max(0,\ (p_k - P_t) q_k)$, and the ledger valuation
+     $\text{taxValue}_k = \tau(h_k)\min(D_k, \text{capacity}) + \tau_f \max(D_k - \text{capacity}, 0)\,\delta$
+     with $\tau(h) = 0.37/0.20$ (short/long at $h = 365$), $\tau_f = 0.20$, $\delta = 0.5$.
+   - Evaluate the mode's oracle (`OracleBoundary.Label(snapshot, config)`):
+     - **Scalarized (canonical):**
+       $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
+       where $U = \text{taxValue}_k - \lambda \hat\sigma_{\text{TE}}^2 - c_{\text{trade}}$
+       ($\theta_{\max} = 0.15$, $\lambda = 90{,}000$, $c_{\text{trade}} = \$10$; calibration
+       provenance in `OracleConfig.cs` / `GYTD_Redesign_Plan.md` v2).
+     - **Gated (legacy ablation):**
+       $f^* = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_2] \cdot \mathbf{1}[G^{\text{YTD}} > 0] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30]$.
+   - Record snapshot $(k, t)$ as a `LotStateVector` row, including labels
+     `Y_TaxValue` $= \text{taxValue}_k$, `Y_Utility` $= U$, and the spectator
+     `Y_Oracle_GatedSpec` (Y_Soft labels are 0 placeholders).
    - If $f^* = 1$: harvest the lot (see §2.3)
 5. **Reopen queue** — lots that cleared the 30-day wash-sale window exactly on day $t$ are
    reopened at the current price with the same dollar amount.
 6. **Advance clocks** — `state.AdvanceDay()` increments every wash-sale clock by 1.
 7. **Year-end reset** — if $\text{date}(t+1).\text{year} \ne \text{date}(t).\text{year}$:
-   - $G^{\text{YTD}} \leftarrow 0$, then re-seed: $G^{\text{YTD}} \leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000$
+   - `Ledger.RollYearEnd()`: carryforward $\mathrel{+}= \max(0,\ \text{netLoss} - \$3{,}000)$,
+     then net $\leftarrow 0$ (budget resets implicitly since it is derived)
+   - Gated mode only: re-seed net $\leftarrow \$1{,}000{,}000$
    - Wash clocks **persist** (IRS wash-sale window crosses Dec 31)
 
 ### 2.3  Harvest Transition
@@ -90,11 +116,13 @@ For each trading day $t$:
 When the oracle fires on lot $k$ at price $P_t$:
 
 $$
-\Delta G^{\text{YTD}} = q_k (P_t - p_k) \qquad \text{(negative for a loss)}
+\Delta = q_k (P_t - p_k) \qquad \text{(negative for a loss)} \qquad
+\text{Ledger.RecordRealized}(\Delta): \text{RealizedGainsYTD} \mathrel{+}= \Delta
 $$
 
 The lot is removed from $\mu_t$, the wash clock resets $\mathcal{W}_t^{(A_k)} \leftarrow 0$,
-and a reopen entry is queued for day $t + 30$ with dollar amount $q_k P_t$.
+the spectator legacy-G_YTD also accrues $\Delta$, and a reopen entry is queued for day
+$t + 30$ with dollar amount $q_k P_t$.
 
 ---
 
@@ -162,8 +190,14 @@ are counterfactual and should not be counted again.
 
 Both strategies run in a **second pass** after the backtesting day loop, filling
 `Y_Soft_GBM` and `Y_Soft_BT` on each snapshot in place.  Portfolio state is **frozen**
-at the snapshot's timestep: $G^{\text{YTD}}$, $\sigma_{\text{TE}}$, and $\mathcal{W}^{(A_k)}$
-do not evolve during the forward window.
+at the snapshot's timestep: the ledger scalars (net realized, offsetCapacity),
+$\sigma_{\text{TE}}$ do not evolve during the forward window, while the wash clock and the
+holding period advance with the step ($\mathcal{W} + s$, $h + s$ — so $\tau(h)$ can flip
+short→long inside the window). For the scalarized objective the loss is **re-dollarized**
+at each forward price, $D_k(P) = \max(0, (p_k - P)q_k)$, using the frozen share count $q_k$
+carried on the snapshot (in-memory only, not exported). The oracle itself stays a black box
+$\mathcal{X} \to \{0,1\}$, so the Cesàro machinery below is invariant to the v0.25 swap of
+its internals.
 
 ### 4.1  Y_Soft_GBM — Stochastic Forward Window
 
@@ -173,13 +207,16 @@ For snapshot $(k, t)$:
    $$\hat\sigma_k = \sqrt{252} \cdot \hat s_{r,21} \qquad \text{(daily return std, trailing 21 days)}$$
    Fallback $\hat\sigma_k = 0.20$ if fewer than 5 valid returns.
 
-2. Call `GbmSimulator.FractionFiring` with the oracle predicate as closure:
+2. Call `GbmSimulator.FractionFiring` with the mode's oracle predicate as closure —
+   scalarized (canonical):
    $$
    \phi(P, s) = \mathbf{1}\!\Bigl[\frac{P - p_k}{p_k} \le -0.02\Bigr]
-                \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le 0.05]
-                \cdot \mathbf{1}[G^{\text{YTD}} > 0]
                 \cdot \mathbf{1}[\mathcal{W}^{(A_k)} + s \ge 30]
+                \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}]
+                \cdot \mathbf{1}\!\bigl[\text{taxValue}(D_k(P),\, h_k + s,\, \text{cap})
+                      - \lambda\hat\sigma_{\text{TE}}^2 - c_{\text{trade}} > 0\bigr]
    $$
+   (gated mode substitutes the legacy four-gate AND with frozen $G^{\text{YTD}}$).
 
 3. $\tilde{y}_{\text{GBM}} = \hat{p}_{\text{fire}} \in [0, 1]$
 
@@ -191,7 +228,7 @@ next 30 trading days if prices follow the calibrated GBM and portfolio state sta
 For snapshot $(k, t)$:
 
 $$
-\tilde{y}_{\text{BT}} = \frac{1}{30} \sum_{s=1}^{30} f^*\!\left(\ell_k^{(t+s)},\, \hat\sigma_{\text{TE}},\, G^{\text{YTD}},\, \mathcal{W}^{(A_k)} + s\right)
+\tilde{y}_{\text{BT}} = \frac{1}{30} \sum_{s=1}^{30} f^*\!\left(\ell_k^{(t+s)},\, \hat\sigma_{\text{TE}},\, \text{ledger}_t,\, h_k + s,\, \mathcal{W}^{(A_k)} + s\right)
 $$
 
 where $\ell_k^{(t+s)} = (P_{t+s}^{(A_k)} - p_k) / p_k$ is computed from the **real** price series.
@@ -396,9 +433,16 @@ Handling in ML: use class-weighted loss (balanced weights $\approx 30$:$1$ for t
 class) or focus on the soft labels — `Y_Soft_BT` > 0 on ~20% of labeled rows,
 `Y_Soft_GBM` > 0 on ~65% of rows — as the primary training targets.
 
+> **v0.25 update (20-year window, per arm).** The table above is the historical 2-year gated
+> run. On the 20-year data: gated arm `Y_Oracle` ≈ 0.20% positive (gains gate open ~94% of
+> rows, closing only in 2008–09); scalarized arm ≈ 0.20% with `Y_Soft_BT > 0` ≈ 3.2%, θ_max
+> binding on 0 rows, and the endogenous-N channel running both directions (removing the gate
+> added harvests/dark windows; adding $c_{\text{trade}}$ pruned marginal harvests and *grew*
+> the dataset to 1,849,022 rows). Measured ablation table: `GYTD_Redesign_Plan.md` §6.1.
+
 ### 7.3  Conditional Independence
 
-The raw panel is correlated: (a) cross-sectionally (shared $G^{\text{YTD}}$ and $\sigma_{\text{TE}}$),
+The raw panel is correlated: (a) cross-sectionally (shared ledger state and $\sigma_{\text{TE}}$),
 (b) temporally (same lot across consecutive days).
 
 However, **given the feature vector** $\mathbf{x}_k = (L, H, S, B, W, K, G_{\text{YTD}}, \sigma_{\text{TE}}, \ldots)$,

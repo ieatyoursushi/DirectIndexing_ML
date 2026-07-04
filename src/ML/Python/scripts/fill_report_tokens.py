@@ -18,10 +18,15 @@ from scripts import report_helpers as rh
 
 def main() -> int:
     root = rh.repo_root()
-    art = root / "data" / "artifacts-mlnet"
+    art       = root / "data" / "artifacts-mlnet"          # scalarized (canonical)
+    art_gated = root / "data" / "artifacts-mlnet-gated"    # gated ablation arm
 
-    cols = ["Y_Oracle", "Y_Soft_BT", "RealizedGainsYTD", "Symbol"]
-    lots = pd.read_csv(root / "data" / "lots.csv", usecols=cols)
+    lots = pd.read_csv(root / "data" / "lots.csv",
+                       usecols=["Y_Oracle", "Y_Soft_BT", "Symbol"])
+    # Gains-gate prevalence belongs to the GATED arm's narrative (the diagnosis
+    # chapter): in the seedless scalarized book RealizedGainsYTD is never > 0.
+    gated_g = pd.read_csv(root / "data" / "lots_gated.csv",
+                          usecols=["RealizedGainsYTD"])
 
     gbt_soft = rh.load_artifact(art, "gbt_soft_bt_metrics.json")
     gbt_orc  = rh.load_artifact(art, "gbt_oracle_metrics.json")
@@ -29,19 +34,26 @@ def main() -> int:
     lb_orc   = rh.load_artifact(art, "oracle_cv_leaderboard.json")
     logit_orc = next(m for m in lb_orc if m["modelName"] == "logistic")
 
+    lb_orc_gated = rh.load_artifact(art_gated, "oracle_cv_leaderboard.json")
+    logit_gated  = next(m for m in lb_orc_gated if m["modelName"] == "logistic")
+
+    taxreg = rh.load_artifact(art, "tax_value_regression_metrics.json")
+    tr_by  = {m["modelName"]: m for m in taxreg["models"]}
+
     tokens = {
         "«N_ROWS»":            f"{len(lots):,}",
         "«N_CONSTIT»":         f"{lots['Symbol'].nunique()}",
         "«ORACLE_RATE»":       f"{lots['Y_Oracle'].mean():.2%}",
         "«SOFT_RATE»":         f"{(lots['Y_Soft_BT'].dropna() > 0).mean():.2%}",
-        # Token name kept stable for the notebook; the column is the ledger's
-        # net-realized scalar (pre-v0.25 G_YTD — identical values in gated runs).
-        "«GYTD_OPEN»":         f"{(lots['RealizedGainsYTD'] > 0).mean():.1%}",
+        "«GYTD_OPEN»":         f"{(gated_g['RealizedGainsYTD'] > 0).mean():.1%}",
         "«GBT_SOFT_CV»":       f"{gbt_soft['cvBestMeanPrAuc']:.3f}",
         "«GBT_SOFT_TEST»":     f"{gbt_soft['testPrAuc']:.3f}",
         "«GBT_ORACLE_TESTPR»": f"{gbt_orc['testPrAuc']:.3f}",
         "«LOGIT_ORACLE_CV»":   f"{logit_orc['meanCvPrAuc']:.3f}",
+        "«LOGIT_ORACLE_GATED»": f"{logit_gated['meanCvPrAuc']:.3f}",
         "«RF_FF_BEST»":        f"{rf_soft['featureFraction']:g}",
+        "«TAXREG_LIN_R2»":     f"{tr_by['linreg_sdca']['testR2']:.2f}",
+        "«TAXREG_GBT_R2»":     f"{tr_by['gbt_fasttree']['testR2']:.2f}",
     }
 
     nb_path = Path("notebooks/final_report.ipynb")

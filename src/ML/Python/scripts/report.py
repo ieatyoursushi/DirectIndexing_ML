@@ -32,17 +32,32 @@ REQUIRED_ARTIFACTS = [
     "linreg_soft_bt_coefficients.csv",
     "pca_scree.json",
     "kmeans_elbow.json",
+    "tax_value_regression_metrics.json",   # v0.25: Y_TaxValue regression section
+]
+
+# v0.25 ablation inputs: the gated arm's leaderboards (in artifacts-mlnet-gated/,
+# a sibling of --artifacts) and the gated dataset for the diagnosis chapter.
+REQUIRED_GATED_ARTIFACTS = [
+    "oracle_cv_leaderboard.json",
+    "soft_bt_cv_leaderboard.json",
 ]
 
 
 def preflight(lots: Path, artifacts: Path, notebook: Path) -> None:
-    missing = [str(p) for p in [lots, notebook] if not p.exists()]
+    lots_gated = lots.parent / "lots_gated.csv"
+    art_gated  = artifacts.parent / "artifacts-mlnet-gated"
+
+    missing = [str(p) for p in [lots, lots_gated, notebook] if not p.exists()]
     missing += [str(artifacts / a) for a in REQUIRED_ARTIFACTS if not (artifacts / a).exists()]
+    missing += [str(art_gated / a) for a in REQUIRED_GATED_ARTIFACTS
+                if not (art_gated / a).exists()]
     if missing:
         print("[report] missing required inputs:", file=sys.stderr)
         for m in missing:
             print(f"[report]   {m}", file=sys.stderr)
-        print("[report] run `dotnet run mlnet-all` (or `dotnet run report-all`) first.",
+        print("[report] run `dotnet run mlnet-all` + `mlnet-tax` on the canonical arm, "
+              "`simulate --oracle=gated` + retrains for the ablation arm "
+              "(keep them in data/artifacts-mlnet-gated/), then retry.",
               file=sys.stderr)
         sys.exit(2)
 

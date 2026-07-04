@@ -55,15 +55,19 @@ $$\tau(h) = \begin{cases} \tau_{\text{ST}} & h < 365 \\ \tau_{\text{LT}} & h \ge
 
 ### 2.1 Formal Definition
 
-The complete portfolio state at day $t$ is the triple:
+The complete portfolio state at day $t$ is the triple (v0.25: the tax component grew from a
+scalar into the `TaxLedger`):
 
-$$\mathcal{S}_t = \left(\mu_t,\ G_t^{\text{YTD}},\ \mathcal{W}_t\right)$$
+$$\mathcal{S}_t = \left(\mu_t,\ \text{ledger}_t,\ \mathcal{W}_t\right)$$
 
 | Component | C# member | Type | Meaning |
 |-----------|-----------|------|---------|
 | $\mu_t$ | `OpenLots` | `List<Lot>` | Full lot measure across all assets |
-| $G_t^{\text{YTD}} \in \mathbb{R}$ | `G_YTD` | `decimal` | Net realised gain/loss, calendar year to date |
+| $\text{ledger}_t$ | `Ledger` | `TaxLedger` | Schedule D bookkeeping: `RealizedGainsYTD` $\in \mathbb{R}$ (signed net, the pre-v0.25 `G_YTD`), `LossCarryforward` $\in \mathbb{R}_{\ge 0}$ (survives year-end), derived `OrdinaryOffsetBudget` $\in [0, 3000]$ and `OffsetCapacity` |
 | $\mathcal{W}_t : \mathcal{S} \to \mathbb{Z}_{\geq 0}$ | `_washClocks` | `Dictionary<string,int>` | Days since last harvest per ticker |
+
+`PortfolioState.G_YTD` survives as a read alias of `Ledger.RealizedGainsYTD` — identical
+values, so the legacy (gated) oracle and all logging are unchanged.
 
 ### 2.2 Time Evolution
 
@@ -71,9 +75,9 @@ $$\mathcal{S}_t = \left(\mu_t,\ G_t^{\text{YTD}},\ \mathcal{W}_t\right)$$
 $$\mathcal{W}_{t+1}^{A_i} = \mathcal{W}_t^{A_i} + 1 \quad \forall i \in \mathcal{S}$$
 
 **HarvestLot()** implements the state transition on lot $k$ of asset $A_i$:
-1. Realise P&L:
+1. Realise P&L into the ledger (`Ledger.RecordRealized`):
 $$\Delta G = q_k (P_t - p_k) \qquad \text{(negative for a loss)}$$
-$$G_{t+1}^{\text{YTD}} = G_t^{\text{YTD}} + \Delta G$$
+$$\text{RealizedGainsYTD}_{t+1} = \text{RealizedGainsYTD}_t + \Delta G$$
 
 2. Remove atom from the measure:
 $$\mu_{t+1}^{A_i} = \mu_t^{A_i} - q_k\,\delta_{(p_k, s_k)}$$
@@ -81,22 +85,35 @@ $$\mu_{t+1}^{A_i} = \mu_t^{A_i} - q_k\,\delta_{(p_k, s_k)}$$
 3. Reset the wash-sale clock:
 $$\mathcal{W}_{t+1}^{A_i} = 0$$
 
-### 2.3 Sign Convention for $G_t^{\text{YTD}}$ — Critical Detail
+### 2.3 The TaxLedger — Sign Convention and Tax-Law Semantics (supersedes the G_YTD gate detail)
 
-$G_t^{\text{YTD}}$ is a **signed scalar** tracking net realised P&L for the year:
+`RealizedGainsYTD` is a **signed scalar** tracking net realised P&L for the year:
 
-- **Positive**: net realised gains dominate (sold positions for more than cost basis in aggregate)
+- **Positive**: net realised gains dominate (external/seeded gains exceed harvested losses)
 - **Negative**: net realised losses dominate (TLH has offset or exceeded gains)
 
-Harvesting a losing lot ($P_t < p_k$) makes $\Delta G < 0$, pushing $G_t^{\text{YTD}}$ **more negative**. This is correct and intentional — TLH is the act of deliberately realising losses.
+Harvesting a losing lot ($P_t < p_k$) makes $\Delta G < 0$, pushing the net **more negative**.
+This is correct and intentional — TLH is the act of deliberately realising losses.
 
-The oracle condition $\mathbb{1}[G_t^{\text{YTD}} > 0]$ creates a **self-limiting dynamic**: once you have harvested enough losses to offset all gains, the oracle stops firing. This prevents harvesting losses into negative $G_t^{\text{YTD}}$ territory beyond what the $\$3{,}000$ ordinary income deduction limit can absorb.
+**What changed in v0.25 (issue #23).** The old oracle condition $\mathbb{1}[G > 0]$ read
+this scalar as a *gate* and produced a "self-limiting dynamic": harvesting stopped once
+losses exhausted the year's gains. The 20-year run showed that dynamic to be economically
+backwards for individual investors — under 26 USC §1211(b)/§1212(b) a harvested loss is
+never wasted (it offsets gains from anywhere on the 1040, then \$3k/yr of ordinary income,
+and the rest carries forward indefinitely), so "do I have gains this year" is magnitude and
+timing information, not a veto. The ledger therefore encodes it as **value, not permission**:
 
-| Situation | $G_t^{\text{YTD}}$ sign | Oracle condition $\mathbb{1}[G > 0]$ | Harvest enabled? |
-|-----------|--------------------------|---------------------------------------|-----------------|
-| Gains banked, no losses yet harvested | $+$ | 1 | ✓ |
-| After several loss harvests | $-$ | 0 | ✗ |
-| After new gains realised | $+$ again | 1 | ✓ again |
+$$\text{OrdinaryOffsetBudget}_t = \max\!\bigl(0,\ \$3{,}000 - \max(0, -\text{net}_t)\bigr),\qquad
+\text{OffsetCapacity}_t = \max(\text{net}_t, 0) + \text{OrdinaryOffsetBudget}_t$$
+
+$$\text{taxValue}_k = \tau(h_k)\cdot\min(D_k,\ \text{OffsetCapacity}_t)
++ \tau_f \cdot \max(D_k - \text{OffsetCapacity}_t,\ 0)\cdot\delta$$
+
+with $D_k$ the loss in dollars, $\tau(h) \in \{0.37, 0.20\}$ (short/long at $h = 365$),
+$\tau_f = 0.20$, and $\delta = 0.5$ a constant stand-in for a hazard-rate discount on banked
+losses. At year-end, `RollYearEnd()` banks $\max(0, \text{netLoss} - \$3{,}000)$ into
+`LossCarryforward` (which **survives**) and zeroes the annual accumulator. The legacy gate
+survives only in the `--oracle=gated` ablation arm.
 
 ### 2.4 The Wash-Sale Clock $\mathcal{W}_t$
 
@@ -105,17 +122,21 @@ The IRS wash-sale rule prohibits claiming a loss on an asset if a substantially 
 In the simulation:
 $$\text{IsWashSaleBlocked}(A_i) = \mathbb{1}\!\left[\mathcal{W}_t^{A_i} < 30\right]$$
 
-This is embedded in the oracle as an additional gate:
-$$f^*(x) = \mathbb{1}[\ell \leq -\theta_1] \cdot \mathbb{1}[\sigma_{\text{TE}} \leq \theta_2] \cdot \mathbb{1}[G_t^{\text{YTD}} > 0] \cdot \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
+This is embedded in the oracle as a hard gate (one of the two that encode genuine legal
+rules and therefore survived the v0.25 redesign unchanged):
+$$f^*(x) \supseteq \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
 
 After harvest, $\mathcal{W}_t^{A_i} \leftarrow 0$ and the clock counts up through `AdvanceDay()` until it reaches 30, at which point the asset becomes harvestable again.
 
 ### 2.5 Year-End Reset
 
-$G_t^{\text{YTD}}$ resets on January 1 of each simulated year. Wash-sale clocks intentionally **do not reset** — the IRS 30-day window crosses year-end boundaries.
+On January 1 of each simulated year the ledger rolls: net loss beyond the \$3k ordinary
+allowance banks into `LossCarryforward` (which persists), then `RealizedGainsYTD` resets to
+0 (the gated ablation arm then re-seeds it). Wash-sale clocks intentionally **do not
+reset** — the IRS 30-day window crosses year-end boundaries.
 
 ```csharp
-portfolioState.ResetForNewYear();  // G_YTD ← 0m; wash clocks untouched
+portfolioState.ResetForNewYear();  // Ledger.RollYearEnd(); wash clocks untouched
 ```
 
 ---
@@ -139,16 +160,21 @@ The **dimensionality partition** of the $d$ feature coordinates:
 LotSnapshot ∈ ℝ^d × 𝒴
 ├── x ∈ 𝒳 ⊂ ℝ^d  (features — model inputs)
 │   ├── L, H, S, B, W, K              ← 𝒳_lot     ⊂ ℝ^6   (lot-level)
-│   ├── G_YTD, Sigma_TE, WashClock    ← 𝒳_portfolio ⊂ ℝ^3  (portfolio-level)
+│   ├── RealizedGainsYTD, LossCarryforward, OrdinaryOffsetBudget,
+│   │   Sigma_TE, WashClock           ← 𝒳_portfolio ⊂ ℝ^5  (portfolio-level: ledger + risk)
 │   ├── R_t, SigmaRange, DeltaMA50, DeltaMA200  ← 𝒳_asset ⊂ ℝ^4  (asset-level)
-│   └── AlphaTax, DaysToYE            ← 𝒳_derived  ⊂ ℝ^2  (composite)
+│   └── TaxValue, DaysToYE            ← 𝒳_derived  ⊂ ℝ^2  (composite)
 │
 └── y ∈ 𝒴  (labels — model targets, never inputs)
     ├── Y_Oracle ∈ {0,1}              ← hard label  f*(x)
-    └── Y_Soft   ∈ [0,1]              ← soft label  ỹ(x)
+    ├── Y_Soft   ∈ [0,1]              ← soft labels ỹ(x)  (GBM + BT)
+    ├── Y_TaxValue ∈ ℝ≥0              ← continuous regression target (≡ TaxValue feature;
+    │                                    regressions on it exclude that feature)
+    ├── Y_Utility ∈ ℝ                 ← raw U(x)  (diagnostic / v0.4 RL reward)
+    └── Y_Oracle_GatedSpec ∈ {0,1}    ← v0.2 spectator predicate (ablation)
 ```
 
-So $d \approx 15$ before one-hot encoding of `Sector`. The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
+So $d = 17$ before one-hot encoding of `Sector` (schema v3; was 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
 
 **Schema-first timing:** `LotSnapshot` is defined now as the **interface contract** before the simulation exists. Every downstream component — `PriceLoader`, `OracleGate`, `SoftLabelBuilder`, `SimulationExporter` — is built against this schema. Defining it late would mean those components implicitly define the schema through whatever they happen to produce, which is riskier in a typed system.
 
@@ -170,11 +196,13 @@ So $d \approx 15$ before one-hot encoding of `Sector`. The ML model learns $\hat
 | `W` | $w_k = q_k P_t / V_t$ | derived | $(0,1)$ |
 | `K` | lot count for ticker $A_i$ | counted from `OpenLots` | $\mathbb{Z}_{>0}$ |
 
-#### Portfolio-level (from `PortfolioState`)
+#### Portfolio-level (from `PortfolioState` / `TaxLedger`)
 
 | Field | Formula | Source |
 |-------|---------|--------|
-| `G_YTD` | $G_t^{\text{YTD}} \in \mathbb{R}$ | `portfolioState.G_YTD` |
+| `RealizedGainsYTD` | signed net realised P&L YTD (pre-v0.25 `G_YTD`) | `Ledger.RealizedGainsYTD` |
+| `LossCarryforward` | $\sum_{\text{years}} \max(0, \text{netLoss} - \$3k)$, survives year-end | `Ledger.LossCarryforward` |
+| `OrdinaryOffsetBudget` | $\max(0, \$3k - \max(0, -\text{net}))$ | `Ledger.OrdinaryOffsetBudget` (derived) |
 | `Sigma_TE` | $\sigma_{\text{TE}} = \sqrt{\delta w^\top \Sigma\, \delta w}$ | computed in simulation |
 | `WashClock` | $\mathcal{W}_t^{A_i} \in \mathbb{Z}_{\geq 0}$ | `portfolioState.GetWashClock()` |
 
@@ -191,15 +219,18 @@ So $d \approx 15$ before one-hot encoding of `Sector`. The ML model learns $\hat
 
 | Field | Formula |
 |-------|---------|
-| `AlphaTax` | $\alpha_{\text{tax}} = \tau(h)\cdot \lvert G_{\text{lot}} \rvert \cdot \mathbb{1}[G_t^{\text{YTD}} > 0]$ |
+| `TaxValue` | $\tau(h_k)\min(D_k, \text{cap}) + \tau_f \max(D_k - \text{cap}, 0)\,\delta$ — capacity-aware harvest value (supersedes v0.2 `TaxAlpha`, which valued winners' \|gains\| as losses and ignored capacity) |
 | `DaysToYE` | calendar days remaining in simulated tax year |
 
 #### Labels
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `Y_Oracle` | $f^*(x) \in \{0,1\}$ | Hard label from oracle gate |
-| `Y_Soft` | $\tilde{y}(x) \in [0,1]$ | Soft label from forward simulation window |
+| `Y_Oracle` | $f^*(x) \in \{0,1\}$ | Hard label from the acting oracle |
+| `Y_Soft` | $\tilde{y}(x) \in [0,1]$ | Soft labels from forward windows (GBM + BT) |
+| `Y_TaxValue` | $\in \mathbb{R}_{\ge 0}$ | Continuous target ≡ `TaxValue` (exclude that feature when regressing) |
+| `Y_Utility` | $U(x) \in \mathbb{R}$ | Raw scalarized objective; v0.4 RL per-decision reward |
+| `Y_Oracle_GatedSpec` | $\in \{0,1\}$ | v0.2 gated predicate as spectator (ablation diagnostics) |
 
 #### Metadata (drop before modelling)
 
@@ -238,7 +269,7 @@ The raw panel $\{(X_{k,t}, Y_{k,t})\}$ is **not** i.i.d. — it has two sources 
 At any fixed $t$, all open lots share the **same portfolio-level state**:
 $$G_t^{\text{YTD}},\; \sigma_{\text{TE},t} \in \text{PortfolioState}_t$$
 
-So `LotSnapshot(AAPL, t=50)` and `LotSnapshot(MSFT, t=50)` share the same `G_YTD` and `Sigma_TE` coordinates — they are correlated through the common $\mathcal{S}_t$.
+So `LotSnapshot(AAPL, t=50)` and `LotSnapshot(MSFT, t=50)` share the same ledger (`RealizedGainsYTD`, `OrdinaryOffsetBudget`) and `Sigma_TE` coordinates — they are correlated through the common $\mathcal{S}_t$.
 
 #### Source 2: Temporal dependence (same lot at consecutive days)
 
@@ -250,7 +281,7 @@ The label $\tilde{y}_{k,t} = f^*(x_{k,t})$ is a **deterministic function of $x_{
 
 $$\tilde{y}_{k,t} \perp \tilde{y}_{j,s} \mid x_{k,t} \quad \forall (j,s) \neq (k,t)$$
 
-The shared portfolio state is not hidden — it is **explicitly encoded** as columns in every snapshot. `G_YTD` and `Sigma_TE` appear as coordinates in $x_{k,t}$. The cross-sectional correlation is absorbed into the feature representation rather than lurking as latent confounding.
+The shared portfolio state is not hidden — it is **explicitly encoded** as columns in every snapshot. `RealizedGainsYTD`, `LossCarryforward`, `OrdinaryOffsetBudget`, and `Sigma_TE` appear as coordinates in $x_{k,t}$. The cross-sectional correlation is absorbed into the feature representation rather than lurking as latent confounding.
 
 This is the **ergodic collapse** described in §2.2 of the theory memo:
 
@@ -278,24 +309,35 @@ This is not a flaw in the model — it is a known, bounded, and handled boundary
 
 ## 4. Oracle Conditions — Unified View
 
-The full oracle $f^* : \mathcal{X} \to \{0,1\}$ fires when **all four gates** are simultaneously open:
+**Canonical (v0.25 scalarized):** hard gates survive only where they encode a genuine legal
+rule or threshold fact; everything economic is one scalarized objective thresholded at zero:
 
-$$f^*(x) = \underbrace{\mathbb{1}[\ell \leq -\theta_1]}_{\text{loss deep enough}} \cdot \underbrace{\mathbb{1}[\sigma_{\text{TE}} \leq \theta_2]}_{\text{tracking error budget}} \cdot \underbrace{\mathbb{1}[G_t^{\text{YTD}} > 0]}_{\text{gains to offset}} \cdot \underbrace{\mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]}_{\text{wash-sale clear}}$$
+$$f^*(x) = \underbrace{\mathbb{1}[\ell \leq -\theta_1]}_{\text{loss deep enough}} \cdot \underbrace{\mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]}_{\text{wash-sale clear}} \cdot \underbrace{\mathbb{1}[\sigma_{\text{TE}} \leq \theta_{\max}]}_{\text{tail-risk ceiling}} \cdot \underbrace{\mathbb{1}[U(x) > 0]}_{\text{net benefit}}$$
 
-| Gate | Source field | Threshold |
-|------|-------------|-----------|
-| Loss sufficient | `L` | $\theta_1 > 0$ (e.g. 2%) |
-| TE budget | `Sigma_TE` | $\theta_2 > 0$ |
-| Gains available | `G_YTD` | $> 0$ |
-| Wash-sale clear | `WashClock` | $\geq 30$ |
+$$U(x) = \text{taxValue}_k(\text{ledger}_t, h_k, \ell_k) - \lambda\,\sigma_{\text{TE}}^2 - c_{\text{trade}}$$
 
-This is the conjunction of four halfspace indicators — the harvest region $\Omega$ is a convex polytope in $\mathcal{X}$ as described in §3.1 of the theory memo.
+| Condition | Source field(s) | Value | Grounding |
+|------|-------------|-----------|-----------|
+| Loss sufficient | `L` | $\theta_1 = 0.02$ | threshold-on-the-loss trigger (industry standard) |
+| Wash-sale clear | `WashClock` | $\geq 30$ | IRS §1091 |
+| TE ceiling | `Sigma_TE` | $\theta_{\max} = 0.15$ | tail-only circuit breaker; binds on 0 rows in 20y |
+| Net benefit | `TaxValue`, `Sigma_TE` | $U > 0$; $\lambda = 90{,}000$, $c_{\text{trade}} = \$10$ | Wealthfront objective form / Betterment net-benefit test |
 
-The **sign asymmetry** in the first two fields:
-- `L` must be **negative** (loss) and sufficiently below $-\theta_1$
-- `G_YTD` must be **positive** (net gains exist to offset against)
+The decision boundary is the **level set** $\partial\Omega = \{x : U(x) = 0\}$ — a smooth
+curve in $(\sigma_{\text{TE}}, \text{taxValue})$ space — rather than the corner of an
+axis-aligned box. The fine-grained TE trade-off lives inside $U$ (priced by $\lambda$);
+the marginal TE cap of v0.2 ($\theta_2 = 0.05$) is demoted.
 
-These are opposite-sign requirements on features that come from different parts of the state triple — `L` from $\mu_t$ (lot-level), `G_YTD` from the scalar component of $\mathcal{S}_t$ (portfolio-level).
+**Legacy (v0.2 gated, `--oracle=gated` ablation arm only):** the conjunction of four
+halfspace indicators — the harvest region a convex polytope, per §3.1 of the theory memo:
+
+$$f^*_{\text{gated}}(x) = \mathbb{1}[\ell \leq -\theta_1] \cdot \mathbb{1}[\sigma_{\text{TE}} \leq \theta_2] \cdot \mathbb{1}[G_t^{\text{YTD}} > 0] \cdot \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
+
+The gains gate was removed because its information is magnitude/timing, not permission
+(§2.3); its box-corner geometry — not linear-model capacity — is what made the gated oracle
+linearly unrecoverable at scale (measured: `GYTD_Redesign_Plan.md` §6.1). The gated
+predicate remains evaluable on every row of every run via the spectator label
+`Y_Oracle_GatedSpec`.
 
 ---
 
