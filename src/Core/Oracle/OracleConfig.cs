@@ -58,11 +58,19 @@ public sealed record OracleConfig
     public decimal Lambda { get; init; } = 90_000m;
 
     /// <summary>
-    /// c_trade — flat per-trade friction subtracted from U(x) (Betterment's
-    /// benefit-net-of-cost test). Config parameter, NOT a feature: a constant
-    /// cannot discriminate rows. Default 0 until the PR-3 calibration.
+    /// c_trade — flat friction of one harvest subtracted from U(x)
+    /// (Betterment's benefit-net-of-cost test). Config parameter, NOT a
+    /// feature: a constant cannot discriminate rows.
+    ///
+    /// Calibration (v0.25 PR 3): $10 per harvest = the ROUND TRIP (sell the
+    /// loss lot + reopen/substitute buy after the wash window), assuming
+    /// zero-commission retail execution and ~2.5 bps effective half-spread
+    /// per leg on the ~$20k lots this simulation trades. Deliberately flat —
+    /// lot-size-proportional cost is a recorded non-goal until c_trade is
+    /// modeled as varying (at which point it becomes a lot-level feature).
+    /// Ablation: rerun with --ctrade=0 to quantify the term's contribution.
     /// </summary>
-    public decimal CTrade { get; init; } = 0m;
+    public decimal CTrade { get; init; } = 10m;
 
     // ── Derived ──────────────────────────────────────────────────────────────
 

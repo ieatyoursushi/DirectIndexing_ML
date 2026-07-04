@@ -335,9 +335,10 @@ COLUMNS: list[dict] = [
         "role": "label (diagnostic / RL reward)",
         "description": (
             "Raw scalarized objective before thresholding: "
-            "U(x) = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = 0 "
-            "until v0.25 PR 3). The scalarized oracle fires iff U > 0 (plus the "
-            "hard gates), so the decision boundary is the level set {U = 0}. "
+            "U(x) = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000; c_trade = $10 "
+            "flat round-trip harvest friction, override via --ctrade=). The "
+            "scalarized oracle fires iff U > 0 (plus the hard gates), so the "
+            "decision boundary is the level set {U = 0}. "
             "Computed under the run's OracleConfig in both gated and scalarized "
             "runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
             "exported as the issue-#17 continuous target and the v0.4 RL "

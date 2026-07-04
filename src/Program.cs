@@ -18,6 +18,14 @@ var oracleCfg = args.Contains("--oracle=gated")
     ? DirectIndexing.Core.Oracle.OracleConfig.Gated
     : DirectIndexing.Core.Oracle.OracleConfig.Scalarized;
 
+// --ctrade=<dollars>: override the flat per-harvest friction inside U(x)
+// (e.g. --ctrade=0 for the PR-3 ablation arm). Scalarized mode only.
+var ctradeArg = args.FirstOrDefault(a => a.StartsWith("--ctrade="));
+if (ctradeArg is not null && decimal.TryParse(ctradeArg["--ctrade=".Length..],
+        System.Globalization.NumberStyles.Number,
+        System.Globalization.CultureInfo.InvariantCulture, out var ctradeOverride))
+    oracleCfg = oracleCfg with { CTrade = ctradeOverride };
+
 switch (mode)
 {
     case "download":
