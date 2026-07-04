@@ -20,7 +20,7 @@ def main() -> int:
     root = rh.repo_root()
     art = root / "data" / "artifacts-mlnet"
 
-    cols = ["Y_Oracle", "Y_Soft_BT", "G_YTD", "Symbol"]
+    cols = ["Y_Oracle", "Y_Soft_BT", "RealizedGainsYTD", "Symbol"]
     lots = pd.read_csv(root / "data" / "lots.csv", usecols=cols)
 
     gbt_soft = rh.load_artifact(art, "gbt_soft_bt_metrics.json")
@@ -34,7 +34,9 @@ def main() -> int:
         "«N_CONSTIT»":         f"{lots['Symbol'].nunique()}",
         "«ORACLE_RATE»":       f"{lots['Y_Oracle'].mean():.2%}",
         "«SOFT_RATE»":         f"{(lots['Y_Soft_BT'].dropna() > 0).mean():.2%}",
-        "«GYTD_OPEN»":         f"{(lots['G_YTD'] > 0).mean():.1%}",
+        # Token name kept stable for the notebook; the column is the ledger's
+        # net-realized scalar (pre-v0.25 G_YTD — identical values in gated runs).
+        "«GYTD_OPEN»":         f"{(lots['RealizedGainsYTD'] > 0).mean():.1%}",
         "«GBT_SOFT_CV»":       f"{gbt_soft['cvBestMeanPrAuc']:.3f}",
         "«GBT_SOFT_TEST»":     f"{gbt_soft['testPrAuc']:.3f}",
         "«GBT_ORACLE_TESTPR»": f"{gbt_orc['testPrAuc']:.3f}",

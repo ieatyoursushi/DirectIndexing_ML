@@ -12,12 +12,14 @@ namespace DirectIndexing.Export;
 /// </summary>
 public static class SimulationExporter
 {
+    // Schema v3 (v0.25, issue #23): G_YTD → three TaxLedger columns,
+    // TaxAlpha → TaxValue, new regression label Y_TaxValue. d = 17 features.
     private const string Header =
         "L,H,S,B,W,K," +
-        "G_YTD,Sigma_TE,WashClock," +
+        "RealizedGainsYTD,LossCarryforward,OrdinaryOffsetBudget,Sigma_TE,WashClock," +
         "R_t,SigmaRange,DeltaMA50,DeltaMA200," +
-        "TaxAlpha,DaysToYE," +
-        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT," +
+        "TaxValue,DaysToYE," +
+        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT,Y_TaxValue," +
         "Symbol,Sector,Timestep";
 
     public static void WriteCsv(IReadOnlyList<LotStateVector> snapshots, string outputPath)
@@ -38,18 +40,21 @@ public static class SimulationExporter
             w.Write(Fmt(s.B));         w.Write(',');
             w.Write(Fmt(s.W));         w.Write(',');
             w.Write(s.K);              w.Write(',');
-            w.Write(Fmt(s.G_YTD));     w.Write(',');
+            w.Write(Fmt(s.RealizedGainsYTD));     w.Write(',');
+            w.Write(Fmt(s.LossCarryforward));     w.Write(',');
+            w.Write(Fmt(s.OrdinaryOffsetBudget)); w.Write(',');
             w.Write(Fmt(s.Sigma_TE));  w.Write(',');
             w.Write(s.WashClock);      w.Write(',');
             w.Write(Fmt(s.R_t));       w.Write(',');
             w.Write(Fmt(s.SigmaRange));w.Write(',');
             w.Write(Fmt(s.DeltaMA50)); w.Write(',');
             w.Write(Fmt(s.DeltaMA200));w.Write(',');
-            w.Write(Fmt(s.TaxAlpha));  w.Write(',');
+            w.Write(Fmt(s.TaxValue));  w.Write(',');
             w.Write(s.DaysToYE);       w.Write(',');
             w.Write(s.Y_Oracle);       w.Write(',');
             w.Write(Fmt(s.Y_Soft_GBM));w.Write(',');
             w.Write(Fmt(s.Y_Soft_BT)); w.Write(',');
+            w.Write(Fmt(s.Y_TaxValue));w.Write(',');
             w.Write(Escape(s.Symbol)); w.Write(',');
             w.Write(Escape(s.Sector)); w.Write(',');
             w.WriteLine(s.Timestep);

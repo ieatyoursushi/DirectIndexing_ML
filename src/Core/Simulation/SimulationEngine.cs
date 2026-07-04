@@ -113,9 +113,10 @@ public sealed class SimulationEngine
         var tomorrow = t + 1 < _prices.DayCount ? _prices.GetDate(t + 1) : today.AddDays(1);
         if (tomorrow.Year != today.Year)
         {
-            _state.ResetForNewYear();
+            _state.ResetForNewYear();       // rolls net loss into LossCarryforward
             _state.SeedGYTD(_seedAmount);   // re-seed for the new tax year
-            Console.WriteLine($"  [Engine] Year-end reset — G_YTD re-seeded to {_seedAmount:C0}");
+            Console.WriteLine($"  [Engine] Year-end reset — G_YTD re-seeded to {_seedAmount:C0}, " +
+                              $"carryforward = {_state.Ledger.LossCarryforward:C0}");
         }
     }
 
@@ -136,6 +137,11 @@ public sealed class SimulationEngine
         var date    = _prices.GetDate(t);
         int daysToYE = new DateOnly(date.Year, 12, 31).DayNumber - date.DayNumber;
 
+        // taxValue_k = g(ledger_t, h_k, ℓ_k) — capacity-aware harvest value.
+        // Loss in dollars is 0 for lots not at a loss (winners have no harvestable loss).
+        decimal lossDollars = unrealized < 0m ? (lot.CostBasis - close) * lot.Shares : 0m;
+        decimal taxValue    = _state.Ledger.ComputeTaxValue(lossDollars, holdingDays);
+
         return new LotStateVector
         {
             // Lot-level
@@ -146,8 +152,10 @@ public sealed class SimulationEngine
             W          = portValue > 0m ? (float)(lot.Shares * close / portValue) : 0f,
             K          = _lotCount.GetValueOrDefault(lot.Symbol, 1),
 
-            // Portfolio-level
-            G_YTD      = (float)_state.G_YTD,
+            // Portfolio-level (shared TaxLedger + risk state)
+            RealizedGainsYTD     = (float)_state.Ledger.RealizedGainsYTD,
+            LossCarryforward     = (float)_state.Ledger.LossCarryforward,
+            OrdinaryOffsetBudget = (float)_state.Ledger.OrdinaryOffsetBudget,
             Sigma_TE   = sigmaTE,
             WashClock  = washClock,
 
@@ -158,13 +166,14 @@ public sealed class SimulationEngine
             DeltaMA200 = _prices.DeviationFromMA(lot.Symbol, t, 200),
 
             // Derived
-            TaxAlpha   = (float)ComputeTaxAlpha(lot, close, _state.G_YTD, holdingDays),
+            TaxValue   = (float)taxValue,
             DaysToYE   = daysToYE,
 
             // Labels (soft labels filled in second pass by SoftLabelBuilder)
             Y_Oracle   = yOracle,
             Y_Soft_GBM = 0f,
             Y_Soft_BT  = 0f,
+            Y_TaxValue = (float)taxValue,
 
             // Metadata
             Symbol   = lot.Symbol,
@@ -226,13 +235,4 @@ public sealed class SimulationEngine
             $"G_YTD seeded to {_seedAmount:C0}");
     }
 
-    // ── Private: derived features ─────────────────────────────────────────────
-
-    private static decimal ComputeTaxAlpha(Lot lot, decimal price, decimal gYtd, int holdingDays)
-    {
-        if (gYtd <= 0m) return 0m;
-        decimal absLoss  = Math.Abs((price - lot.CostBasis) * lot.Shares);
-        decimal taxRate  = holdingDays >= 365 ? 0.20m : 0.37m;
-        return taxRate * absLoss;
-    }
 }

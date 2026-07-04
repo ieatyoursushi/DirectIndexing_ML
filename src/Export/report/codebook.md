@@ -1,7 +1,7 @@
 # Codebook — `data/lots.csv`
 
 **Project:** DirectIndexing — learning the tax-loss-harvest decision boundary
-**Dataset:** 170751 rows × 21 columns. One row = one *lot snapshot*:
+**Dataset:** 1846015 rows × 24 columns. One row = one *lot snapshot*:
 the state of a single tax lot on a single simulated trading day.
 
 Rows are produced by the backtesting simulation (`dotnet run simulate`) over a
@@ -91,20 +91,46 @@ Lot weight in the portfolio: W = q_k · P_t / V_t, the lot's share of total port
 
 Number of open lots in the same ticker as this lot (including itself). Stays 1 in v0.1 unless harvested lots are re-opened.
 
-## 7. `G_YTD`
+## 7. `RealizedGainsYTD`
 
 | | |
 |---|---|
 | **Type** | float |
 | **Units** | US dollars |
-| **Role** | feature (portfolio-level) |
+| **Role** | feature (portfolio-level, TaxLedger) |
 | **Values / encoding** | Signed continuous. Positive = net realized gains. |
 | **Missing** | None. |
-| **Source** | `PortfolioState.G_YTD` |
+| **Source** | `TaxLedger.RealizedGainsYTD (via PortfolioState.Ledger)` |
 
-Net realized gain/loss for the calendar year to date, shared by every lot at the same timestep. Seeded at +$1,000,000 (10% of the $10M portfolio — the S&P 500's long-run annual return) at simulation start and re-seeded after each year-end reset to simulate externally realized gains. Harvesting a loss pushes G_YTD down; the oracle only fires while G_YTD > 0 (there must be gains to offset).
+Signed net realized gain/loss for the calendar year to date (the pre-v0.25 G_YTD), shared by every lot at the same timestep. In gated-oracle runs it is seeded with external gains (+$1,000,000 = 10% of the $10M portfolio) at simulation start and after each year-end reset; harvesting a loss pushes it down. Resets to 0 at year-end (net loss beyond the $3k ordinary allowance rolls into LossCarryforward instead of vanishing).
 
-## 8. `Sigma_TE`
+## 8. `LossCarryforward`
+
+| | |
+|---|---|
+| **Type** | float |
+| **Units** | US dollars |
+| **Role** | feature (portfolio-level, TaxLedger) |
+| **Values / encoding** | Non-negative continuous, monotone non-decreasing within a run. |
+| **Missing** | None. |
+| **Source** | `TaxLedger.LossCarryforward (updated at year-end roll)` |
+
+Accumulated net capital losses beyond each year's $3,000 ordinary-income allowance (26 USC §1212(b)). Carries forward indefinitely — SURVIVES the year-end reset — which is the tax-law mechanic making 'harvest now, use later' always weakly correct for individual investors.
+
+## 9. `OrdinaryOffsetBudget`
+
+| | |
+|---|---|
+| **Type** | float |
+| **Units** | US dollars |
+| **Role** | feature (portfolio-level, TaxLedger) |
+| **Values / encoding** | Continuous in [0, 3000]. Resets to 3000 at year-end. |
+| **Missing** | None. |
+| **Source** | `TaxLedger.OrdinaryOffsetBudget (derived)` |
+
+Remaining ordinary-income offset allowance for the year: max(0, $3,000 − net loss realized so far) per 26 USC §1211(b). Together with max(RealizedGainsYTD, 0) it forms offsetCapacity, the dollars of a new harvested loss usable this tax year.
+
+## 10. `Sigma_TE`
 
 | | |
 |---|---|
@@ -117,7 +143,7 @@ Net realized gain/loss for the calendar year to date, shared by every lot at the
 
 Forward-looking tracking-error estimate vs the equal-weight benchmark: σ_TE = sqrt(δwᵀ Σ̂ δw · 252), where Σ̂ is the daily return covariance matrix and δw the active-weight deviation from holding every constituent. Shared by every lot at the same timestep. The oracle requires σ_TE ≤ 0.05 (5% budget).
 
-## 9. `WashClock`
+## 11. `WashClock`
 
 | | |
 |---|---|
@@ -130,7 +156,7 @@ Forward-looking tracking-error estimate vs the equal-weight benchmark: σ_TE = s
 
 Days since the last harvest of this lot's ticker. The IRS wash-sale rule blocks re-claiming a loss within 30 days, so the oracle requires WashClock ≥ 30. Clocks persist across year-end.
 
-## 10. `R_t`
+## 12. `R_t`
 
 | | |
 |---|---|
@@ -138,12 +164,12 @@ Days since the last harvest of this lot's ticker. The IRS wash-sale rule blocks 
 | **Units** | unitless (daily return) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | None. |
+| **Missing** | None. — observed: 2 of 1846015 rows (0.00%) |
 | **Source** | `PriceLoader close series` |
 
 One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.
 
-## 11. `SigmaRange`
+## 13. `SigmaRange`
 
 | | |
 |---|---|
@@ -151,12 +177,12 @@ One-day simple return of the ticker: R_t = (P_t − P_{t−1}) / P_{t−1}.
 | **Units** | unitless (fraction of price) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Positive continuous. |
-| **Missing** | None. |
+| **Missing** | None. — observed: 2 of 1846015 rows (0.00%) |
 | **Source** | `PriceLoader OHLC` |
 
 Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.
 
-## 12. `DeltaMA50`
+## 14. `DeltaMA50`
 
 | | |
 |---|---|
@@ -164,12 +190,12 @@ Range-based intraday volatility proxy: (High_t − Low_t) / P_{t−1}.
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 18 of 170751 rows (0.01%) |
+| **Missing** | NaN (empty cell) when fewer than 50 prior closes exist for the ticker; median-imputed inside each training fold. — observed: 99 of 1846015 rows (0.01%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentum / mean-reversion signal.
 
-## 13. `DeltaMA200`
+## 15. `DeltaMA200`
 
 | | |
 |---|---|
@@ -177,25 +203,25 @@ Price deviation from the 50-day moving average: (P_t − MA_50) / MA_50. Momentu
 | **Units** | unitless (fractional deviation) |
 | **Role** | feature (asset-level) |
 | **Values / encoding** | Signed continuous. |
-| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 440 of 170751 rows (0.26%) |
+| **Missing** | NaN (empty cell) when fewer than 200 prior closes exist (sparse price history); median-imputed inside each training fold. — observed: 577 of 1846015 rows (0.03%) |
 | **Source** | `computed in SimulationEngine` |
 
 Price deviation from the 200-day moving average: (P_t − MA_200) / MA_200. The 200-day warmup window exists so this is defined from the first active simulation day.
 
-## 14. `TaxAlpha`
+## 16. `TaxValue`
 
 | | |
 |---|---|
 | **Type** | float |
 | **Units** | US dollars |
-| **Role** | feature (derived) |
-| **Values / encoding** | Non-negative continuous; 0 when the lot has no loss or no gains exist to offset. |
+| **Role** | feature (derived, lot-level × TaxLedger) |
+| **Values / encoding** | Non-negative continuous; 0 when the lot is not at a loss. |
 | **Missing** | None. |
-| **Source** | `derived in SimulationEngine` |
+| **Source** | `TaxLedger.ComputeTaxValue(lossDollars, H)` |
 
-Estimated tax savings from harvesting this lot today: TaxAlpha = τ(H) · |unrealized loss in dollars| · 1[G_YTD > 0], where τ(H) is the short- or long-term marginal tax rate selected by the holding period.
+Capacity-aware dollar value of harvesting this lot today: TaxValue = τ(H)·min(loss, offsetCapacity) + τ_future·max(loss − offsetCapacity, 0)·δ, where offsetCapacity = max(RealizedGainsYTD, 0) + OrdinaryOffsetBudget, τ(H) is the short/long-term rate (0.37/0.20), τ_future = 0.20 and δ = 0.5 discounts the banked (carried-forward) slice. Supersedes the v0.2 TaxAlpha, which valued every loss dollar at the full current-year rate and counted winners' |gains| as harvestable.
 
-## 15. `DaysToYE`
+## 17. `DaysToYE`
 
 | | |
 |---|---|
@@ -206,9 +232,9 @@ Estimated tax savings from harvesting this lot today: TaxAlpha = τ(H) · |unrea
 | **Missing** | None. |
 | **Source** | `calendar arithmetic in SimulationEngine` |
 
-Calendar days remaining until December 31 of the simulated tax year. Year-end is when G_YTD resets, so harvest urgency varies with this clock.
+Calendar days remaining until December 31 of the simulated tax year. Year-end is when the ledger's annual accumulators reset (and net losses roll into LossCarryforward), so harvest urgency varies with this clock.
 
-## 16. `Y_Oracle`
+## 18. `Y_Oracle`
 
 | | |
 |---|---|
@@ -219,9 +245,9 @@ Calendar days remaining until December 31 of the simulated tax year. Year-end is
 | **Missing** | None. |
 | **Source** | `OracleBoundary.Label` |
 
-Deterministic oracle harvest decision — the conjunction of four gates: 1[L ≤ −0.02] · 1[Sigma_TE ≤ 0.05] · 1[G_YTD > 0] · 1[WashClock ≥ 30]. This is the decision boundary the supervised models try to learn. Never used as a model input.
+Deterministic oracle harvest decision — in gated (v0.2-legacy) runs, the conjunction of four gates: 1[L ≤ −0.02] · 1[Sigma_TE ≤ 0.05] · 1[RealizedGainsYTD > 0] · 1[WashClock ≥ 30]. The gains gate is a tracked defect (issue #23); the v0.25 scalarized oracle replaces it with a utility threshold. This is the decision boundary the supervised models try to learn. Never used as a model input.
 
-## 17. `Y_Soft_GBM`
+## 19. `Y_Soft_GBM`
 
 | | |
 |---|---|
@@ -234,7 +260,7 @@ Deterministic oracle harvest decision — the conjunction of four gates: 1[L ≤
 
 Probability the oracle fires within the next 30 trading days, estimated as the fraction of 200 geometric-Brownian-motion forward price paths (per-stock σ calibrated from trailing 21-day realized volatility) on which the oracle predicate is hit, with portfolio state frozen at the snapshot. First-passage semantics: each path counts at most once.
 
-## 18. `Y_Soft_BT`
+## 20. `Y_Soft_BT`
 
 | | |
 |---|---|
@@ -242,12 +268,25 @@ Probability the oracle fires within the next 30 trading days, estimated as the f
 | **Units** | fraction of days |
 | **Role** | label (soft, deterministic) |
 | **Values / encoding** | Continuous in [0, 1] in increments of 1/30. |
-| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 11162 of 170751 rows (6.54%) |
+| **Missing** | NaN (empty cell) when fewer than 30 forward days remain in the data window — structurally missing for the final 30 timesteps (670–699). These rows are excluded from soft-label training. — observed: 12141 of 1846015 rows (0.66%) |
 | **Source** | `SoftLabelBuilder (real forward window)` |
 
 Fraction of the next 30 actual trading days on which the oracle would fire, computed from the real forward price series with portfolio state frozen at the snapshot. The primary supervised training target (binarized as Y_Soft_BT > 0 for classification).
 
-## 19. `Symbol`
+## 21. `Y_TaxValue`
+
+| | |
+|---|---|
+| **Type** | float |
+| **Units** | US dollars |
+| **Role** | label (continuous regression target) |
+| **Values / encoding** | Non-negative continuous dollars. |
+| **Missing** | None. |
+| **Source** | `TaxLedger.ComputeTaxValue at snapshot time` |
+
+Cross-sectional regression target: taxValue_k of this lot at this timestep — the capacity-aware harvest value from the TaxLedger. Numerically identical to the TaxValue feature by construction in v0.25, so regressions on this target MUST exclude TaxValue from the feature set (the task is recovering g(ledger, H, L) from raw features). First member of the issue #17 richer-label family.
+
+## 22. `Symbol`
 
 | | |
 |---|---|
@@ -260,7 +299,7 @@ Fraction of the next 30 actual trading days on which the oracle would fire, comp
 
 Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.
 
-## 20. `Sector`
+## 23. `Sector`
 
 | | |
 |---|---|
@@ -268,12 +307,12 @@ Ticker symbol of the lot's asset, e.g. 'AAPL'. S&P 500 constituent.
 | **Units** | — |
 | **Role** | categorical feature |
 | **Values / encoding** | '-' or empty → 'Unknown' before one-hot encoding (vocabulary fit on the training fold only). |
-| **Missing** | '-' placeholder ≈99.5% of rows; empty ≈0.5%. — observed: 961 of 170751 rows (0.56%) |
+| **Missing** | '-' placeholder ≈99.5% of rows; empty ≈0.5%. |
 | **Source** | `SPY holdings (constituents.json)` |
 
 GICS-style sector of the ticker from the SPY holdings file. In the v0.1 data this column is degenerate: ≈99.5% of rows carry the placeholder '-' and the rest are empty, so after cleaning it is effectively a single 'Unknown' category.
 
-## 21. `Timestep`
+## 24. `Timestep`
 
 | | |
 |---|---|

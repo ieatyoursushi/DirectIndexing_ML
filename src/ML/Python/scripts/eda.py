@@ -15,11 +15,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# Schema v3 (v0.25): d = 17. G_YTD → three TaxLedger columns; TaxAlpha → TaxValue.
 NUMERIC = [
     "L", "H", "S", "B", "W", "K",
-    "G_YTD", "Sigma_TE", "WashClock",
+    "RealizedGainsYTD", "LossCarryforward", "OrdinaryOffsetBudget",
+    "Sigma_TE", "WashClock",
     "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
-    "TaxAlpha", "DaysToYE",
+    "TaxValue", "DaysToYE",
 ]
 
 

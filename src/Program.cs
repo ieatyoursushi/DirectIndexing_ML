@@ -166,6 +166,21 @@ switch (mode)
     }
     break;
 
+    // Regenerate a single target's champion-selection artifacts (leaderboard + champion
+    // test eval). Used to finish a target after a partial mlnet-all/compare run.
+    case "mlnet-soft":
+    {
+        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
+    }
+    break;
+    case "mlnet-oracle":
+    {
+        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        MLnetPipeline.RunAllSupervised(data, target: "oracle", artifactsDir: "../data/artifacts-mlnet/");
+    }
+    break;
+
     case "mlnet-render":
     {
         var rc = MLnetPipeline.RunRender(
@@ -253,6 +268,13 @@ switch (mode)
         portfolioTests.Test_OracleBlocked_WhenGYTD_IsNegative();
         portfolioTests.Test_SeedGYTD_EnablesOracleGate();
         portfolioTests.Test_SeedGYTD_ReSeeds_AfterYearEndReset();
+
+        var ledgerTests = new TaxLedgerTests();
+        ledgerTests.Test_LedgerNet_MatchesLegacyGYTD();
+        ledgerTests.Test_RollYearEnd_BanksExcessLoss();
+        ledgerTests.Test_OffsetBudget_And_Capacity_DrawDown();
+        ledgerTests.Test_ComputeTaxValue_CapacitySplit_And_Rates();
+        ledgerTests.Test_PortfolioState_RoutesThroughLedger();
 
         var oracleTests = new OracleBoundaryTests();
         oracleTests.Test_Oracle_FiresWhenAllConditionsMet();

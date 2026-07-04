@@ -69,7 +69,7 @@ public static class OracleBoundary
         Label(
             unrealizedReturn: (decimal)snapshot.L,
             sigmaTE:          snapshot.Sigma_TE,
-            gYtd:             (decimal)snapshot.G_YTD,
+            gYtd:             (decimal)snapshot.RealizedGainsYTD,   // ledger net-realized (pre-v0.25 G_YTD)
             washClock:        snapshot.WashClock
         );
 }

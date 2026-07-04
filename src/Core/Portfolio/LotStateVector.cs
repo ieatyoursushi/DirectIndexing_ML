@@ -14,7 +14,8 @@ namespace DirectIndexing.Core.Portfolio;
 ///
 /// Sign conventions (see PortfolioMath.md §3 for derivations):
 ///   L   — negative for a harvestable lot  (ℓ = (P_t − p_k)/p_k &lt; 0)
-///   G_YTD — positive means net gains exist to offset; oracle fires only when &gt; 0
+///   RealizedGainsYTD — signed net realized P&amp;L YTD (the pre-v0.25 G_YTD);
+///   positive means net gains exist to offset, negative after net-loss harvests
 /// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
 public record LotStateVector
@@ -39,10 +40,25 @@ public record LotStateVector
     /// <summary>k — number of open lots in the same ticker</summary>
     public int   K           { get; init; }
 
-    // ── Portfolio-level features (shared state 𝒮_t) ─────────────────────────
+    // ── Portfolio-level features (shared state 𝒮_t) — TaxLedger + risk state ─
 
-    /// <summary>G_t^YTD ∈ ℝ  — net realised gain/loss this calendar year</summary>
-    public float G_YTD       { get; init; }
+    /// <summary>
+    /// ledger_t.RealizedGainsYTD ∈ ℝ — signed net realised gain/loss this
+    /// calendar year (the pre-v0.25 G_YTD). Resets at year-end.
+    /// </summary>
+    public float RealizedGainsYTD     { get; init; }
+
+    /// <summary>
+    /// ledger_t.LossCarryforward ∈ ℝ≥0 — accumulated net losses beyond each
+    /// year's $3k ordinary allowance. SURVIVES year-end (26 USC §1212(b)).
+    /// </summary>
+    public float LossCarryforward     { get; init; }
+
+    /// <summary>
+    /// ledger_t.OrdinaryOffsetBudget ∈ [0, 3000] — remaining ordinary-income
+    /// offset allowance this year (26 USC §1211(b)).
+    /// </summary>
+    public float OrdinaryOffsetBudget { get; init; }
 
     /// <summary>σ_TE  — annualised tracking error vs. benchmark at time t</summary>
     public float Sigma_TE    { get; init; }
@@ -67,10 +83,12 @@ public record LotStateVector
     // ── Derived / composite features ─────────────────────────────────────────
 
     /// <summary>
-    /// α_tax = τ(h) · |G_lot| · 𝟙[G_YTD &gt; 0]
-    /// — estimated tax alpha from harvesting this lot right now
+    /// taxValue_k = τ(h)·min(loss, offsetCapacity) + τ_future·max(loss − offsetCapacity, 0)·δ
+    /// — capacity-aware dollar value of harvesting this lot right now, joining
+    /// the shared ledger state with (h_k, ℓ_k). Supersedes the v0.2 TaxAlpha.
+    /// 0 for lots not at a loss.
     /// </summary>
-    public float TaxAlpha    { get; init; }
+    public float TaxValue    { get; init; }
 
     /// <summary>Calendar days remaining in the tax year (resets Jan 1)</summary>
     public int   DaysToYE    { get; init; }
@@ -93,6 +111,14 @@ public record LotStateVector
     /// NaN when fewer than 30 days remain in the data window.
     /// </summary>
     public float Y_Soft_BT   { get; init; }
+
+    /// <summary>
+    /// Y_TaxValue ∈ ℝ≥0 — continuous regression target: taxValue_k of this lot
+    /// at this timestep (cross-sectional, σ(𝓕_t)-measurable). Numerically equal
+    /// to the TaxValue feature by construction in v0.25 — regression runs on
+    /// this target MUST exclude TaxValue from the feature set.
+    /// </summary>
+    public float Y_TaxValue  { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 

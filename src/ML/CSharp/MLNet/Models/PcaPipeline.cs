@@ -78,10 +78,11 @@ public static class PcaPipeline
 
     private static bool NoNumericNaN(LotStateVector r) =>
         !(float.IsNaN(r.L) || float.IsNaN(r.B) || float.IsNaN(r.W) ||
-          float.IsNaN(r.G_YTD) || float.IsNaN(r.Sigma_TE) ||
+          float.IsNaN(r.RealizedGainsYTD) || float.IsNaN(r.LossCarryforward) ||
+          float.IsNaN(r.OrdinaryOffsetBudget) || float.IsNaN(r.Sigma_TE) ||
           float.IsNaN(r.R_t) || float.IsNaN(r.SigmaRange) ||
           float.IsNaN(r.DeltaMA50) || float.IsNaN(r.DeltaMA200) ||
-          float.IsNaN(r.TaxAlpha));
+          float.IsNaN(r.TaxValue));
 
     private static double[,] BuildStandardisedMatrix(IReadOnlyList<MLReadyRow> rows)
     {
@@ -90,6 +91,7 @@ public static class PcaPipeline
         int p = numeric.Length;
         var raw = new double[n, p];
 
+        // Column order must match FeatureLists.NumericFeatures (schema v3, d = 17).
         for (int i = 0; i < n; i++)
         {
             raw[i, 0]  = rows[i].L;
@@ -98,15 +100,17 @@ public static class PcaPipeline
             raw[i, 3]  = rows[i].B;
             raw[i, 4]  = rows[i].W;
             raw[i, 5]  = rows[i].K;
-            raw[i, 6]  = rows[i].G_YTD;
-            raw[i, 7]  = rows[i].Sigma_TE;
-            raw[i, 8]  = rows[i].WashClock;
-            raw[i, 9]  = rows[i].R_t;
-            raw[i, 10] = rows[i].SigmaRange;
-            raw[i, 11] = rows[i].DeltaMA50;
-            raw[i, 12] = rows[i].DeltaMA200;
-            raw[i, 13] = rows[i].TaxAlpha;
-            raw[i, 14] = rows[i].DaysToYE;
+            raw[i, 6]  = rows[i].RealizedGainsYTD;
+            raw[i, 7]  = rows[i].LossCarryforward;
+            raw[i, 8]  = rows[i].OrdinaryOffsetBudget;
+            raw[i, 9]  = rows[i].Sigma_TE;
+            raw[i, 10] = rows[i].WashClock;
+            raw[i, 11] = rows[i].R_t;
+            raw[i, 12] = rows[i].SigmaRange;
+            raw[i, 13] = rows[i].DeltaMA50;
+            raw[i, 14] = rows[i].DeltaMA200;
+            raw[i, 15] = rows[i].TaxValue;
+            raw[i, 16] = rows[i].DaysToYE;
         }
 
         // Standardise per column (mean 0, variance 1). Same procedure ML.NET

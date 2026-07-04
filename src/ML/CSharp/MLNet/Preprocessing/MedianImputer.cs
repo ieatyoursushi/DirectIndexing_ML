@@ -24,9 +24,9 @@ public static class MedianImputer
     private static readonly string[] FloatNumericFeatures =
     {
         "L", "B", "W",
-        "G_YTD", "Sigma_TE",
+        "RealizedGainsYTD", "LossCarryforward", "OrdinaryOffsetBudget", "Sigma_TE",
         "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
-        "TaxAlpha",
+        "TaxValue",
     };
 
     public static Dictionary<string, float> Fit(IReadOnlyList<LotStateVector> trainingFold)
@@ -58,13 +58,15 @@ public static class MedianImputer
                 L          = ImputeFloat(r.L,          medians["L"]),
                 B          = ImputeFloat(r.B,          medians["B"]),
                 W          = ImputeFloat(r.W,          medians["W"]),
-                G_YTD      = ImputeFloat(r.G_YTD,      medians["G_YTD"]),
+                RealizedGainsYTD     = ImputeFloat(r.RealizedGainsYTD,     medians["RealizedGainsYTD"]),
+                LossCarryforward     = ImputeFloat(r.LossCarryforward,     medians["LossCarryforward"]),
+                OrdinaryOffsetBudget = ImputeFloat(r.OrdinaryOffsetBudget, medians["OrdinaryOffsetBudget"]),
                 Sigma_TE   = ImputeFloat(r.Sigma_TE,   medians["Sigma_TE"]),
                 R_t        = ImputeFloat(r.R_t,        medians["R_t"]),
                 SigmaRange = ImputeFloat(r.SigmaRange, medians["SigmaRange"]),
                 DeltaMA50  = ImputeFloat(r.DeltaMA50,  medians["DeltaMA50"]),
                 DeltaMA200 = ImputeFloat(r.DeltaMA200, medians["DeltaMA200"]),
-                TaxAlpha   = ImputeFloat(r.TaxAlpha,   medians["TaxAlpha"]),
+                TaxValue   = ImputeFloat(r.TaxValue,   medians["TaxValue"]),
 
                 H          = r.H,
                 S          = r.S,
@@ -89,13 +91,15 @@ public static class MedianImputer
         "L"          => r.L,
         "B"          => r.B,
         "W"          => r.W,
-        "G_YTD"      => r.G_YTD,
+        "RealizedGainsYTD"     => r.RealizedGainsYTD,
+        "LossCarryforward"     => r.LossCarryforward,
+        "OrdinaryOffsetBudget" => r.OrdinaryOffsetBudget,
         "Sigma_TE"   => r.Sigma_TE,
         "R_t"        => r.R_t,
         "SigmaRange" => r.SigmaRange,
         "DeltaMA50"  => r.DeltaMA50,
         "DeltaMA200" => r.DeltaMA200,
-        "TaxAlpha"   => r.TaxAlpha,
+        "TaxValue"   => r.TaxValue,
         _ => throw new ArgumentException($"unknown float feature '{col}'"),
     };
 
