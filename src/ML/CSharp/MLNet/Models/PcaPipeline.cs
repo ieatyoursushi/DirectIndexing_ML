@@ -38,7 +38,7 @@ public static class PcaPipeline
         // and median-impute would distort the principal axes here.
         var clean = data.Where(NoNumericNaN).ToList();
 
-        var (train, _) = StratifiedSplit.Split(
+        var (train, _) = DataSplit.TrainTest(
             clean, r => r.Y_Oracle, testFraction: 0.20, seed: 42);
 
         var medians = MedianImputer.Fit(train);

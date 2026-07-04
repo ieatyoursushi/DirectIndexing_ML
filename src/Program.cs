@@ -5,6 +5,7 @@ using DirectIndexing.Export;
 using DirectIndexing.ML;
 using DirectIndexing.ML.MLNet;
 using DirectIndexing.ML.MLNet.Data;
+using DirectIndexing.ML.MLNet.Splits;
 
 var mode = args.FirstOrDefault() ?? "simulate";
 
@@ -25,6 +26,33 @@ if (ctradeArg is not null && decimal.TryParse(ctradeArg["--ctrade=".Length..],
         System.Globalization.NumberStyles.Number,
         System.Globalization.CultureInfo.InvariantCulture, out var ctradeOverride))
     oracleCfg = oracleCfg with { CTrade = ctradeOverride };
+
+// The oracle flags only shape simulate/simulate-mc; warn instead of silently
+// no-op'ing when passed to other modes (e.g. `mlnet-oracle --oracle=gated`
+// does NOT retrain the gated arm — swap in lots_gated.csv for that).
+if (mode is not ("simulate" or "simulate-mc")
+    && (args.Contains("--oracle=gated") || ctradeArg is not null))
+    Console.WriteLine($"[WARN] --oracle/--ctrade have no effect on mode '{mode}' — " +
+                      "they configure the simulation only. mlnet-* modes read data/lots.csv as-is.");
+
+// ── Split policy (v0.26, validation hardening) ──────────────────────────────
+// --split=temporal: chronological purged splits (embargo >= 30d label horizon)
+// for every mlnet-* trainer in this run. --embargo=N and --testfrac=F tune it
+// (--testfrac=0.5 => the decade walk-forward). Artifacts write to
+// data/artifacts-mlnet-temporal/ so random-split baselines are never clobbered.
+if (args.Contains("--split=temporal"))
+    SplitPolicy.Mode = SplitMode.TemporalPurged;
+var embargoArg = args.FirstOrDefault(a => a.StartsWith("--embargo="));
+if (embargoArg is not null && int.TryParse(embargoArg["--embargo=".Length..], out var embargoDays))
+    SplitPolicy.EmbargoDays = embargoDays;
+var testfracArg = args.FirstOrDefault(a => a.StartsWith("--testfrac="));
+if (testfracArg is not null && double.TryParse(testfracArg["--testfrac=".Length..],
+        System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture, out var testFrac))
+    SplitPolicy.TestFractionOverride = testFrac;
+if (mode.StartsWith("mlnet"))
+    Console.WriteLine($"[SplitPolicy] {SplitPolicy.Describe()}");
+var mlnetArtifacts = $"../data/artifacts-mlnet{SplitPolicy.ArtifactTag}/";
 
 switch (mode)
 {
@@ -133,19 +161,19 @@ switch (mode)
     case "mlnet-unsupervised":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, "../data/artifacts-mlnet/");
+        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
     }
     break;
     case "mlnet-supervised":   // PRIMARY: logistic on Y_Soft_BT (backward compat)
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
     }
     break;
     case "mlnet-baseline":     // SANITY: logistic on Y_Oracle (backward compat)
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervised(data, target: "oracle", artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervised(data, target: "oracle", artifactsDir: mlnetArtifacts);
     }
     break;
 
@@ -153,29 +181,29 @@ switch (mode)
     case "mlnet-gbt":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("gbt", data, "soft_bt", "../data/artifacts-mlnet/");
-        MLnetPipeline.RunSupervisedModel("gbt", data, "oracle",  "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervisedModel("gbt", data, "soft_bt", mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("gbt", data, "oracle",  mlnetArtifacts);
     }
     break;
     case "mlnet-rf":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("rf", data, "soft_bt", "../data/artifacts-mlnet/");
-        MLnetPipeline.RunSupervisedModel("rf", data, "oracle",  "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervisedModel("rf", data, "soft_bt", mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("rf", data, "oracle",  mlnetArtifacts);
     }
     break;
     case "mlnet-elnet":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("elnet", data, "soft_bt", "../data/artifacts-mlnet/");
-        MLnetPipeline.RunSupervisedModel("elnet", data, "oracle",  "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervisedModel("elnet", data, "soft_bt", mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("elnet", data, "oracle",  mlnetArtifacts);
     }
     break;
     case "mlnet-linreg":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("linreg", data, "soft_bt", "../data/artifacts-mlnet/");
-        MLnetPipeline.RunSupervisedModel("linreg", data, "oracle",  "../data/artifacts-mlnet/");
+        MLnetPipeline.RunSupervisedModel("linreg", data, "soft_bt", mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("linreg", data, "oracle",  mlnetArtifacts);
     }
     break;
 
@@ -183,8 +211,8 @@ switch (mode)
     case "mlnet-compare":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
-        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
+        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
     }
     break;
 
@@ -193,13 +221,13 @@ switch (mode)
     case "mlnet-soft":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
     }
     break;
     case "mlnet-oracle":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunAllSupervised(data, target: "oracle", artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "oracle", artifactsDir: mlnetArtifacts);
     }
     break;
     // Continuous regression on Y_TaxValue (v0.25, issue #17 family). Excludes the
@@ -209,7 +237,7 @@ switch (mode)
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
         DirectIndexing.ML.MLNet.Models.TaxValueRegressionPipeline.Run(
-            data, artifactsDir: "../data/artifacts-mlnet/");
+            data, artifactsDir: mlnetArtifacts);
     }
     break;
 
@@ -227,10 +255,10 @@ switch (mode)
     {
         var sw = Stopwatch.StartNew();
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, "../data/artifacts-mlnet/");
+        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
         // Champion-selection: CV all supervised models, full eval for best 1-2 + linreg demonstration.
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
-        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
+        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
         var rc = MLnetPipeline.RunRender(
             lotsCsv:      "../../../data/lots.csv",
             artifactsDir: "../../../data/artifacts-mlnet/",
@@ -257,9 +285,9 @@ switch (mode)
     case "report-all":   // mlnet-all training + report, one command
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, "../data/artifacts-mlnet/");
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: "../data/artifacts-mlnet/");
-        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: "../data/artifacts-mlnet/");
+        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
+        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
+        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
         var rc = PythonRunner.Run("scripts.report",
             "--lots",      "../../../data/lots.csv",
             "--artifacts", "../../../data/artifacts-mlnet/",
@@ -343,6 +371,13 @@ switch (mode)
         new LotStateVectorCsvReaderTests().Test_RoundTrip_PreservesAllFields();
         new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
         new StratifiedKFoldTests().Test_FoldsPartitionDataAndContainPositives();
+
+        var temporalTests = new TemporalSplitTests();
+        temporalTests.Test_TrainTest_BoundaryAndEmbargo();
+        temporalTests.Test_TrainTest_PurgeAccounting();
+        temporalTests.Test_PurgedFolds_EmbargoBothSides();
+        temporalTests.Test_Deterministic();
+        temporalTests.Test_DataSplit_PolicyDispatch();
         new SilhouetteTests().Test_TwoBlobsHighSilhouette();
         var preprocessing = new PreprocessingTests();
         preprocessing.Test_MedianImputerReplacesNaNs();
