@@ -22,9 +22,18 @@ public sealed class SimulationEngine
     private readonly PriceLoader         _prices;
     private readonly PortfolioState      _state  = new();
     private readonly TrackingErrorProxy  _te;
+    private readonly OracleConfig        _oracle;
 
     // ── Seeding amount — stored so year-end reset can re-seed same value ──────
+    // Computed in every mode (the spectator bookkeeping needs it); applied to
+    // the real ledger only when _oracle.SeedExternalGains (gated mode).
     private decimal _seedAmount;
+
+    // ── Spectator legacy-G_YTD: seed + Σ realized P&L of THIS run's harvests,
+    //    reset+reseeded at year-end — deterministic bookkeeping over the realized
+    //    trajectory, so the v0.2 gated predicate stays evaluable pointwise even
+    //    when the scalarized oracle is the one acting. ──────────────────────────
+    private decimal _spectatorGYtd;
 
     // ── Output ────────────────────────────────────────────────────────────────
     private readonly List<LotStateVector> _snapshots = new(128_000);
@@ -36,10 +45,11 @@ public sealed class SimulationEngine
     // ── Lot count cache: symbol → number of currently open lots ──────────────
     private readonly Dictionary<string, int> _lotCount = new();
 
-    public SimulationEngine(PriceLoader prices)
+    public SimulationEngine(PriceLoader prices, OracleConfig? oracleConfig = null)
     {
         _prices = prices;
         _te     = new TrackingErrorProxy(prices);
+        _oracle = oracleConfig ?? OracleConfig.Scalarized;
     }
     // ── Public entry point ───────────────────────────────────────────────────
 
@@ -113,9 +123,11 @@ public sealed class SimulationEngine
         var tomorrow = t + 1 < _prices.DayCount ? _prices.GetDate(t + 1) : today.AddDays(1);
         if (tomorrow.Year != today.Year)
         {
-            _state.ResetForNewYear();       // rolls net loss into LossCarryforward
-            _state.SeedGYTD(_seedAmount);   // re-seed for the new tax year
-            Console.WriteLine($"  [Engine] Year-end reset — G_YTD re-seeded to {_seedAmount:C0}, " +
+            _state.ResetForNewYear();               // rolls net loss into LossCarryforward
+            if (_oracle.SeedExternalGains)
+                _state.SeedGYTD(_seedAmount);       // gated mode: re-seed for the new tax year
+            _spectatorGYtd = _seedAmount;           // spectator always follows legacy semantics
+            Console.WriteLine($"  [Engine] Year-end reset — net={_state.G_YTD:C0}, " +
                               $"carryforward = {_state.Ledger.LossCarryforward:C0}");
         }
     }
@@ -128,12 +140,6 @@ public sealed class SimulationEngine
 
         decimal unrealized = lot.UnrealizedReturn(close);
 
-        int yOracle = OracleBoundary.Label(
-            unrealizedReturn: unrealized,
-            sigmaTE:          sigmaTE,
-            gYtd:             _state.G_YTD,
-            washClock:        washClock);
-
         var date    = _prices.GetDate(t);
         int daysToYE = new DateOnly(date.Year, 12, 31).DayNumber - date.DayNumber;
 
@@ -142,7 +148,7 @@ public sealed class SimulationEngine
         decimal lossDollars = unrealized < 0m ? (lot.CostBasis - close) * lot.Shares : 0m;
         decimal taxValue    = _state.Ledger.ComputeTaxValue(lossDollars, holdingDays);
 
-        return new LotStateVector
+        var snap = new LotStateVector
         {
             // Lot-level
             L          = (float)unrealized,
@@ -151,6 +157,7 @@ public sealed class SimulationEngine
             B          = (float)lot.CostBasis,
             W          = portValue > 0m ? (float)(lot.Shares * close / portValue) : 0f,
             K          = _lotCount.GetValueOrDefault(lot.Symbol, 1),
+            Shares     = lot.Shares,   // in-memory plumbing for soft-label re-dollarization
 
             // Portfolio-level (shared TaxLedger + risk state)
             RealizedGainsYTD     = (float)_state.Ledger.RealizedGainsYTD,
@@ -170,7 +177,7 @@ public sealed class SimulationEngine
             DaysToYE   = daysToYE,
 
             // Labels (soft labels filled in second pass by SoftLabelBuilder)
-            Y_Oracle   = yOracle,
+            Y_Oracle   = 0,
             Y_Soft_GBM = 0f,
             Y_Soft_BT  = 0f,
             Y_TaxValue = (float)taxValue,
@@ -180,6 +187,16 @@ public sealed class SimulationEngine
             Sector   = lot.Sector,
             Timestep = t
         };
+
+        // Oracle labels ride the snapshot (canonical call-site coupling, §5.3):
+        // the acting oracle under _oracle, the raw utility score, and the
+        // v0.2 spectator predicate over the counterfactual legacy-G_YTD.
+        return snap with
+        {
+            Y_Oracle           = OracleBoundary.Label(snap, _oracle),
+            Y_Utility          = (float)OracleBoundary.Utility(taxValue, sigmaTE, _oracle),
+            Y_Oracle_GatedSpec = OracleBoundary.Label(unrealized, sigmaTE, _spectatorGYtd, washClock),
+        };
     }
 
     private void Harvest(Lot lot, decimal close, int t, decimal portValue)
@@ -187,6 +204,7 @@ public sealed class SimulationEngine
         decimal dollars = lot.Shares * close;
         int     lotsBefore = _lotCount.GetValueOrDefault(lot.Symbol, 1);
 
+        _spectatorGYtd += (close - lot.CostBasis) * lot.Shares;   // legacy bookkeeping, this trajectory
         _state.HarvestLot(lot, close);
 
         _lotCount[lot.Symbol] = Math.Max(0, lotsBefore - 1);
@@ -222,17 +240,24 @@ public sealed class SimulationEngine
             _lotCount[symbol] = 1;
         }
 
-        // Seed G_YTD with 10 % of portfolio value to simulate prior-year or external
-        // realized gains — calibrated to the S&P 500's ~10% historical annual return
-        // (the client realizes gains elsewhere at roughly the index's pace).
-        // Without this the oracle's gYtd > 0 gate is permanently closed and no harvests fire.
-        _seedAmount = totalValue * 0.10m;
-        _state.SeedGYTD(_seedAmount);
+        // External-gains seed = 10% of portfolio value (S&P 500's long-run annual
+        // return — the client realizes gains elsewhere at roughly the index's pace).
+        // GATED mode: applied to the real ledger — the gains gate is permanently
+        // closed without it. SCALARIZED mode: NOT applied — the honest loss-only
+        // book (offsetCapacity = $3k/yr ordinary allowance). The spectator legacy
+        // G_YTD is seeded in every mode so the v0.2 predicate stays evaluable.
+        _seedAmount    = totalValue * 0.10m;
+        _spectatorGYtd = _seedAmount;
+        if (_oracle.SeedExternalGains)
+            _state.SeedGYTD(_seedAmount);
 
         Console.WriteLine(
             $"[SimulationEngine] Portfolio initialised: {_state.OpenLots.Count} lots " +
             $"on day {day0} ({_prices.GetDate(day0)}), value ≈ {totalValue:C0}  " +
-            $"G_YTD seeded to {_seedAmount:C0}");
+            $"oracle={_oracle.Mode}  " +
+            (_oracle.SeedExternalGains
+                ? $"G_YTD seeded to {_seedAmount:C0}"
+                : "no external-gains seed (loss-only ledger)"));
     }
 
 }

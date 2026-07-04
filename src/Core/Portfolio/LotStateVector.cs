@@ -40,6 +40,15 @@ public record LotStateVector
     /// <summary>k — number of open lots in the same ticker</summary>
     public int   K           { get; init; }
 
+    /// <summary>
+    /// q_k — share count of the lot. IN-MEMORY PLUMBING ONLY, never exported to
+    /// CSV (the feature schema is unchanged): the soft-label builders need it to
+    /// re-dollarize the loss along forward price paths for the scalarized
+    /// oracle's taxValue term. Redundant with (W, B) given portfolio value, but
+    /// V_t is not carried on the snapshot.
+    /// </summary>
+    public float Shares      { get; init; }
+
     // ── Portfolio-level features (shared state 𝒮_t) — TaxLedger + risk state ─
 
     /// <summary>
@@ -119,6 +128,24 @@ public record LotStateVector
     /// this target MUST exclude TaxValue from the feature set.
     /// </summary>
     public float Y_TaxValue  { get; init; }
+
+    /// <summary>
+    /// U(x) = TaxValue − λσ_TE² − c_trade ∈ ℝ — the scalarized objective's raw
+    /// score before thresholding (issue #17 family; the v0.4 RL per-decision
+    /// reward). Label/diagnostic, never a feature: 𝟙[U &gt; 0] is the oracle's own
+    /// boundary. Computed under the run's OracleConfig in BOTH modes.
+    /// </summary>
+    public float Y_Utility   { get; init; }
+
+    /// <summary>
+    /// Spectator gated label ∈ {0,1}: what the v0.2 four-gate oracle would say
+    /// on THIS row, with legacy-G_YTD bookkeeping (seed + Σ realized P&amp;L of this
+    /// run's harvests) carried counterfactually alongside the acting oracle.
+    /// In gated runs it equals Y_Oracle; in scalarized runs it enables
+    /// same-row boundary-geometry comparison. Spectator ≠ acting: the
+    /// trajectory itself was produced by the acting oracle.
+    /// </summary>
+    public int   Y_Oracle_GatedSpec { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 

@@ -191,11 +191,13 @@ public sealed class MonteCarloEngine
         decimal initialPortfolioValue = 10_000_000m,
         int     simDays               = 504,
         int     warmupDays            = 200,
-        int     seed                  = 42)
+        int     seed                  = 42,
+        OracleConfig? oracleConfig    = null)
     {
         if (simDays <= warmupDays)
             throw new ArgumentException("simDays must be greater than warmupDays.");
 
+        var oracle = oracleConfig ?? OracleConfig.Scalarized;
         var rng = new Random(seed);
 
         // ── Step 1: generate synthetic price matrix ───────────────────────────
@@ -216,8 +218,12 @@ public sealed class MonteCarloEngine
         var reopenQueue = new Dictionary<int, List<(string Symbol, string Sector, decimal Dollars)>>();
         var snapshots   = new List<LotStateVector>(128_000);
 
+        // Seed amount computed in every mode (spectator bookkeeping needs it);
+        // applied to the real ledger only in gated mode.
         decimal seedAmount = InitialisePortfolio(
-            state, lotCount, closes, warmupDays, initialPortfolioValue);
+            state, lotCount, closes, warmupDays, initialPortfolioValue,
+            applySeed: oracle.SeedExternalGains);
+        decimal spectatorGYtd = seedAmount;
 
         // σ_TE via quadratic form δw⊤Σδw — covariance pre-computed at construction
         var te = new SigmaTeBuffer(_covMatrix, _covSymbols, _covSymIdx);
@@ -228,14 +234,17 @@ public sealed class MonteCarloEngine
             ProcessDay(
                 t, state, lotCount, reopenQueue, snapshots,
                 closes, returns, rangeVol, ma50, ma200,
-                te, simDays);
+                te, simDays, oracle, ref spectatorGYtd);
 
             // Year-end reset every 252 trading days counted from warmupDays
             if ((t - warmupDays + 1) % (int)TradingDays == 0)
             {
                 state.ResetForNewYear();
-                state.SeedGYTD(seedAmount);
-                Console.WriteLine($"  [MC] Year-end reset at day {t} — G_YTD re-seeded to {seedAmount:C0}");
+                if (oracle.SeedExternalGains)
+                    state.SeedGYTD(seedAmount);
+                spectatorGYtd = seedAmount;   // spectator always follows legacy semantics
+                Console.WriteLine($"  [MC] Year-end reset at day {t} — net={state.G_YTD:C0}, " +
+                                  $"carryforward = {state.Ledger.LossCarryforward:C0}");
             }
 
             if (t % 50 == 0)
@@ -354,7 +363,8 @@ public sealed class MonteCarloEngine
         Dictionary<string, int> lotCount,
         Dictionary<string, float[]> closes,
         int                     day0,
-        decimal                 totalValue)
+        decimal                 totalValue,
+        bool                    applySeed)
     {
         int n = _universe.Count;
         if (n == 0) throw new InvalidOperationException("Universe is empty.");
@@ -374,11 +384,14 @@ public sealed class MonteCarloEngine
         }
 
         decimal seedAmount = totalValue * (decimal)SeedFraction;
-        state.SeedGYTD(seedAmount);
+        if (applySeed)
+            state.SeedGYTD(seedAmount);
 
         Console.WriteLine(
             $"[MonteCarloEngine] Portfolio initialised: {state.OpenLots.Count} lots " +
-            $"on day {day0}, value ≈ {totalValue:C0}, G_YTD seeded to {seedAmount:C0}");
+            $"on day {day0}, value ≈ {totalValue:C0}, " +
+            (applySeed ? $"G_YTD seeded to {seedAmount:C0}"
+                       : "no external-gains seed (loss-only ledger)"));
 
         return seedAmount;
     }
@@ -397,7 +410,9 @@ public sealed class MonteCarloEngine
         Dictionary<string, float[]> ma50,
         Dictionary<string, float[]> ma200,
         SigmaTeBuffer           te,
-        int                     simDays)
+        int                     simDays,
+        OracleConfig            oracle,
+        ref decimal             spectatorGYtd)
     {
         // Current portfolio value (using simulated closes)
         decimal portValue = state.OpenLots.Sum(lot =>
@@ -424,13 +439,16 @@ public sealed class MonteCarloEngine
 
             var snap = ExtractSnapshot(
                 lot, t, price, portValue, sigmaTE,
-                gYtd, washClock, state.Ledger,
+                gYtd, washClock, state.Ledger, oracle, spectatorGYtd,
                 returns, rangeVol, ma50, ma200, closes);
 
             snapshots.Add(snap);
 
             if (snap.Y_Oracle == 1)
+            {
+                spectatorGYtd += (price - lot.CostBasis) * lot.Shares;   // legacy bookkeeping
                 HarvestLot(lot, price, t, state, lotCount, reopenQueue, simDays);
+            }
         }
 
         // Re-open lots whose 30-day wash-sale window cleared exactly on day t
@@ -461,6 +479,8 @@ public sealed class MonteCarloEngine
         decimal gYtd,
         int     washClock,
         TaxLedger ledger,
+        OracleConfig oracle,
+        decimal spectatorGYtd,
         Dictionary<string, float[]> returns,
         Dictionary<string, float[]> rangeVol,
         Dictionary<string, float[]> ma50,
@@ -470,11 +490,19 @@ public sealed class MonteCarloEngine
         int     holdingDays = lot.HoldingPeriod(t);
         decimal unrealized  = lot.UnrealizedReturn(price);
 
+        // taxValue_k = g(ledger_t, h_k, ℓ_k) — 0 for lots not at a loss
+        decimal lossDollars = unrealized < 0m ? (lot.CostBasis - price) * lot.Shares : 0m;
+        decimal taxValue    = ledger.ComputeTaxValue(lossDollars, holdingDays);
+
         int yOracle = OracleBoundary.Label(
             unrealizedReturn: unrealized,
             sigmaTE:          sigmaTE,
-            gYtd:             gYtd,
-            washClock:        washClock);
+            netRealizedYtd:   gYtd,
+            washClock:        washClock,
+            taxValue:         taxValue,
+            config:           oracle);
+
+        int ySpec = OracleBoundary.Label(unrealized, sigmaTE, spectatorGYtd, washClock);
 
         // Feature scalars
         float rT     = returns[lot.Symbol][t];
@@ -483,21 +511,26 @@ public sealed class MonteCarloEngine
         float dMA200 = DeviationFromMA(closes[lot.Symbol][t], ma200[lot.Symbol][t]);
 
         // Y_Soft_GBM: fraction of GBM forward paths where OracleBoundary fires first-passage.
-        // Frozen state: G_YTD, Sigma_TE, WashClock, and CostBasis are held constant from snapshot.
+        // Frozen state: ledger scalars, Sigma_TE, WashClock, CostBasis, Shares from snapshot;
+        // wash clock and holding period advance with the step (τ(h) can flip mid-window).
         float sigma     = _annualSigma.GetValueOrDefault(lot.Symbol, DefaultSigma);
         float costF     = (float)lot.CostBasis;
+        float sharesF   = lot.Shares;
         float gYtdF     = (float)gYtd;
         float sigTEF    = sigmaTE;
         int   initWash  = washClock;
+        decimal frozenCap = ledger.OffsetCapacity;
 
         float ySoftGbm = _labelSim.FractionFiring(
             startPrice:  closes[lot.Symbol][t],
             annualSigma: sigma,
             firesOnStep: (p, s) =>
             {
-                float ell  = costF > 0f ? (p - costF) / costF : 0f;
-                int   wash = initWash + s;
-                return OracleBoundary.Label((decimal)ell, sigTEF, (decimal)gYtdF, wash) == 1;
+                float ell = costF > 0f ? (p - costF) / costF : 0f;
+                decimal lossD = ell < 0f ? (decimal)(costF - p) * (decimal)sharesF : 0m;
+                decimal tv    = TaxLedger.ComputeTaxValue(lossD, holdingDays + s, frozenCap);
+                return OracleBoundary.Label(
+                    (decimal)ell, sigTEF, (decimal)gYtdF, initWash + s, tv, oracle) == 1;
             });
 
         // Approximate days-to-year-end: step within the current 252-day cycle
@@ -505,10 +538,6 @@ public sealed class MonteCarloEngine
         int daysToYE   = (int)TradingDays - stepInYear;
 
         int lotK = 1;   // MC mode: one lot per ticker (no lot-count aggregation)
-
-        // taxValue_k = g(ledger_t, h_k, ℓ_k) — 0 for lots not at a loss
-        decimal lossDollars = unrealized < 0m ? (lot.CostBasis - price) * lot.Shares : 0m;
-        decimal taxValue    = ledger.ComputeTaxValue(lossDollars, holdingDays);
 
         return new LotStateVector
         {
@@ -519,6 +548,7 @@ public sealed class MonteCarloEngine
             B          = (float)lot.CostBasis,
             W          = portValue > 0m ? (float)(lot.Shares * price / portValue) : 0f,
             K          = lotK,
+            Shares     = lot.Shares,   // in-memory plumbing for soft-label re-dollarization
 
             // Portfolio-level (shared TaxLedger + risk state)
             RealizedGainsYTD     = gYtdF,
@@ -542,6 +572,8 @@ public sealed class MonteCarloEngine
             Y_Soft_GBM = ySoftGbm,
             Y_Soft_BT  = float.NaN,   // not available in MC mode — requires real forward prices
             Y_TaxValue = (float)taxValue,
+            Y_Utility  = (float)OracleBoundary.Utility(taxValue, sigmaTE, oracle),
+            Y_Oracle_GatedSpec = ySpec,
 
             // Metadata
             Symbol   = lot.Symbol,

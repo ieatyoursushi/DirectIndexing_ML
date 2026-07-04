@@ -13,13 +13,15 @@ namespace DirectIndexing.Export;
 public static class SimulationExporter
 {
     // Schema v3 (v0.25, issue #23): G_YTD → three TaxLedger columns,
-    // TaxAlpha → TaxValue, new regression label Y_TaxValue. d = 17 features.
+    // TaxAlpha → TaxValue, labels Y_TaxValue + Y_Utility (raw U(x)) +
+    // Y_Oracle_GatedSpec (v0.2 spectator predicate). d = 17 features, 26 cols.
+    // Note: LotStateVector.Shares is in-memory plumbing and deliberately NOT here.
     private const string Header =
         "L,H,S,B,W,K," +
         "RealizedGainsYTD,LossCarryforward,OrdinaryOffsetBudget,Sigma_TE,WashClock," +
         "R_t,SigmaRange,DeltaMA50,DeltaMA200," +
         "TaxValue,DaysToYE," +
-        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT,Y_TaxValue," +
+        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT,Y_TaxValue,Y_Utility,Y_Oracle_GatedSpec," +
         "Symbol,Sector,Timestep";
 
     public static void WriteCsv(IReadOnlyList<LotStateVector> snapshots, string outputPath)
@@ -55,6 +57,8 @@ public static class SimulationExporter
             w.Write(Fmt(s.Y_Soft_GBM));w.Write(',');
             w.Write(Fmt(s.Y_Soft_BT)); w.Write(',');
             w.Write(Fmt(s.Y_TaxValue));w.Write(',');
+            w.Write(Fmt(s.Y_Utility)); w.Write(',');
+            w.Write(s.Y_Oracle_GatedSpec); w.Write(',');
             w.Write(Escape(s.Symbol)); w.Write(',');
             w.Write(Escape(s.Sector)); w.Write(',');
             w.WriteLine(s.Timestep);

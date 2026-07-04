@@ -8,11 +8,12 @@ from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER
 from scripts.report_helpers import NUMERIC_FEATURES, repo_root
 
 
-# Schema v3 (v0.25): 24 columns = 17 numeric features + Sector + Symbol/Timestep
-# metadata + 4 labels (Y_Oracle, Y_Soft_GBM, Y_Soft_BT, Y_TaxValue).
-def test_schema_has_24_unique_columns():
-    assert len(EXPECTED_HEADER) == 24
-    assert len(set(EXPECTED_HEADER)) == 24
+# Schema v3 (v0.25): 26 columns = 17 numeric features + Sector + Symbol/Timestep
+# metadata + 6 labels (Y_Oracle, Y_Soft_GBM, Y_Soft_BT, Y_TaxValue, Y_Utility,
+# Y_Oracle_GatedSpec).
+def test_schema_has_26_unique_columns():
+    assert len(EXPECTED_HEADER) == 26
+    assert len(set(EXPECTED_HEADER)) == 26
 
 
 def test_every_entry_fully_documented():

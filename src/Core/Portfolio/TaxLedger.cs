@@ -130,14 +130,21 @@ public sealed class TaxLedger
     /// </summary>
     /// <param name="lossDollars">Unrealized loss in dollars, ≥ 0 (0 for lots not at a loss).</param>
     /// <param name="holdingDays">Holding period h — selects the short/long-term rate τ(h).</param>
-    public decimal ComputeTaxValue(decimal lossDollars, int holdingDays)
+    public decimal ComputeTaxValue(decimal lossDollars, int holdingDays) =>
+        ComputeTaxValue(lossDollars, holdingDays, OffsetCapacity);
+
+    /// <summary>
+    /// Static pure form — used by the soft-label forward closures, which freeze
+    /// offsetCapacity at the snapshot and re-value the loss along future price
+    /// paths without holding a ledger reference.
+    /// </summary>
+    public static decimal ComputeTaxValue(decimal lossDollars, int holdingDays, decimal offsetCapacity)
     {
         if (lossDollars <= 0m) return 0m;
 
         decimal tau      = holdingDays >= 365 ? TauLongTerm : TauShortTerm;
-        decimal capacity = OffsetCapacity;
-        decimal usedNow  = Math.Min(lossDollars, capacity);
-        decimal banked   = Math.Max(lossDollars - capacity, 0m);
+        decimal usedNow  = Math.Min(lossDollars, offsetCapacity);
+        decimal banked   = Math.Max(lossDollars - offsetCapacity, 0m);
 
         return tau * usedNow + TauFuture * banked * CarryforwardDiscount;
     }
