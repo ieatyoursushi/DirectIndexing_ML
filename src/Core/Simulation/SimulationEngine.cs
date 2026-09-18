@@ -23,6 +23,14 @@ public sealed class SimulationEngine
     private readonly PortfolioState      _state  = new();
     private readonly TrackingErrorProxy  _te;
     private readonly OracleConfig        _oracle;
+    private readonly ContributionPolicy  _contrib;
+
+    // ── Initial book value — the base for the exogenous contribution schedule ──
+    private decimal _initialValue;
+
+    // ── Running totals for the contribution ablation's summary line ───────────
+    private decimal _contributedTotal;
+    private int     _contributedLots;
 
     // ── Seeding amount — stored so year-end reset can re-seed same value ──────
     // Computed in every mode (the spectator bookkeeping needs it); applied to
@@ -45,11 +53,15 @@ public sealed class SimulationEngine
     // ── Lot count cache: symbol → number of currently open lots ──────────────
     private readonly Dictionary<string, int> _lotCount = new();
 
-    public SimulationEngine(PriceLoader prices, OracleConfig? oracleConfig = null)
+    public SimulationEngine(
+        PriceLoader prices,
+        OracleConfig? oracleConfig = null,
+        ContributionPolicy? contributionPolicy = null)
     {
-        _prices = prices;
-        _te     = new TrackingErrorProxy(prices);
-        _oracle = oracleConfig ?? OracleConfig.Scalarized;
+        _prices  = prices;
+        _te      = new TrackingErrorProxy(prices);
+        _oracle  = oracleConfig ?? OracleConfig.Scalarized;
+        _contrib = contributionPolicy ?? ContributionPolicy.Off;
     }
     // ── Public entry point ───────────────────────────────────────────────────
 
@@ -70,6 +82,9 @@ public sealed class SimulationEngine
         }
 
         Console.WriteLine($"[SimulationEngine] Complete. Total snapshots: {_snapshots.Count}");
+        if (_contrib.Enabled)
+            Console.WriteLine($"[SimulationEngine] Contributions: {_contributedTotal:C0} across " +
+                              $"{_contributedLots:N0} new lots ({_contrib.Describe()})");
         return _snapshots;
     }
 
@@ -107,6 +122,31 @@ public sealed class SimulationEngine
             foreach (var (sym, sector, dollars) in toReopen)
             {
                 if (!closes.TryGetValue(sym, out decimal price) || price <= 0m) continue;
+
+                // Wash-sale re-check before buying back (v0.3 fix). A reopen is scheduled
+                // for harvest_day + 30, when the clock would normally read exactly 30. But
+                // the ticker can be harvested AGAIN while this reopen is pending — including
+                // earlier on this very day, since the harvest loop runs before this block —
+                // which resets its clock. Buying now would disallow that newer loss under
+                // IRS §1091, so defer the buy until the window genuinely clears.
+                //
+                // This could not occur before v0.3: with one lot per ticker there was never
+                // a second lot to re-harvest while the reopen was pending. Contributions
+                // make tickers multi-lot and thereby expose it (measured: 17.4% of
+                // run-opened lots violated before this fix, 0% after).
+                int clock = _state.GetWashClock(sym);
+                if (clock < OracleBoundary.WashSaleDays)
+                {
+                    int retry = t + (OracleBoundary.WashSaleDays - clock);
+                    if (retry < _prices.DayCount)
+                    {
+                        if (!_reopenQueue.TryGetValue(retry, out var deferred))
+                            _reopenQueue[retry] = deferred = new();
+                        deferred.Add((sym, sector, dollars));
+                    }
+                    continue;
+                }
+
                 int shares = (int)(dollars / price);
                 if (shares == 0) continue;
                 var lot = new Lot(sym, sector, price, shares, t);
@@ -115,6 +155,11 @@ public sealed class SimulationEngine
             }
             _reopenQueue.Remove(t);
         }
+
+        // Contributions run AFTER harvests and reopens so they see today's wash clocks —
+        // a ticker harvested today has WashClock = 0 and is correctly ineligible — and
+        // BEFORE AdvanceDay, which is what increments those clocks.
+        ProcessContribution(t, closes, portValue);
 
         _state.AdvanceDay();
 
@@ -219,6 +264,62 @@ public sealed class SimulationEngine
         }
     }
 
+    // ── Private: contributions (v0.3 P0 — the cost-basis-aging fix) ───────────
+
+    /// <summary>
+    /// On a contribution day, deposit cash and mint fresh lots at today's prices in the most
+    /// underweight <i>eligible</i> tickers. Eligibility excludes any ticker inside its
+    /// wash-sale window — buying one back within 30 days of its loss sale would disallow that
+    /// loss (IRS §1091), so the contribution path can never invalidate a booked harvest.
+    ///
+    /// Fresh lots carry <i>today's</i> cost basis, which is the entire point: they can dip
+    /// below it in the next drawdown, whereas a 2007-basis lot cannot.
+    /// </summary>
+    private void ProcessContribution(int t, Dictionary<string, decimal> closes, decimal portValue)
+    {
+        if (!_contrib.Enabled) return;
+
+        int elapsed = t - PriceLoader.WarmupDays;
+        if (elapsed <= 0 || elapsed % _contrib.IntervalDays != 0) return;
+
+        // Actual dollar value currently held per ticker (0 for fully-harvested names).
+        var heldValue = new Dictionary<string, decimal>();
+        foreach (var lot in _state.OpenLots)
+            if (closes.TryGetValue(lot.Symbol, out decimal px))
+                heldValue[lot.Symbol] = heldValue.GetValueOrDefault(lot.Symbol) + lot.Shares * px;
+
+        // Eligible = priced today AND clear of the wash-sale window.
+        var eligible = closes
+            .Where(kv => kv.Value > 0m &&
+                         _state.GetWashClock(kv.Key) >= OracleBoundary.WashSaleDays)
+            .Select(kv => kv.Key)
+            .ToList();
+        if (eligible.Count == 0) return;
+
+        // Rank by underweight vs an equal-weight target over the priced universe.
+        decimal targetWeight = 1m / closes.Count;
+        var picks = eligible
+            .OrderByDescending(sym => targetWeight - heldValue.GetValueOrDefault(sym) / portValue)
+            .Take(_contrib.NamesPerContribution)
+            .ToList();
+        if (picks.Count == 0) return;
+
+        decimal cash    = _contrib.AmountPer(_initialValue);
+        decimal perName = cash / picks.Count;
+
+        foreach (var symbol in picks)
+        {
+            decimal price = closes[symbol];
+            int shares = (int)(perName / price);
+            if (shares == 0) continue;
+
+            _state.OpenLot(new Lot(symbol, _prices.GetSector(symbol), price, shares, t));
+            _lotCount[symbol] = _lotCount.GetValueOrDefault(symbol) + 1;
+            _contributedTotal += shares * price;
+            _contributedLots++;
+        }
+    }
+
     // ── Private: portfolio initialisation ────────────────────────────────────
 
     private void InitializePortfolio(int day0, decimal totalValue)
@@ -227,6 +328,7 @@ public sealed class SimulationEngine
         int n        = closes.Count;
         if (n == 0) throw new InvalidOperationException("No price data on warmup day.");
         decimal perLot = totalValue / n;
+        _initialValue  = totalValue;   // base for the exogenous contribution schedule
 
         foreach (var (symbol, price) in closes)
         {

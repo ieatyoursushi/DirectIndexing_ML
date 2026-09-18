@@ -52,6 +52,31 @@ if (testfracArg is not null && double.TryParse(testfracArg["--testfrac=".Length.
     SplitPolicy.TestFractionOverride = testFrac;
 if (mode.StartsWith("mlnet"))
     Console.WriteLine($"[SplitPolicy] {SplitPolicy.Describe()}");
+
+// ── Contribution policy (v0.3 P0 — the cost-basis-aging fix) ────────────────
+// --contrib enables periodic cash inflows that mint fresh lots at current prices,
+// restoring the harvestable supply that the open-once book loses to aging.
+// Off by default so an unflagged run reproduces v0.26 byte-for-byte.
+// Tunable: --contrib-interval=N (trading days), --contrib-rate=R (annual, as a
+// fraction of the INITIAL book), --contrib-names=M (most-underweight names bought).
+var contribCfg = DirectIndexing.Core.Simulation.ContributionPolicy.Off;
+if (args.Contains("--contrib"))
+{
+    contribCfg = contribCfg with { Enabled = true };
+    var ciArg = args.FirstOrDefault(a => a.StartsWith("--contrib-interval="));
+    if (ciArg is not null && int.TryParse(ciArg["--contrib-interval=".Length..], out var ci))
+        contribCfg = contribCfg with { IntervalDays = ci };
+    var crArg = args.FirstOrDefault(a => a.StartsWith("--contrib-rate="));
+    if (crArg is not null && decimal.TryParse(crArg["--contrib-rate=".Length..],
+            System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var cr))
+        contribCfg = contribCfg with { AnnualRate = cr };
+    var cnArg = args.FirstOrDefault(a => a.StartsWith("--contrib-names="));
+    if (cnArg is not null && int.TryParse(cnArg["--contrib-names=".Length..], out var cn))
+        contribCfg = contribCfg with { NamesPerContribution = cn };
+}
+if (mode is "simulate" && contribCfg.Enabled)
+    Console.WriteLine($"[ContributionPolicy] {contribCfg.Describe()}");
 var mlnetArtifacts = $"../data/artifacts-mlnet{SplitPolicy.ArtifactTag}/";
 
 switch (mode)
@@ -112,13 +137,13 @@ switch (mode)
         var loader = new PriceLoader();
         loader.Load("../data/raw", "../data/constituents.json");
 
-        var engine    = new SimulationEngine(loader, oracleCfg);
+        var engine    = new SimulationEngine(loader, oracleCfg, contribCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = $"../data/lots{oracleCfg.DatasetTag}.csv";
+        var outPath = $"../data/lots{oracleCfg.DatasetTag}{contribCfg.DatasetTag}.csv";
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] oracle={oracleCfg.Mode} → {outPath}  " +
@@ -371,6 +396,12 @@ switch (mode)
         new LotStateVectorCsvReaderTests().Test_RoundTrip_PreservesAllFields();
         new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
         new StratifiedKFoldTests().Test_FoldsPartitionDataAndContainPositives();
+
+        var contribTests = new ContributionPolicyTests();
+        contribTests.Test_DefaultIsDisabled();
+        contribTests.Test_AmountProRatedOverInterval();
+        contribTests.Test_ScheduleIsExogenous();
+        contribTests.Test_EnabledTagsDataset();
 
         var temporalTests = new TemporalSplitTests();
         temporalTests.Test_TrainTest_BoundaryAndEmbargo();
