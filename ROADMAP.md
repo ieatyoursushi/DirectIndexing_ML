@@ -6,7 +6,7 @@
 > assessment, from which the v0.25→v1.0 spine below was synthesized). When this file and an
 > older doc disagree, this file wins. Deep rationale per stage lives in the linked memos.
 >
-> Last updated: **2026-07-09** (v0.26 complete, PR #30).
+> Last updated: **2026-09-17** (v0.26 merged; v0.3 P0 shipped — contributions + reopen wash-sale fix).
 
 ---
 
@@ -88,9 +88,20 @@ temporal model is *better* (~25× → ~210×). Gate: **pass, with a mandate** (s
 **Goal:** make the book behave like an account a live client would recognize, and make
 evaluation economic.
 
-1. **P0 — cost-basis-aging fix:** contributions / fresh lots (periodic cash inflows minting
-   lots at current prices; optionally dividend reinvestment). Measure harvest-signal recovery
-   (oracle rate, dark-window count, test-period prevalence → PR-AUC) as its own ablation.
+1. **P0 — cost-basis-aging fix:** ✅ **shipped** (`ContributionPolicy`, `--contrib`). Periodic
+   cash inflows mint fresh lots at current prices in the most *underweight* wash-sale-eligible
+   names (bounded lot growth; new cash corrects drift, as a real manager does). Off by default
+   — an unflagged run reproduces v0.26 byte-for-byte.
+   **Measured** (20y, scalarized, temporal test region): temporal-test `oracle+`
+   0.0119% → 0.1039% (**8.7×**), `soft+` 0.2205% → 4.0051% (**18.2×**); final-year mean lot age
+   15.10y → 9.20y; final-year ≥2%-underwater 0.062% → 2.413% (**39×**). Rows 1.85M → 5.18M.
+   *Also fixed a latent wash-sale bug it exposed:* reopens were scheduled for `harvest_day+30`
+   and never re-checked the clock — safe only while tickers held one lot at a time. With
+   multi-lot tickers, a same-day re-harvest reset the clock and the reopen bought into a fresh
+   window (17.4% of run-opened lots). Reopens now defer until the window truly clears → 0
+   genuine violations; inert on single-lot books.
+   **Remaining for the gate:** retrain under `--split=temporal` on `lots_contrib.csv` to
+   quantify the PR-AUC recovery (ROC-AUC was never the problem).
 2. **Sell-winner trim process** (`SimulationEngine` extension mirroring `HarvestLot`), own PR
    behind a flag: realizes gains → `RealizedGainsYTD` endogenous → carryforward netting
    exercised; also the first non-harvest action (v0.4b scaffolding).
