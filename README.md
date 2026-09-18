@@ -10,7 +10,24 @@ every tax lot on every day with a harvesting rulebook, and trains supervised mod
 > proposal, and the v0.3–v0.4 plan, see **[`PSTAT231_RECAP.md`](PSTAT231_RECAP.md)**. For the
 > first-principles math walk of the whole codebase, see **[`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md)**. (PSTAT 231 being the intro-ML grad project based course)
 
-**Status:** v0.1 + v0.2 complete (v0.2 was the PSTAT 231 final submission). Champion model (gradient-boosted trees) scores ~0.86 PR-AUC on the soft-label target. See [Results](#results).
+**Status:** v0.1 → **v0.26 complete**. v0.2 was the PSTAT 231 final submission; the pipeline was
+then **scaled from a fixed 2-year window to a custom range of up to ~20 years**
+(`download --from/--to`) and re-run on 2006–2026 (1.85M lot-day rows through the 2008, 2020, and
+2022 drawdowns). That scale-up exposed two defects, and fixing them is what v0.25/v0.26 were:
+
+- **v0.25 — oracle redesign (issue #23).** The `G_YTD` gains gate was economically invalid for an
+  individual investor, so it was replaced by a `TaxLedger` and a **scalarized objective**
+  `U = TaxValue − λσ_TE² − c_trade` behind three hard gates. Measured consequence: the
+  oracle-target tree-over-linear gap collapsed `0.155 → 0.015` — much of the original "trees win"
+  headline was *manufactured by the defective gate*.
+- **v0.26 — validation hardening.** Purged chronological splits (`--split=temporal`). ROC-AUC held
+  across time and the deterministic-oracle control stayed ~1.0, so **leakage is ruled out**; the
+  PR-AUC drop is the cost-basis-aging **prevalence crash**.
+
+The surviving headline is stronger than the original: the tree advantage on the **temporal**
+(forward-propensity) target is real and oracle-invariant. Next milestone: **v0.3 — simulator
+realism**, whose P0 is the cost-basis-aging fix that v0.26 diagnosed. See [Results](#results)
+and [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
@@ -56,14 +73,24 @@ The whole codebase derives from the tax code in five steps:
 1. **Tax asymmetry → why direct indexing exists.** A lot below cost basis holds an *option* worth
    `τ(h)·|qₖ(Pₜ − pₖ)|` dollars (`τ` = 37% short-term / 20% long-term). That option only exists at
    **lot granularity** — an index-fund holder owns no lots.
-2. **The decision has a correct answer → the oracle.** Harvesting is constrained by a loss threshold,
-   a tracking-error budget, a realized-gains budget, and a wash-sale lockout:
+2. **The decision has a correct answer → the oracle.** Harvesting is constrained by a loss
+   threshold, a wash-sale lockout, a tracking-error ceiling, and — the economic part — whether
+   the harvest is *worth its cost*:
 
    ```
-   f*(x) = 𝟙[L ≤ −2%] · 𝟙[σ_TE ≤ 5%] · 𝟙[G_YTD > 0] · 𝟙[WashClock ≥ 30]
+   f*(x) = 𝟙[L ≤ −2%] · 𝟙[WashClock ≥ 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) > 0]
+   where  U(x) = TaxValue − λ·σ_TE² − c_trade
    ```
 
-   Geometrically this is the intersection of four half-spaces — a convex polytope Ω, with `f* = 𝟙_Ω`.
+   The decision boundary is the **level set** `{U = 0}` — a smooth surface, not a box corner.
+
+   > *This changed in v0.25.* The original rule was a four-way AND whose third gate required
+   > `G_YTD > 0` ("the portfolio must have realized gains this year") — a convex **polytope**.
+   > That gate turned out to be economically invalid for an individual investor (capital losses
+   > carry forward indefinitely), so the gains information moved *inside* `TaxValue` as a
+   > capacity-aware value term. Removing it collapsed the tree-over-linear gap on the oracle
+   > target from 0.155 to 0.015 — the polytope corner, not problem structure, had been doing
+   > the work. See [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md).
 3. **Why simulate → the rulebook is executable.** Replay real prices through a portfolio that obeys
    the rule and log every `(lot, day)` state. The simulator *is* the problem's physics (with real
    price risk), not an approximation of it.
@@ -98,8 +125,8 @@ flowchart LR
 
 | Stage | Command | Input → Output | What happens |
 |---|---|---|---|
-| **1 · Download** | `download` | API → `data/raw/`, `constituents.json` | Fetch SPY constituents (SSGA holdings xlsx) + per-ticker EOD price history (FMP). Window is dynamic (configurable years + a 200-day warmup so `MA_200` is defined on day one). |
-| **2 · Simulate** | `simulate` | prices → `data/lots.csv` | Open an equal-dollar \$10M portfolio, step day by day: value it, compute tracking error, snapshot every open lot, apply the oracle, harvest + queue a 30-day rebuy when it fires. Each row is one `(lot, day)` observation with features **and** labels. |
+| **1 · Download** | `download [--from YYYY-MM-DD --to YYYY-MM-DD]` | API → `data/raw/`, `constituents.json` | Fetch SPY constituents (SSGA holdings xlsx) + per-ticker EOD price history (FMP). The window is a **parameter**: pass explicit `--from`/`--to` dates (up to ~20 years — the API's ≈5,000-bar-per-ticker cap), or omit both for a rolling 2-year window. Either way the fetch extends ~200 trading days back so `MA_200` is defined on day one, and an existing cache is re-aggregated incrementally. |
+| **2 · Simulate** | `simulate [--oracle=gated\|scalarized]` | prices → `data/lots.csv` | Open an equal-dollar \$10M portfolio, step day by day: value it, compute tracking error, update the `TaxLedger`, snapshot every open lot, apply the oracle, harvest + queue a 30-day rebuy when it fires. Since **v0.25** the default oracle is the **scalarized** `f* = 𝟙[ℓ≤−θ₁]·𝟙[𝒲≥30]·𝟙[σ_TE≤θ_max]·𝟙[U>0]`; `--oracle=gated` reruns the v0.2 four-gate rule as the ablation baseline → `data/lots_gated.csv`. Each row is one `(lot, day)` observation with features **and** labels. |
 | **3 · Train** | `mlnet-all` | `lots.csv` → `data/artifacts-mlnet/` | Cross-validate 5 models on 2 targets, select champions, evaluate only the champions on the sealed test set, emit metrics/leaderboards. Plus PCA + K-means diagnostics. |
 | **4 · Report** | `report` | artifacts → `src/Export/report/` | Generate a codebook (with a schema-drift assert against `lots.csv`), execute the analysis notebook, export self-contained HTML. |
 
@@ -111,15 +138,17 @@ A run is the composition `download → simulate → mlnet-all → report`. Each 
 
 One row of `data/lots.csv` is an immutable "photograph" of one lot at one day — the type
 [`LotStateVector`](src/Core/Portfolio/LotStateVector.cs), which is the load-bearing schema of the
-whole codebase (20 types depend on it).
+whole codebase. Since **v0.25** it is **schema v3** (`d = 17` numeric features, 26 columns): the
+`G_YTD` scalar became the three-field `TaxLedger` block, `TaxAlpha` became the capacity-aware
+`TaxValue`, and three new labels were added.
 
 | Group | Columns |
 |---|---|
 | **Lot-level** | `L` unrealized return · `H` holding days · `S` short/long flag · `B` cost basis · `W` lot weight · `K` open lots in same ticker |
-| **Portfolio-level** | `G_YTD` realized gain YTD · `Sigma_TE` tracking error · `WashClock` days since last harvest (999 = never) |
+| **Portfolio-level** (TaxLedger) | `RealizedGainsYTD` signed net realized P&L YTD (the pre-v0.25 `G_YTD`) · `LossCarryforward` banked losses, survives year-end (26 USC §1212(b)) · `OrdinaryOffsetBudget` remaining $3k/yr allowance · `Sigma_TE` tracking error · `WashClock` days since last harvest (999 = never) |
 | **Asset-level** | `R_t` daily return · `SigmaRange` range-vol proxy · `DeltaMA50` · `DeltaMA200` |
-| **Derived** | `TaxAlpha` · `DaysToYE` |
-| **Labels** | `Y_Oracle ∈ {0,1}` (hard, "fires today?") · `Y_Soft_BT ∈ [0,1]` (fraction of next 30 real days the rule fires; NaN near the window end) · `Y_Soft_GBM ∈ [0,1]` (same, over 200 simulated price paths) |
+| **Derived** | `TaxValue` = τ(h)·min(loss, capacity) + τ_f·max(loss−capacity, 0)·δ · `DaysToYE` |
+| **Labels** | `Y_Oracle ∈ {0,1}` (hard, "fires today?") · `Y_Soft_BT ∈ [0,1]` (fraction of next 30 real days the rule fires; NaN near the window end) · `Y_Soft_GBM ∈ [0,1]` (same, over 200 simulated paths) · `Y_TaxValue ∈ ℝ≥0` (regression target = `TaxValue`) · `Y_Utility ∈ ℝ` (the scalarized objective `U(x)`, the future RL reward) · `Y_Oracle_GatedSpec ∈ {0,1}` (what the v0.2 gated oracle would say on this row — the ablation spectator) |
 | **Metadata** | `Symbol` · `Sector` · `Timestep` *(dropped before modeling)* |
 
 The soft labels are the project's real target: holding portfolio state frozen, *would the oracle fire
@@ -131,7 +160,7 @@ the labeler** — it evaluates a fixed rule forward and averages.
 
 ```
 .
-├── PROJECT_RECAP.md          ← start here for the full recap + v0.3–v0.4 roadmap
+├── PSTAT231_RECAP.md          ← start here for the full recap + v0.3–v0.4 roadmap
 ├── README.md                 ← you are here
 ├── DirectIndexing.sln
 ├── src/
@@ -170,7 +199,8 @@ subprocess seam — you don't normally invoke Python directly. To set it up manu
 export FMP_API_KEY=your_key_here
 
 # 1. fetch prices + constituents              → data/raw/, constituents.json
-dotnet run --project src -- download
+dotnet run --project src -- download                                  # rolling 2-year window
+dotnet run --project src -- download --from 2006-07-01 --to 2026-06-12  # or any custom range (≤ ~20 yr)
 
 # 2. simulate the portfolio + label every lot → data/lots.csv
 dotnet run --project src -- simulate
@@ -202,7 +232,7 @@ dotnet run --project src -- test           # 30+ assertions incl. leakage regres
 
 | Command | Layer | What it does |
 |---|---|---|
-| `download` | 1 | Fetch constituents + EOD prices → `data/raw/`, `constituents.json` (needs `FMP_API_KEY`) |
+| `download [--from D --to D]` | 1 | Fetch constituents + EOD prices → `data/raw/`, `constituents.json` (needs `FMP_API_KEY`). Custom date range with both flags, rolling 2-year window with neither |
 | `simulate` | 2 | Backtest the \$10M portfolio, label every lot-day → `data/lots.csv` |
 | `simulate-mc` | 2 | Monte-Carlo variant on synthetic GBM prices → `data/lots-mc.csv` |
 | `mlnet-all` | 3 | CV all 5 models × 2 targets, test the champions, render → `data/artifacts-mlnet/` |
@@ -218,7 +248,40 @@ dotnet run --project src -- test           # 30+ assertions incl. leakage regres
 | `deps` | Regex-scan `src/**/*.cs` → dependency/coupling atlas (`src/Export/diagrams/Dependencies.md`: mermaid layer/class/inheritance graphs + fan-in/out tables) |
 | `mlnet-eda` / `mlnet-unsupervised` / `mlnet-render` | Run individual ML.NET sub-stages (EDA stats, PCA+K-means, Python rendering) |
 | `mlnet-gbt` / `mlnet-rf` / `mlnet-elnet` / `mlnet-linreg` / `mlnet-supervised` | Train a single model family in isolation |
+| `mlnet-soft` / `mlnet-oracle` | Re-run champion selection + champion test eval for **one target** (finish a partial `mlnet-all`, or retrain after an oracle change) |
+| `mlnet-tax` | **(v0.25)** Regress the continuous `Y_TaxValue` (the `TaxValue` feature is excluded — the task is recovering the ledger function from raw state); SDCA-linear vs FastTree, R² 0.10 vs 0.92 |
 | `mlnet-compare` | Run the CV leaderboard / champion comparison without the full pipeline |
+
+### Modes, splits & artifact layout (v0.25–v0.26)
+
+Two families of flags reshape the pipeline without new commands. **Oracle flags** shape the
+*label generator* (`simulate` / `simulate-mc` only — passing them to an `mlnet-*` mode prints a
+warning, since those read whatever `lots.csv` is on disk):
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--oracle=gated\|scalarized` | `scalarized` | Which oracle acts. The acting oracle changes the trajectory itself (harvests → wash clocks → ledger → which rows exist), so the two are **separate runs**, not label columns: `lots.csv` vs `lots_gated.csv`. |
+| `--ctrade=<dollars>` | `10` | The flat round-trip harvest friction in `U = TaxValue − λσ_TE² − c_trade` (scalarized only). `--ctrade=0` = the frictionless ablation arm. |
+
+**Split flags** shape *evaluation* (any `mlnet-*` mode; **v0.26**). The soft labels look 30 days
+forward, so adjacent rows share future context — a stratified *random* split can leak it. Temporal
+mode is the honest alternative:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--split=temporal` | stratified-random | Chronological purged split: train precedes test with a purge/embargo gap ≥ the label horizon, so no training row's forward window overlaps the test period. |
+| `--embargo=<days>` | `30` | The purge gap width (= the `Y_Soft_BT` horizon). |
+| `--testfrac=<0..1>` | `0.20` | Test fraction. `--testfrac=0.5` = the **decade walk-forward** (train ~2006–2016, test ~2016–2026). |
+
+**Artifact directories** (all under `data/`, gitignored, re-derivable) keep the arms from
+clobbering each other — the directory name records *how the numbers were produced*:
+
+| Directory | Produced by | Holds |
+|---|---|---|
+| `artifacts-mlnet/` | `mlnet-*` on `lots.csv`, random split | **the canonical** scalarized-oracle results |
+| `artifacts-mlnet-gated/` | same, after swapping `lots_gated.csv` → `lots.csv` | the v0.2 gated-oracle **ablation baseline** (the 2×2 comparison in the report) |
+| `artifacts-mlnet-temporal/` | `mlnet-* --split=temporal` | the honest-split results (last written wins between the 80/20 and `--testfrac=0.5` decade runs) |
+| `artifacts-mlnet-temporal-8020/` | a preserved copy of the 80/20 temporal run | kept aside so the decade run doesn't overwrite it — see [`DataMemo/ValidationHardening_v026.md`](DataMemo/ValidationHardening_v026.md) |
 
 ## Results
 
@@ -242,11 +305,35 @@ What the numbers *mean* (the science, not the recitation):
   region that bagging *blurs*.
 - **Trees recover the known oracle near-perfectly (≥ 0.999)** — the recoverability sanity check passes.
 
-> **⚠️ The repo has since moved past the frozen submission.** The live pipeline now runs on a ~20-year
-> window (≈1.85M rows) instead of 2 years, which *changed* one finding (logistic on the oracle target
-> drops sharply once real bull/bear regimes make multiple gates bind). The table above is the frozen
-> PSTAT submission snapshot — when quoting a number, know which window you mean. See
-> [`PROJECT_RECAP.md` §6](PROJECT_RECAP.md) for the full divergence and what it implies for v0.3.
+**The 20-year stress test (current live run — 2006–2026, 1,846,015 rows, 409 survivor tickers):**
+
+| Metric | 2-yr submission | 20-yr run |
+|---|---|---|
+| `Y_Oracle` / soft base rate | 1.6% / 19.9% | **0.20% / 2.47%** (cost-basis aging) |
+| GBT — soft target, CV → test PR-AUC | 0.858 → 0.862 | **0.850 → 0.844** ✅ robust |
+| GBT — oracle target, test PR-AUC | 0.9997 | 0.975 |
+| Logistic — oracle target, CV PR-AUC | 0.987 | **0.123** ← the flip |
+| `G_YTD > 0` gate open | 100% of rows | 94.3% (all closure in 2008–09) |
+
+Three things the scale-up established (full narrative in the rewritten
+[`final_report.ipynb`](src/ML/Python/notebooks/final_report.ipynb)):
+
+- **Robustness** — the genuine prediction task (forward 30-day harvest propensity) survives two
+  decades and three crashes essentially intact, against a 12× rarer base rate.
+- **The geometry flip** — logistic regression nearly solved the oracle on the calm 2-year window
+  and collapses on the 20-year one: *a conjunction is only as non-linear as the gates the data
+  makes bind*, and that is set by the regime, not the rule.
+- **Two simulation defects exposed** — lots opened once age out of harvestability (the harvest
+  signal is nearly extinct after the first decade), and the `G_YTD` gains gate is both vestigial
+  (open 94% of the time) and **self-strangling** (the 2008–09 harvest bursts burn the $1M seed to
+  zero and freeze harvesting mid-crisis). The latter is now **issue #23 / v0.25**: the gate is
+  misaligned with beta-tracking direct indexing (losses carry forward under US tax law — see the
+  Wealthfront stock-level TLH whitepaper), so it will be removed/redesigned and all models
+  retrained on the corrected oracle.
+
+> When quoting a number, know which window you mean — and note the oracle-target numbers sit on
+> the 4-gate rule that v0.25 deprecates. Full divergence story:
+> [`PSTAT231_RECAP.md` §6](PSTAT231_RECAP.md).
 
 ## Methodology & philosophy
 
@@ -256,10 +343,14 @@ are the things to preserve as the project grows.
 - **Labels may peek at the future; features never may.** The single invariant (see [core idea](#why-its-built-this-way-the-core-idea) #5). Every new feature must be computable from information available at day *t*; only labels may use *t+1 … t+30*.
 - **Leakage invariants are types, not conventions.** Median imputation and class weights have *no overload* that accepts the full dataset — they only accept a training fold. Normalization and one-hot encoding live inside the fitted pipeline. The leakage mistake scikit-learn lets you make implicitly, the C# layer makes *unrepresentable*. (Details: [`DataMemo/MLNetLeakageAudit.md`](DataMemo/MLNetLeakageAudit.md).)
 - **Champion selection is enforced by code shape.** Cross-validation ranks all five models; only the top-two classifiers ever reach the function that touches the sealed test set. "Only the best one or two models touch test" is a *structural* property, not a promise.
-- **PR-AUC, not ROC-AUC, for rare positives.** With a 1.6% (oracle) or 19.9% (soft) positive rate,
-  ROC-AUC is blind to a flood of false positives; precision-recall AUC is the metric that punishes
-  drowning the true positives in alarms. (And PR-AUC is still *not* the deployment objective — a model
-  with higher PR-AUC can produce *less* tax alpha if it fires on correlated lots at once; that economic
+- **PR-AUC, not ROC-AUC, for rare positives — but report both since v0.26.** With a rare positive rate,
+  ROC-AUC is blind to a flood of false positives; precision-recall AUC punishes drowning the true
+  positives in alarms. But the two measure different things and v0.26 uses that: ROC-AUC is
+  prevalence-*insensitive* (pure ranking → the leakage control), PR-AUC is prevalence-*bounded* (its
+  no-skill floor is the base rate). Under honest temporal splits ROC held while PR-AUC fell — the drop
+  was the aging prevalence crash, not lost skill. So the standing rule is now **ROC-AUC + PR-AUC +
+  test-period prevalence, together**. (And PR-AUC is still *not* the deployment objective — a model with
+  higher PR-AUC can produce *less* tax alpha if it fires on correlated lots at once; that economic
   evaluation is the next layer, see roadmap.)
 - **Layers communicate only through files.** No hidden shared mutable state crosses a layer boundary;
   the entire input to any layer is inspectable on disk. This is what lets the Python report layer be
@@ -270,7 +361,7 @@ are the things to preserve as the project grows.
 > modeling core but deliberately keeps the **simulator** — because there *is* no fixed dataset to pull
 > for this problem; the simulator is how the tabular dataset is manufactured, with real price risk. The
 > trade-offs of that choice, and how the final project diverged from the original proposal, are written
-> up in [`PROJECT_RECAP.md` §5](PROJECT_RECAP.md).
+> up in [`PSTAT231_RECAP.md` §5](PSTAT231_RECAP.md).
 
 ## Roadmap
 
@@ -281,8 +372,11 @@ reinforcement-learning policy that needs no hand-coded rule at all.**
 |---|---|---|
 | **v0.1** | PSTAT 231 (Spring 2026) | ✅ Supervised baseline: hard + soft labels, ~15 features, 4+ models with k-fold CV |
 | **v0.2** | PSTAT 231 (Spring 2026) | ✅ Champion selection, PCA/K-means, report layer + submission packaging |
-| **v0.3** | Summer / Junior Fall | Promote `G_YTD` to a continuous tax ledger; volatility sub-model (GARCH/EWMA σ̂, Ledoit-Wolf shrinkage); richer soft-label families; portfolio-level tax-alpha metrics |
-| **v0.4** | Junior Year | Reinforcement-learning policy layer (PPO/SAC) on a policy-driven simulation environment, warm-started from the supervised model; quantify how much alpha RL recovers over the baseline |
+| **20-yr scale-up** | June 2026 | ✅ Custom download range (`--from`/`--to`, issues #19/#20); 1.85M-row multi-regime re-run; report rewritten against it |
+| **v0.25** | Summer 2026 | ✅ Oracle redesign (issue #23, merged): `G_YTD` gate removed → `TaxLedger` + scalarized objective `U = TaxValue − λσ_TE² − c_trade` behind 3 hard gates; `--oracle=gated\|scalarized` ablation arms + `Y_TaxValue`/`Y_Utility`/spectator labels; all models retrained. Measured: oracle-target GBT–LR gap 0.155→0.015 (box geometry, not model capacity, drove the v0.2 gap); soft-target tree advantage oracle-invariant |
+| **v0.26** | Summer 2026 | ✅ Validation hardening (PR #30): `TemporalSplit`/`SplitPolicy`/`DataSplit` purged chronological splits (`--split=temporal`). Finding: ROC-AUC holds across time (ranking transfers, **no leakage** — the deterministic oracle target is the flat control), PR-AUC drop is the cost-basis-aging prevalence crash — which is exactly the v0.3 mandate |
+| **v0.3** | Summer / Junior Fall | Cost-basis-aging fix is now **P0** (contributions/rebalancing + sell-winner trim → makes `RealizedGainsYTD` endogenous, v0.4 action-space scaffolding); volatility sub-model (design fully, build-gate on a decision-flip ablation); richer soft labels (#17); tax-alpha metric layer + 6-rung baseline ladder (#12/#22) |
+| **v0.4** | Junior Year | **v0.4a** (new): constrained-optimizer execution baseline (GBT + subset + replacement optimizer under shared budgets) — RL must beat *this*, not just GBT. **v0.4b**: RL policy layer (#15) warm-started from the supervised η̂; reward = the shipped `U(x)` accumulated over episodes |
 | **v0.5** | Senior Capstone | Full-system integration: live data, client-parameterized policies, real-history backtests |
 | **v1.0** | Post-graduation | Production deployment; RIA-style direct-indexing service |
 
@@ -291,18 +385,24 @@ the open research bet being whether RL and neural methods recover meaningfully m
 or lower tracking error — than the supervised oracle-approximation baseline.
 
 **The full version-by-version plan, the open-issue ledger, and the recommended critical path for v0.3
-and v0.4 live in [`PROJECT_RECAP.md` §7–§9](PROJECT_RECAP.md).**
+and v0.4 live in [`PSTAT231_RECAP.md` §7–§9](PSTAT231_RECAP.md).**
 
 ## Further reading
 
 | Document | What's in it |
 |---|---|
-| [`PROJECT_RECAP.md`](PROJECT_RECAP.md) | The orientation doc: full v0.1–v0.2 recap, current-state vs. frozen-submission divergence, comparison to the original proposal, and the v0.3–v0.4 roadmap with a recommended path. |
+| [**`ROADMAP.md`**](ROADMAP.md) | **The authoritative version planner** (v0.1 → v1.0): what each version delivers, its gate criteria, and the standing rules. When it and an older doc disagree, it wins. |
+| [`PSTAT231_RECAP.md`](PSTAT231_RECAP.md) | The orientation doc: full v0.1–v0.2 recap, current-state vs. frozen-submission divergence, and the comparison to the original proposal. (Roadmap sections here are superseded by `ROADMAP.md`.) |
 | [`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md) | First-principles walk of the *entire* codebase: every layer's signature, the day-loop sequence, the lot lifecycle state machine, and the math each piece implements. |
-| [`DataMemo/SimulationMath.md`](DataMemo/SimulationMath.md) · [`PortfolioMath.md`](DataMemo/PortfolioMath.md) | The simulation and portfolio mathematics (seeding, year-end resets, tracking-error derivation, the endogenous dataset-size identity). |
-| [`DataMemo/ML_Derivations_Explicit_Rigorous_DollarMath.md`](DataMemo/ML_Derivations_Explicit_Rigorous_DollarMath.md) | Per-model derivations (each hypothesis space as an explicit set + objective). |
+| [`DataMemo/SimulationMath.md`](DataMemo/SimulationMath.md) · [`PortfolioMath.md`](DataMemo/PortfolioMath.md) | The simulation and portfolio mathematics (ledger transitions, year-end roll, tracking-error derivation, the endogenous dataset-size identity). |
+| [`DataMemo/MLDerivations.md`](DataMemo/MLDerivations.md) | **The ML mathematics, layered** — plain-language orientation (§0), the typed working body (§1–§8: feature space, oracle, label family, protocol, per-model objectives), and an every-symbol-pinned appendix. Current at schema v3 / scalarized oracle. |
+| [`DataMemo/MLNetLayer.md`](DataMemo/MLNetLayer.md) | **The ML.NET layer** — why C# and not sklearn, the typed pipeline shape, and the complete sklearn ↔ ML.NET parameter/solver/metric reconciliation. |
 | [`DataMemo/MLNetLeakageAudit.md`](DataMemo/MLNetLeakageAudit.md) | Where every fit happens and why none of them leak. |
-| [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md) | The v0.3 design: promoting the gains gate to a continuous tax ledger. |
+| [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md) | The gains-gate redesign v2 (shipped in v0.25): the scalarized oracle, the `TaxLedger`, and §6.1's **measured** gated-vs-scalarized ablation table. |
+| [`DataMemo/ValidationHardening_v026.md`](DataMemo/ValidationHardening_v026.md) | **(v0.26)** Why the old random splits were suspect, and the ROC-AUC-vs-PR-AUC diagnosis that ruled out leakage and isolated the cost-basis-aging prevalence crash. |
+| [`DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md`](DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md) | Parity assessment of a ChatGPT-5.5-Pro architecture thread (companion `..._plan.md`) against the actual repo, plus the synthesized v0.25→v1.0 version planner (the deep expansion of this Roadmap). Slated for promotion to `DataMemo/ArchitecturePlan.md`. |
+| [`DataMemo/data_memo_theory.md`](DataMemo/data_memo_theory.md) · [`data_memo_theory_part2.md`](DataMemo/data_memo_theory_part2.md) | The theory pair: the pre-implementation formal framework, and the post-course reconciliation (what converged/deviated/emerged) + the v0.3–v0.4 theoretical program (GARCH, covariance cleaning, tax ledger, RL MDP). |
+| [`src/ML/Python/notebooks/final_report.ipynb`](src/ML/Python/notebooks/final_report.ipynb) | The rewritten 20-year analysis report (generated by `scripts/build_report_notebook.py`; the frozen 2-year submission version lives in `src/Export/report/`). |
 | [`DataMemo/DataMemo.ipynb`](DataMemo/DataMemo.ipynb) | The original pre-implementation proposal (with the professor's feedback). |
 | [`AI_USAGE.md`](AI_USAGE.md) | AI-assistance disclosure for the course submission. |
 

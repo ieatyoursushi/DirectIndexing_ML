@@ -18,7 +18,7 @@ namespace DirectIndexing.ML.MLNet.Models;
 ///   l2Regularization ∈ {0.001, 0.01, 0.1}
 ///
 /// Semantic correspondence with sklearn
-/// (see DataMemo/MLNetSemanticReconciliation.md §5):
+/// (see DataMemo/MLNetLayer.md §5):
 ///   sklearn <c>LogisticRegression(penalty='elasticnet', l1_ratio=ρ, C=c)</c>
 ///     → L1 = ρ/c, L2 = (1-ρ)/(2·c)
 ///   ML.NET <c>SdcaLogisticRegressionBinaryTrainer</c>

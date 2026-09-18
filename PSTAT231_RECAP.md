@@ -1,19 +1,25 @@
 # Project Recap — Direct Indexing ML
-### v0.1–v0.2 complete · orientation + roadmap into v0.3–v0.4
+### v0.1–v0.26 complete · 20-year scale-up, oracle redesign, and validation hardening all shipped · next: v0.3
 
 > **Why this file exists.** Post-v0.2 you're starting to drift from what's *fundamentally*
 > implemented. This is the single document to re-read when that happens: what the project is,
 > what each layer actually does and why, how far it diverged from the original DataMemo pre-plan,
-> what the current (post-submission) repo state is vs. the frozen PSTAT 231 deliverable, and the
-> concrete recommended path through v0.3 (this summer) and v0.4 (next year). It **subsumes the
-> README** (commands + roadmap reproduced in §3 and §8) and points to the deeper synthesis docs
-> in `DataMemo/` for the math.
+> and what the current repo state is vs. the frozen PSTAT 231 deliverable. It **subsumes the
+> README** (commands reproduced in §3) and points to the deeper synthesis docs in `DataMemo/`
+> for the math.
+>
+> **⚠️ Roadmap sections in this file are superseded by [`ROADMAP.md`](ROADMAP.md)**, which is now
+> the authoritative version planner (v0.1 → v1.0, with gate criteria and standing rules). Where
+> this file and `ROADMAP.md` disagree about *what comes next*, `ROADMAP.md` wins. The historical
+> recap below — what was built and why — remains current.
 >
 > Companion docs (do not duplicate — read for depth):
 > `DataMemo/Lifecycle_v02.md` (full first-principles codebase walk),
 > `DataMemo/SimulationMath.md`, `DataMemo/PortfolioMath.md`,
-> `DataMemo/ML_Derivations_Explicit_Rigorous_DollarMath.md`,
-> `DataMemo/MLNetLeakageAudit.md`, `DataMemo/GYTD_Redesign_Plan.md` (the v0.3 design).
+> `DataMemo/MLDerivations.md`,
+> `DataMemo/MLNetLeakageAudit.md`, `DataMemo/GYTD_Redesign_Plan.md` (the tax-ledger design),
+> and the theory pair `DataMemo/data_memo_theory.md` (pre-plan) /
+> `DataMemo/data_memo_theory_part2.md` (post-course reconciliation + the v0.3–v0.4 program).
 
 ---
 
@@ -31,7 +37,8 @@ download → simulate → mlnet-all → report → submission
 
 - **v0.1** = supervised baseline: oracle hard labels + soft labels + ~15 features + models with CV. First built in Python, then **rewritten in ML.NET** (issue #10 — "I just can't w python") because a typed language lets leakage and schema be *type errors*, not conventions.
 - **v0.2** = the PSTAT 231 final submission: five models with **champion selection** (only top-2 touch the test set, enforced by code shape), PCA/K-means, and a **report layer** that executes a rubric-mapped notebook → HTML. **Headline finding: GBT champions the real (soft) target at 0.86 PR-AUC; the linear tier hits a representational ceiling (~0.65); trees recover the known oracle near-perfectly — a recoverability sanity check.**
-- **Current HEAD ≠ the frozen submission.** After submitting, data was shifted from an arbitrary window from **2 years (170,751 rows) → up to ~20 years (1,846,016 rows)** (commit `c421c4f`, dynamic ranges). This *changed one of the headline findings* (see §6) and is the empirical trigger for the v0.3 G_YTD redesign. **This is the thing most worth re-anchoring on.** (dynamic-range dataset selection in the download section)
+- **The 20-year scale-up (post-submission).** The download layer now takes a **custom date range** — `dotnet run download --from YYYY-MM-DD --to YYYY-MM-DD`, capped ~20 years by the FMP API's ≈5,000-bars-per-ticker limit — and the simulation adapts to whatever the cache holds (commit `c421c4f`, issues #19/#20). The live dataset is **2006-07→2026-06, 1,846,015 rows, 409 survivor tickers** vs. the frozen 2-year / 170,751-row submission. The report notebook has been **rewritten against that window** (commits `b0017ff`→`de8fba6`, `2f2bf13`) — see §6 for what it found.
+- **The next milestone is v0.25 — the oracle redesign (issue #23).** The 20-year run indicted the `G_YTD > 0` gate (near-vestigial *and* self-strangling in 2008–09, and misaligned with beta-tracking DI practice à la Wealthfront); the gate is to be removed/redesigned and **all models retrained on the corrected oracle**.
 
 **Should it be redone? No.** The architecture is the asset — extend along the seams it was designed with (§7). A rewrite would throw away the leakage discipline and simulation physics that are the hard, load-bearing parts. Details and the recommended critical path in §8–§9.
 
@@ -90,10 +97,11 @@ report   : Ĥ → paper             (src/Export/report/ — executed notebook + 
 
 | Command | Layer | What it does |
 |---|---|---|
-| `dotnet run download` | 1 — data | SSGA SPY holdings (issue #7, FMP constituent endpoint retired) + FMP EOD prices → `data/raw/`, `constituents.json`. Now **dynamic range** (issue #20, commit `c421c4f`) instead of fixed 2y. |
+| `dotnet run download [--from YYYY-MM-DD --to YYYY-MM-DD]` | 1 — data | SSGA SPY holdings (issue #7, FMP constituent endpoint retired) + FMP EOD prices → `data/raw/`, `constituents.json`. **Custom date range** via `--from`/`--to` (issues #19/#20, commit `c421c4f`; both flags or neither — default is a rolling 2-year window); ceiling ≈20 years from the API's ~5,000-bar cap; warns if the range can't cover the 200-day MA warmup; re-aggregates an existing cache incrementally. |
 | `dotnet run simulate` | 2 — simulation | Backtest the $10M portfolio, label every lot-day → `data/lots.csv` |
 | `dotnet run simulate-mc` | 2 — alt | Monte-Carlo (synthetic GBM prices) variant → `data/lots-mc.csv` |
 | `dotnet run mlnet-all` | 3 — ML | CV all 5 models × 2 targets, test the champions, render → `data/artifacts-mlnet/` |
+| `dotnet run mlnet-soft` / `mlnet-oracle` | 3 — ML | Re-run champion selection + test eval for **one target only** — for finishing a partial `mlnet-all` or retraining after an oracle change without paying for both targets |
 | `dotnet run report` | 4 — report | Codebook (header-drift assert vs lots.csv) + execute `final_report.ipynb` + export HTML |
 | `dotnet run report-all` | 3+4 | train + report in one command |
 | `dotnet run submission` | packaging | assemble `submission.zip` (raw price cache included → reproducible with no FMP key) |
@@ -177,29 +185,31 @@ How v0.2 resolved each:
 
 ---
 
-## 6. ⚠️ Current repo state ≠ the frozen v0.2 submission (the thing you're forgetting)
+## 6. ⚠️ The 20-year run — what it is and what it found
 
-This is the single most important re-anchor. **After** the PSTAT 231 submission (PR #11, `Lifecycle_v02.md`, and the report all describe the **2-year / 170,751-row** run), you made commit **`c421c4f` — "dynamic data-collection and simulation ranges"** and re-simulated over **~20 years (2004–2024)**. The repo *right now* has:
+This is the single most important re-anchor. **After** the PSTAT 231 submission (PR #11 — merged — plus `Lifecycle_v02.md` and the frozen report all describe the **2-year / 170,751-row** run), commit **`c421c4f` ("dynamic data-collection and simulation ranges")** made the window a parameter, and the pipeline was re-run over **2006-07 → 2026-06** (the ≈20-year API ceiling). The report notebook (`src/ML/Python/notebooks/final_report.ipynb`, generated by `scripts/build_report_notebook.py` + `scripts/fill_report_tokens.py`) has since been **rewritten against this window** — closing the old "issue #18: interpret the CV results" gap. The repo *right now* has:
 
-- `data/lots.csv` = **1,846,016 rows** (≈1.85M), dated June 20 — not 170,751.
-- Current `soft_bt_cv_leaderboard.json`: **GBT mean CV PR-AUC ≈ 0.850** (still champion, still strong — the soft-target finding is robust across regimes).
-- **One headline finding flipped.** On the 2-year run, logistic nearly solved the oracle (CV 0.987) because the `G_YTD > 0` gate never bound. On the 20-year run, `G_YTD > 0` holds on ~94% of rows but *does* bind across regimes, and **logistic on the oracle target collapses to CV ≈ 0.12** (per `GYTD_Redesign_Plan.md`). The conjunction stops degenerating to one half-space once real bull/bear regimes make multiple gates bind. The geometry claim from the report is now *window-dependent* — which is itself a richer result.
+- `data/lots.csv` = **1,846,015 rows**, **409 tickers** (only survivors with a full 20-year history — a known survivorship bias, flagged in the report), Timesteps 200–4999.
+- **Base rates collapsed by an order of magnitude**: `Y_Oracle` 1.6% → **0.20%**, soft target 19.9% → **2.47%**. Cause: **cost-basis aging** — lots are opened once and hold basis forever, so after the first decade even the COVID crash can't pull a 2007-basis lot 2% underwater. The harvest signal is effectively a GFC-era phenomenon (≈2,900 of ≈3,750 harvests happen in sim-years 0–1; at the March-2009 bottom ~90% of the book is harvestable).
+- **The soft-target result is robust**: GBT champions at **CV 0.850 / test 0.844 PR-AUC** (vs 0.858/0.862 on 2 years) against the 12× rarer base rate — the strongest external-validity evidence the project has.
+- **One headline finding flipped.** On 2 years, logistic nearly solved the oracle (CV 0.987) because `G_YTD > 0` never bound. On 20 years, **logistic collapses to CV ≈ 0.12** on the oracle target (GBT: 0.976) — the gains gate *does* bind, but only in 2008–09 (open on just ~39%/36% of rows in sim-years 1–2, ~100% everywhere else). The principle, formalized in `data_memo_theory_part2.md` §A.5: *a conjunction is only as non-linear as the number of gates the data makes bind.*
+- **The G_YTD gate is now a filed defect — issue #23 (v0.25).** The 20-year data shows it fails in both directions: vestigially open ~94% of the time, and **self-strangling in the crisis** — the 2008–09 harvest bursts burn the constant \$1M seed to zero mid-year, gate 3 slams shut, and the engine sits frozen through the richest loss environment in the window until the January re-seed. Issue #23 adds the conceptual indictment: production beta-tracking DI engines (per the Wealthfront stock-level TLH whitepaper) trigger on loss + tracking budget, not on the client's current-year realized gains — losses carry forward and offset \$3k of ordinary income, so the gate is stricter than the tax code. Remedy: remove/redesign `g₃` and **retrain all models on the corrected oracle** (cheap now via `mlnet-soft`/`mlnet-oracle`).
 
-**Implication:** the numbers in the README/report/PR #11/`Lifecycle_v02.md` are the *PSTAT submission snapshot*; the live pipeline has moved on. Before quoting a number to anyone, know which window you mean. The 20-year switch already partially closes issues #19 (historical scope) and #20 (dynamic range) — but the report narrative hasn't been re-run against it (issue #18 is exactly "construct interpretations from the CV results," now doubly relevant because the results moved).
+**Implication:** the numbers in the README results table / PR #11 / `Lifecycle_v02.md` are the *PSTAT submission snapshot*; the live pipeline and the rewritten report describe the 20-year run. Before quoting a number to anyone, know which window you mean — and know that the current oracle-target numbers are on the 4-gate rule that issue #23 deprecates.
 
 ---
 
 ## 7. The full roadmap / issue ledger (so nothing gets forgotten)
 
-Every open issue mapped to where it belongs. **PRs:** #1 (core domain) and #2 (simulation) **merged**; #11 (v0.2 ML.NET) and #8 (Python ML layer) **open**; #13/#14 (derivations) closed; #10/#7/#3 closed.
+Every open issue mapped to where it belongs. **PRs:** #1 (core domain), #2 (simulation), and #11 (v0.2 ML.NET close-out) **merged**; #8 (Python ML layer) closed superseded; #13/#14 (derivations) closed; #10/#7/#3 closed.
 
 | Version | Theme | Issues / artifacts | Status |
 |---|---|---|---|
 | **v0.1** | supervised baseline | hard+soft labels, ~15 feats, models+CV (Python → ML.NET) | ✅ done |
 | **v0.2** | champion selection + report | PR #11; 5 models, PCA/K-means, report layer, submission zip | ✅ submitted |
-| **v0.2 cleanup** | interpret results | **#18** (interpretations from CV results — now needs re-run on 20yr), **#4** (formally define models — mostly done in derivations) | 🔄 open, low-effort |
-| **already in progress** | data scope | **#19** (10+ yr history), **#20** (dynamic sim range) — *partially shipped in `c421c4f`* | 🔄 |
-| **v0.3 (summer)** | volatility sub-model + tax ledger | **GYTD redesign** (`GYTD_Redesign_Plan.md`, Options B→C), GARCH/EWMA σ̂, Ledoit-Wolf shrinkage, **#17** (richer soft-label families), **#5** (RMT covariance cleaning) | ⬜ next |
+| **20-yr scale-up** | data scope + report rewrite | **#19** (historical scope) / **#20** (dynamic range) shipped in `c421c4f` (`download --from/--to`); **#18** (interpret CV results) closed by the rewritten 20-year report (`build_report_notebook.py`); **#4** (formally define models — done in the derivations memos) | ✅ done |
+| **v0.25 (now)** | oracle redesign | **#23** — remove/redesign the `G_YTD` gate (invalid for beta-tracking DI; Wealthfront whitepaper), retrain all models on the corrected oracle (`mlnet-soft`/`mlnet-oracle`); part 2 of the issue: move the oracle from pure hard-cut gates toward gate + dynamic/negative-reinforcement objectives | 🔄 next |
+| **v0.3 (summer)** | volatility sub-model + tax ledger | **GYTD redesign** (`GYTD_Redesign_Plan.md`, Options B→C — the full-ledger successor to the v0.25 gate fix), GARCH/EWMA σ̂, Ledoit-Wolf shrinkage, **#17** (richer soft-label families), **#5** (RMT covariance cleaning) | ⬜ |
 | **v0.3→0.4 bridge** | economic evaluation | **#12** (portfolio tax-alpha metrics, opportunity cost), **#22** (custom deployment/portfolio score metrics beyond ROC/PR) | ⬜ prereq for RL reward |
 | **v0.4 (next year)** | RL policy layer | **#15** (split SimulationEngine: training-sim vs RL portfolio-sim, `Oracle/Classifier/RL` policy interface), **#6** (unsupervised dim-reduction for wash-sale replacement / TE-min position selection), PPO/SAC agent | ⬜ |
 | **v0.5–1.0** | distillation, scale, deploy | **#16** (knowledge distillation: big NN → soft labels → small model / RL warm-start), live data, client-parameterized policies, RIA-style SaaS | ⬜ long-horizon |
@@ -232,13 +242,15 @@ The only thing that *would* justify a partial rebuild is the **PCA-for-portfolio
 
 A concrete critical path with dependencies called out. The ordering is chosen so each step unblocks the next and so the *economic* evaluation exists before you design an RL reward.
 
-### Summer → v0.3 (do roughly in this order)
+### Summer → v0.25 then v0.3 (do roughly in this order)
 
-1. **Tie off v0.2 first (cheap, high value): issue #18 on the 20-year run.** The window already changed (§6); re-run the report narrative against the 1.85M-row data and write up *why* the logistic-oracle finding flipped (regime-dependent gate binding). This converts the accidental `c421c4f` change into a deliberate result and resolves the "I forget what's implemented" drift at the source. *Also resolves #19/#20 framing.*
-2. **G_YTD redesign — ship Option B, target Option C** (`GYTD_Redesign_Plan.md`). Interim **B**: replace the constant $1M seed with `seed_t = κ·V_t` recomputed at year-end (one-line defect fix; gate starts binding again). Target **C** — the real v0.3 work: promote `G_YTD` from a binary gate to a **continuous tax ledger** (`realized_gains_YTD`, `loss_carryforward` across year-end, `$3k` ordinary-offset budget), add a "sell-winner" gains-realization transition to the simulator, and emit a **continuous `Y_TaxValue` regression target**. This simultaneously *fixes the economics* (carryforward + $3k offsetting, which the strict gate currently refuses — real tax alpha left on the table) and *resolves the "removing G_YTD makes it less interesting" worry by making the target continuous*. It's also the natural bridge to the RL reward.
-3. **The volatility sub-model (the README's named v0.3 deliverable).** Replace constant-σ GBM in `SoftLabelBuilder.ComputeGBM` with **GARCH/EWMA** time-varying σ̂; this is the "volatility as a supervised sub-model with its own σ̂_t ∈ ℝ target" idea from the README/issues. Deliverable question: *does a better σ̂ improve harvest-urgency scoring?*
-4. **Richer soft-label families (issue #17)** — multi-horizon (`y_30/y_90/y_180`), persistence-weighted (`y_persist = (1/30)Σ f*(x_{t+s})`), tax-alpha-weighted (`y_alpha`, `y_max`). Each gets its own PR/ROC leaderboard. **Guard:** keep this information out of the feature space (the i.i.d.-per-lot assumption).
-5. **(Optional, fits the vol theme) RMT covariance cleaning (issue #5)** — Marchenko–Pastur eigenvalue cleaning of Σ̂ in `TrackingErrorProxy`, and **Ledoit-Wolf shrinkage** (README v0.3 item). Plug-in point already exists.
+1. ~~Tie off v0.2: issue #18 on the 20-year run~~ — **✅ done.** The report was rewritten against the 1.85M-row window (`build_report_notebook.py` → `final_report.ipynb`), including the regime-dependent-geometry writeup and the per-year gate-binding EDA. The `c421c4f` change is now a deliberate, documented result.
+2. **v0.25 — oracle redesign (issue #23), the new step 1.** Remove or redesign the `G_YTD > 0` gate: it is redundant/invalid for the project's beta-tracking alignment (the Wealthfront stock-level-TLH reference model triggers on loss + tracking budget; gains-offsetting is the tax return's job, since losses carry forward and offset $3k of ordinary income) and the 20-year data caught it strangling harvests mid-GFC (§6). Then **re-simulate and retrain** — `simulate` → `mlnet-soft` + `mlnet-oracle` — so every quoted number sits on a defensible rule. Issue #23's part 2 (gates → gate + dynamic/negative-reinforcement objectives) can start here and matures in v0.4.
+3. **G_YTD's fuller successor — ship Option B, target Option C** (`GYTD_Redesign_Plan.md`). Interim **B**: replace the constant $1M seed with `seed_t = κ·V_t` recomputed at year-end. Target **C** — the real v0.3 work: promote the tax state to a **continuous tax ledger** (`realized_gains_YTD`, `loss_carryforward` across year-end, `$3k` ordinary-offset budget), add a "sell-winner" gains-realization transition to the simulator, and emit a **continuous `Y_TaxValue` regression target**. This simultaneously *fixes the economics* and *resolves the "removing G_YTD makes it less interesting" worry by making the target continuous*. It's also the natural bridge to the RL reward. (Coordinate with the v0.25 gate removal — the ledger is what the gate *should have been*.)
+4. **The volatility sub-model (the README's named v0.3 deliverable).** Replace constant-σ GBM in `SoftLabelBuilder.ComputeGBM` with **GARCH/EWMA** time-varying σ̂; this is the "volatility as a supervised sub-model with its own σ̂_t ∈ ℝ target" idea from the README/issues (full math in `data_memo_theory_part2.md` §C.2). Deliverable question: *does a better σ̂ improve harvest-urgency scoring?*
+5. **Richer soft-label families (issue #17)** — multi-horizon (`y_30/y_90/y_180`), persistence-weighted (`y_persist = (1/30)Σ f*(x_{t+s})`), tax-alpha-weighted (`y_alpha`, `y_max`). Each gets its own PR/ROC leaderboard. **Guard:** keep this information out of the feature space (the i.i.d.-per-lot assumption).
+6. **(Optional, fits the vol theme) RMT covariance cleaning (issue #5)** — Marchenko–Pastur eigenvalue cleaning of Σ̂ in `TrackingErrorProxy`, and **Ledoit-Wolf shrinkage** (README v0.3 item). Plug-in point already exists.
+7. **(Also worth weaving in) Cost-basis realism.** The 20-year report's biggest simulation finding (§6) — open-once/hold-forever lots age out of harvestability — argues for adding **contributions/rebalancing** (fresh lots at current prices) to the simulator alongside the ledger work; it also supplies the gains-realization process Option C needs.
 
 ### Bridge work (do *before* RL): economic evaluation — issues #12 + #22
 Build portfolio-level metrics — **total tax alpha** `α = Σ(P_cost − P_harvest)·shares·τ`, opportunity cost, performance vs the mechanistic oracle — via a backtest that runs the trained model's scores as harvest decisions on held-out years. **This is a hard prerequisite for v0.4**: the RL reward *is* "realized after-tax alpha minus a tracking-error penalty," so you need this measurement layer before you can train or even evaluate a policy. It also retires the "PR-AUC ≠ tax alpha" caveat with real numbers.
@@ -250,8 +262,8 @@ Build portfolio-level metrics — **total tax alpha** `α = Σ(P_cost − P_harv
 4. **(v0.5+) Knowledge distillation (issue #16)** — a large NN labels `soft_bt`-style targets to train smaller supervised models / warm-start the RL agent. (Your flagged PhD-interest area.)
 
 ### One-line summary of the recommendation
-> Don't rewrite. **Summer:** close out #18 on the 20-year data, then make `G_YTD` a continuous tax ledger (GYTD Option C) and add the volatility sub-model + richer soft labels — *all of which raise the difficulty/interest of the supervised target rather than removing structure*. **Build the tax-alpha metric layer (#12/#22) as the bridge.** **Next year:** split the simulator into a policy-driven RL environment whose reward is that tax ledger minus a TE penalty, warm-started from the v0.3 supervised model. Every step reuses the existing seams; nothing needs to be thrown away.
+> Don't rewrite. **Now (v0.25):** fix the oracle — drop/redesign the `G_YTD` gate per issue #23 and retrain. **Summer (v0.3):** make the tax state a continuous ledger (GYTD Option C), add contributions/rebalancing so lots stop aging out, and add the volatility sub-model + richer soft labels — *all of which raise the difficulty/interest of the supervised target rather than removing structure*. **Build the tax-alpha metric layer (#12/#22) as the bridge.** **Next year (v0.4):** split the simulator into a policy-driven RL environment whose reward is that tax ledger minus a TE penalty, warm-started from the v0.3 supervised model. Every step reuses the existing seams; nothing needs to be thrown away.
 
 ---
 
-*Cross-references: `DataMemo/Lifecycle_v02.md` (§ numbering used above), `DataMemo/GYTD_Redesign_Plan.md` (the v0.3 design in full), `DataMemo/SimulationMath.md`, `DataMemo/PortfolioMath.md`, `DataMemo/MLNetLeakageAudit.md`. Frozen-submission numbers: PR #11. Original pre-plan: `DataMemo/DataMemo.ipynb`.*
+*Cross-references: `DataMemo/Lifecycle_v02.md` (§ numbering used above), `DataMemo/GYTD_Redesign_Plan.md` (the tax-ledger design in full), `DataMemo/data_memo_theory.md` + `data_memo_theory_part2.md` (theory pre-plan and post-course reconciliation/v0.3–v0.4 program), `DataMemo/SimulationMath.md`, `DataMemo/PortfolioMath.md`, `DataMemo/MLNetLeakageAudit.md`. Frozen-submission numbers: PR #11. 20-year numbers: the rewritten `src/ML/Python/notebooks/final_report.ipynb`. Oracle redesign: issue #23 + the Wealthfront stock-level TLH whitepaper. Original pre-plan: `DataMemo/DataMemo.ipynb`.*

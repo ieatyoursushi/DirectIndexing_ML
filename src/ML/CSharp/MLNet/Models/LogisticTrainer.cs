@@ -14,7 +14,7 @@ namespace DirectIndexing.ML.MLNet.Models;
 /// L2-regularized logistic regression with stratified 5-fold CV grid search
 /// over <c>C ∈ {0.01, 0.1, 1.0, 10.0}</c>. Mirrors Python's
 /// <c>logistic.py</c>; differences are documented in
-/// <c>DataMemo/MLNetSemanticReconciliation.md</c>.
+/// <c>DataMemo/MLNetLayer.md</c>.
 ///
 /// Two targets supported (target derivation matches <c>targets.py</c>):
 ///   "oracle"  — Y_Oracle (deterministic gate; sanity baseline; expect ROC ≈ 1).

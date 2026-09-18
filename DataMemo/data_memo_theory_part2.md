@@ -18,13 +18,13 @@ Part II serves three purposes:
 
 | Document | Content |
 |---|---|
-| `ML_Derivations_Explicit_Rigorous_DollarMath.md` | Per-model objectives, 4-gate oracle, both soft-label families, PCA/K-means — all typed |
+| `MLDerivations.md` | Per-model objectives, 4-gate oracle, both soft-label families, PCA/K-means — all typed |
 | `SimulationMath.md` | Simulation physics: seeding, year-end resets, TE estimator history, endogenous-$N$ identity |
 | `PortfolioMath.md` | Portfolio state machine, lot measure, $G^{\mathrm{YTD}}$ sign convention |
 | `Lifecycle_v02.md` | First-principles codebase walk: typed layer signatures, sequence diagrams, §8 intuition audit |
 | `GYTD_Redesign_Plan.md` | v0.3 tax-ledger design: Options A/B/C, gains-realization process, RL bridge |
 | `MLNetLeakageAudit.md` | Where every fit happens and why none of them leak |
-| `MLNetSemanticReconciliation.md` | sklearn ↔ ML.NET parameter/solver/metric reconciliation |
+| `MLNetLayer.md` | sklearn ↔ ML.NET parameter/solver/metric reconciliation |
 | `PROJECT_RECAP.md` | Engineering roadmap, issue ledger, the recommended critical path |
 
 ---
@@ -218,7 +218,7 @@ $$
 
 with per-path GBM dynamics $S_{s+1} = S_s \exp\!\left((\mu - \tfrac{1}{2}\sigma^2)\Delta + \sigma\sqrt{\Delta}\, Z\right)$, $Z \sim \mathcal{N}(0,1)$, $\Delta = 1/252$, $\mu = 0$, $\sigma$ from trailing 21-day realized vol. Note $\tilde{y}_{BT}$ averages the *predicate along one path* (fraction of firing days); $\tilde{y}_{GBM}$ uses **first-passage** across paths (each path counts at most once) — different averaging semantics, deliberately.
 
-There is **no ML and no optimization inside the labeler**. No extrema search, no "best day to harvest." The labeler evaluates a fixed predicate forward and averages. The hindsight is legitimate by the invariant (§A.2.2): labels may peek at the future; features never may. Full derivation in `ML_Derivations…DollarMath.md` §§3–4.
+There is **no ML and no optimization inside the labeler**. No extrema search, no "best day to harvest." The labeler evaluates a fixed predicate forward and averages. The hindsight is legitimate by the invariant (§A.2.2): labels may peek at the future; features never may. Full derivation in `MLDerivations.md` §§3–4.
 
 ### A.3.6 The endogenous dataset size
 
@@ -258,7 +258,7 @@ Five model families define five hypothesis spaces $\mathcal{H}_1, \ldots, \mathc
 | Gradient-boosted trees | $\{F_0 + \sum_m \nu\, f_m(x)\}$, sequential residual correction | pseudo-residual fitting (`DollarMath.md` §8) |
 | Ridge regression (demo) | $\{w^\top x + b\}$ fit to *continuous* $\tilde{y}_{BT}$ by least squares | $J_{OLS}$ (`DollarMath.md` §10) |
 
-Per-model derivations (type-annotated objectives, grid specifications, structural strengths/weaknesses) are in `ML_Derivations…DollarMath.md` §§6–10. The reconciliation of ML.NET's parameterization with sklearn's is in `MLNetSemanticReconciliation.md`.
+Per-model derivations (type-annotated objectives, grid specifications, structural strengths/weaknesses) are in `MLDerivations.md` §§6–10. The reconciliation of ML.NET's parameterization with sklearn's is in `MLNetLayer.md`.
 
 ### A.4.2 The three-tier empirical result as the measured approximation-error story
 
@@ -1081,4 +1081,4 @@ Part I built the theory. v0.1–v0.2 built the system. Part II reconciles the ga
 
 ---
 
-*Cross-references: `data_memo_theory.md` (Part I), `ML_Derivations_Explicit_Rigorous_DollarMath.md` (per-model derivations), `SimulationMath.md` / `PortfolioMath.md` (simulation and portfolio mathematics), `Lifecycle_v02.md` (first-principles codebase walk), `GYTD_Redesign_Plan.md` (v0.3 tax-ledger design), `PROJECT_RECAP.md` (engineering roadmap and issue ledger).*
+*Cross-references: `data_memo_theory.md` (Part I), `MLDerivations.md` (per-model derivations), `SimulationMath.md` / `PortfolioMath.md` (simulation and portfolio mathematics), `Lifecycle_v02.md` (first-principles codebase walk), `GYTD_Redesign_Plan.md` (v0.3 tax-ledger design), `PROJECT_RECAP.md` (engineering roadmap and issue ledger).*

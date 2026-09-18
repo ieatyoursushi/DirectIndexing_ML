@@ -1,55 +1,102 @@
-# ML Mathematical Derivations — Lot Vector Space and Model Family
+# ML Mathematical Derivations — Lot Vector Space, Oracle, and Model Family
 
-### Gabriel Kung, Co-Authored by Claude Sonnet
+### Gabriel Kung, co-authored with Claude
 
-> **Purpose.** This memo is written *in service of clarity*: it makes explicit, with
-> full domain/codomain typing for every object, the mathematics of (1) the
-> `LotStateVector` feature space, (2) the `soft_bt` label as it is actually
-> constructed in the simulation layer, and (3) each supervised and unsupervised
-> model implemented in the ML.NET pillar. It is the mathematical companion to the
-> conceptual `data_memo_theory.md` and the implementation-facing
-> `MLNetPipeline.md` / `MLNetSemanticReconciliation.md`.
+> **Purpose.** This memo makes explicit, with full domain/codomain typing for every object,
+> the mathematics of (1) the `LotStateVector` feature space, (2) the oracle $f^*$ and the
+> label family it generates, and (3) each supervised and unsupervised model implemented in
+> the ML.NET pillar.
 >
-> The level of rigor targeted is that of a stochastic-calculus derivation: every
-> variable is introduced with its type as a map between sets, every random object
-> with its measurable structure. For comparison, the convention used throughout
-> is the same one used to write geometric Brownian motion as
+> **Schema version: v3 (d = 17), oracle: scalarized (v0.25), validation: purged temporal
+> splits available (v0.26).** Superseded constants from the v0.2-era 4-gate oracle are flagged
+> inline as *legacy* where they still matter for reading old artifacts.
+>
+> **How to read this document — it is layered, by design.** It replaces three parallel memos
+> (`ML_Derivations_Simplified.md`, `MLDerivations.md`, `ML_Derivations_Explicit_Rigorous_DollarMath.md`)
+> that carried the same content at three rigor levels and consequently drifted out of date
+> together. The three audiences are now three *sections* of one document:
+>
+> | If you want… | Read |
+> |---|---|
+> | the pipeline in plain language, no measure theory | **§0 Orientation** |
+> | the working mathematics with types | **§1–§8** (the body) |
+> | every symbol pinned, one object per equation | **Appendix A** |
+>
+> The level of rigor targeted in the body is that of a stochastic-calculus derivation: every
+> variable introduced with its type as a map between sets, every random object with its
+> measurable structure — the convention used to write geometric Brownian motion as
 > $$dS_t = \mu\,S_t\,dt + \sigma\,S_t\,dW_t,\qquad S_t:\Omega\to\mathbb{R}_{>0},\quad W_t:\Omega\times[0,T]\to\mathbb{R},\quad dW_t\sim\mathcal N(0,dt).$$
 >
-> **Cross-references.** `DataMemo/data_memo_theory.md` (probability space, oracle
-> boundary geometry, Stokes/currents analogy), `DataMemo/PortfolioMath.md` (lot
-> accounting), `DataMemo/SimulationMath.md` (price process), `src/Core/Portfolio/LotStateVector.cs`
-> (canonical schema), `src/Core/Oracle/OracleBoundary.cs` (the map $f^*$),
-> `src/Core/Simulation/SoftLabelBuilder.cs` + `GbmSimulator.cs` (soft labels),
-> `src/ML/CSharp/MLNet/Models/*.cs` (trainers).
+> **Cross-references.** `data_memo_theory.md` (probability space, boundary geometry),
+> `PortfolioMath.md` (lot accounting, the TaxLedger), `SimulationMath.md` (price process, the
+> day loop), `GYTD_Redesign_Plan.md` (why the oracle is scalarized), `ValidationHardening_v026.md`
+> (why splits are temporal), `MLNetLayer.md` (implementation + sklearn parameter map),
+> `MLNetLeakageAudit.md` (training-fold-only invariants).
 
 ---
 
-## 0. Notation and Standing Conventions
+# §0. Orientation — the pipeline without notation
 
-| Symbol | Type | Meaning |
+The whole system is one chain:
+
+```text
+Portfolio state (lots, tax ledger, tracking error)
+      ↓   feature extraction
+ Lot features X  — one row = one lot, on one day (17 numbers)
+      ↓   the oracle rule f*
+ Hard label Y_Oracle ∈ {0,1}  — "harvest this lot today?"
+      ↓   run the rule forward 30 days
+ Soft labels ∈ [0,1]  — "how often would it fire soon?"
+      ↓   supervised learning
+ Predicted harvest propensity  η̂(x) ∈ [0,1]
+```
+
+**One row is one lot on one day.** It carries 17 numeric features in four groups:
+
+| Group | Features | What they describe |
 |---|---|---|
-| $\Omega_{\mathrm{prob}}$ | sample space | underlying probability space $(\Omega_{\mathrm{prob}},\mathcal F,\mathbb P)$ for price randomness |
-| $\mathcal X$ | $\subset\mathbb R^d$ | feature space (Borel measurable) |
-| $\mathcal Y$ | $\{0,1\}$ or $[0,1]$ | label space (hard / soft) |
-| $v_{k,t}$ | `LotStateVector` | one lot $k$ at simulation day $t$ — one row of `lots.csv` |
-| $x$ | element of $\mathcal X$ | numeric+categorical feature vector extracted from $v$ |
-| $\phi$ | $\mathcal X\to\mathbb R^{d}$ | preprocessing map (normalize $\oplus$ one-hot) |
-| $f^*$ | $\mathcal X\to\{0,1\}$ | the mechanistic oracle (`OracleBoundary.Label`) |
-| $\eta$ | $\mathcal X\to[0,1]$ | posterior $\eta(x)=\mathbb P(Y=1\mid X=x)$ |
-| $\tilde y_{\mathrm{BT}}$ | $\mathcal X\to[0,1]$ | backtest soft label (`Y_Soft_BT`) |
-| $\tilde y_{\mathrm{GBM}}$ | $\mathcal X\to[0,1]$ | Monte-Carlo soft label (`Y_Soft_GBM`) |
+| **Lot** (6) | unrealized return, holding days, long-term flag, cost basis, portfolio weight, lot count | the position itself |
+| **Portfolio** (5) | realized gains YTD, loss carryforward, ordinary-offset budget, tracking error, wash-sale clock | shared state — same for every lot that day |
+| **Asset** (4) | daily return, intraday range, MA50 deviation, MA200 deviation | what the stock is doing |
+| **Derived** (2) | tax value, days to year-end | composites of the above |
 
-Throughout, $\mathbf 1[\,\cdot\,]:\{\text{prop}\}\to\{0,1\}$ is the indicator and $\sigma(z)=(1+e^{-z})^{-1}$ is the logistic sigmoid $\sigma:\mathbb R\to(0,1)$.
+**The oracle** is the hand-written harvesting rule — it plays the role of "ground truth." Since
+v0.25 it is a *cost-benefit test behind three hard gates*, not a four-way AND:
+
+```text
+Harvest = 1  if   loss is deep enough          (≥ 2% below cost)
+            AND  wash-sale window has cleared  (≥ 30 days)
+            AND  tracking error isn't extreme  (≤ 15% — a circuit breaker)
+            AND  the harvest is worth it       (U > 0)
+
+where      U = tax value of harvesting − λ·(tracking error)² − trade cost
+```
+
+The fourth condition is the economic one: a harvest must *pay for* the benchmark drift and the
+trading friction it causes. The *tax value* is capacity-aware — a dollar of loss you can use
+against gains this year is worth more than a dollar you must bank for later.
+
+> **What changed in v0.25, in one sentence.** The old rule had a fourth *gate*, "the portfolio
+> must have realized gains this year," which was economically invalid for an individual
+> investor (losses carry forward indefinitely), so it became a continuous *value term* inside
+> $U$ instead of a pass/fail condition. See `GYTD_Redesign_Plan.md`.
+
+**The soft labels** exist because the hard oracle only answers "today." Freeze the portfolio
+state, roll the prices forward 30 days, and ask how often the rule *would* fire. That fraction
+is the real prediction target — it depends on unobserved future prices, so it is a genuine
+forecasting problem rather than a lookup.
+
+**The models** then learn to predict that propensity from today's features alone. Everything
+below formalizes each arrow.
 
 ---
 
-## 1. The Lot Vector Space $\mathcal X$
+# §1. The Lot Vector Space $\mathcal X$
 
-### 1.1 The feature-extraction map
+## 1.1 The feature-extraction map
 
-A single observation is produced by the simulation engine through the
-feature-extraction map applied to one open lot in the portfolio at one day:
+A single observation is produced by the simulation engine through the feature-extraction map
+applied to one open lot at one day:
 
 $$
 g:\ \mathcal S_t\times P_t\ \longrightarrow\ \mathcal X^{\,|\mathcal K_t|},
@@ -57,21 +104,25 @@ g:\ \mathcal S_t\times P_t\ \longrightarrow\ \mathcal X^{\,|\mathcal K_t|},
 g(\mathcal S_t, P_t) = \bigl(x_{k,t}\bigr)_{k\in\mathcal K_t},
 $$
 
-where $\mathcal S_t$ is the portfolio state at day $t$, $P_t\in\mathbb R_{>0}^{500}$ the
-price cross-section, and $\mathcal K_t$ the set of open lots. The $k$-th component
-$x_{k,t}\in\mathcal X$ is exactly one `LotStateVector` (minus its labels and
-metadata). Writing the projection onto a single lot,
+where $\mathcal S_t$ is the portfolio state at day $t$, $P_t\in\mathbb R_{>0}^{N}$ the price
+cross-section, and $\mathcal K_t$ the set of open lots. The $k$-th component
+$x_{k,t}\in\mathcal X$ is exactly one `LotStateVector` (minus its labels and metadata).
+Projecting onto a single lot,
 
 $$
-\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{15}.
+\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{17}.
 $$
 
-### 1.2 Coordinates with explicit types
+> **Schema note (v0.25).** $d$ moved $15\to17$: the single portfolio coordinate
+> $G^{\mathrm{YTD}}$ became the three-field **TaxLedger** block, and the derived coordinate
+> $\alpha_{\mathrm{tax}}$ was replaced by the capacity-aware $\mathrm{TaxValue}$.
 
-The 15 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are
-the following maps. For lot $k$ with shares $q_k\in\mathbb Z_{>0}$, cost basis
-$p_k\in\mathbb R_{>0}$, purchase day $s_k\in\mathbb Z_{\ge0}$, current price
-$P_t\in\mathbb R_{>0}$, portfolio value $V_t\in\mathbb R_{>0}$:
+## 1.2 Coordinates with explicit types
+
+The 17 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are the following
+maps. For lot $k$ with shares $q_k\in\mathbb Z_{>0}$, cost basis $p_k\in\mathbb R_{>0}$,
+purchase day $s_k\in\mathbb Z_{\ge0}$, current price $P_t\in\mathbb R_{>0}$, portfolio value
+$V_t\in\mathbb R_{>0}$:
 
 $$
 \begin{aligned}
@@ -87,8 +138,12 @@ W=w_k &= \frac{q_kP_t}{V_t}\in(0,1)
    &&\text{portfolio weight}\\
 K &= \#\{\text{open lots with ticker }A_i\}\in\mathbb Z_{>0}
    &&\text{lot count}\\[4pt]
-G^{\mathrm{YTD}}_t &\in\mathbb R
-   &&\text{net realized gain YTD (shared state)}\\
+G^{\mathrm{net}}_t &\in\mathbb R
+   &&\text{RealizedGainsYTD — signed net realized P\&L}\\
+C^{\mathrm{fwd}}_t &\in\mathbb R_{\ge0}
+   &&\text{LossCarryforward — banked losses}\\
+O_t &\in[0,3000]
+   &&\text{OrdinaryOffsetBudget — §1211(b) allowance left}\\
 \sigma_{\mathrm{TE}} &\in\mathbb R_{\ge0}
    &&\text{annualized tracking error (shared state)}\\
 \mathcal W^{A_i}_t &\in\mathbb Z_{\ge0}\cup\{999\}
@@ -101,153 +156,244 @@ R_t &= \frac{P_t-P_{t-1}}{P_{t-1}}\in\mathbb R
    &&\text{50-day MA deviation}\\
 \Delta\mathrm{MA}_{200} &= \frac{P_t-\mathrm{MA}_{200}}{\mathrm{MA}_{200}}\in\mathbb R
    &&\text{200-day MA deviation}\\[4pt]
-\alpha_{\mathrm{tax}} &= \tau(h_k)\cdot|G_{\mathrm{lot}}|\cdot\mathbf 1[G^{\mathrm{YTD}}_t>0]\in\mathbb R_{\ge0}
-   &&\text{tax alpha}\\
+\mathrm{TaxValue} &= g_{\mathrm{tax}}(\mathrm{ledger}_t,h_k,\ell_k)\in\mathbb R_{\ge0}
+   &&\text{capacity-aware harvest value (§1.3)}\\
 \mathrm{DaysToYE} &\in\mathbb Z_{\ge0}
    &&\text{days to year-end}
 \end{aligned}
 $$
 
-where $H_t,L_t$ are the day-$t$ high/low and $\tau:\mathbb Z_{\ge0}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
-$\tau(h)=\tau_{\mathrm{ST}}\mathbf 1[h<365]+\tau_{\mathrm{LT}}\mathbf 1[h\ge365]$, with $\tau_{\mathrm{ST}}>\tau_{\mathrm{LT}}$.
+where $H_t,L_t$ are the day-$t$ high/low and
+$\tau:\mathbb Z_{\ge0}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
+$\tau(h)=\tau_{\mathrm{ST}}\mathbf 1[h<365]+\tau_{\mathrm{LT}}\mathbf 1[h\ge365]$, with
+$\tau_{\mathrm{ST}}=0.37>\tau_{\mathrm{LT}}=0.20$.
 
-### 1.3 Direct-sum decomposition
+## 1.3 The tax-value map $g_{\mathrm{tax}}$ (the v0.25 object)
+
+The TaxLedger (`Core/Portfolio/TaxLedger.cs`) is the deterministic Schedule D state
+$\mathrm{ledger}_t=(G^{\mathrm{net}}_t,\,C^{\mathrm{fwd}}_t)$ with the derived allowance
+$O_t=\max\{0,\ 3000-\max(0,-G^{\mathrm{net}}_t)\}$ and **offset capacity**
+
+$$
+\mathrm{cap}_t \;=\; \max\{G^{\mathrm{net}}_t,\,0\} \;+\; O_t \;\in\mathbb R_{\ge0}.
+$$
+
+For a lot whose loss in dollars is $D_k=\max\{0,\ (p_k-P_t)q_k\}$ (zero for a winner),
+
+$$
+\boxed{\;
+g_{\mathrm{tax}}(\mathrm{ledger}_t,h_k,\ell_k)
+=\underbrace{\tau(h_k)\cdot\min\{D_k,\ \mathrm{cap}_t\}}_{\text{usable this year, full rate}}
+\;+\;\underbrace{\tau_{\mathrm{fut}}\cdot\max\{D_k-\mathrm{cap}_t,\,0\}\cdot\delta}_{\text{banked, discounted}}
+\;}
+$$
+
+with $\tau_{\mathrm{fut}}=0.20$ and $\delta=0.5$. Economically: $\delta$ is a **hazard-rate
+object** — $\delta\approx\Pr(\text{loss absorbed by a gain before death})\times$ (time-value
+discount), not a flat rate; carryforward is extinguished at death (Rev. Rul. 74-175), so the
+marginal banked dollar is worth strictly less than face value.
+
+> **Legacy (v0.2).** The superseded coordinate was
+> $\alpha_{\mathrm{tax}}=\tau(h_k)\cdot|G_{\mathrm{lot}}|\cdot\mathbf 1[G^{\mathrm{YTD}}_t>0]$,
+> which had two defects: it applied no capacity $\min$, and it counted a *winner's* $|G|$ as
+> if it were a harvestable loss. Both are fixed above. Artifacts written before v0.25 carry
+> the old column and are not comparable coordinate-for-coordinate.
+
+## 1.4 Direct-sum decomposition
 
 The coordinates partition by *origin of state* into four blocks:
 
 $$
 \mathcal X \;=\; \underbrace{\mathcal X_{\mathrm{lot}}}_{\mathbb R^6}\ \oplus\
-\underbrace{\mathcal X_{\mathrm{port}}}_{\mathbb R^3}\ \oplus\
+\underbrace{\mathcal X_{\mathrm{port}}}_{\mathbb R^5}\ \oplus\
 \underbrace{\mathcal X_{\mathrm{asset}}}_{\mathbb R^4}\ \oplus\
 \underbrace{\mathcal X_{\mathrm{derived}}}_{\mathbb R^2},
-\qquad \dim\mathcal X = 6+3+4+2 = 15.
+\qquad \dim\mathcal X = 6+5+4+2 = 17.
 $$
 
 - $\mathcal X_{\mathrm{lot}}=(L,H,S,B,W,K)$ — intrinsic to the lot.
-- $\mathcal X_{\mathrm{port}}=(G^{\mathrm{YTD}}_t,\sigma_{\mathrm{TE}},\mathcal W^{A_i}_t)$ — shared portfolio state $\mathcal S_t$.
+- $\mathcal X_{\mathrm{port}}=(G^{\mathrm{net}}_t,C^{\mathrm{fwd}}_t,O_t,\sigma_{\mathrm{TE}},\mathcal W^{A_i}_t)$ — shared state $\mathcal S_t$, identical across every lot on day $t$.
 - $\mathcal X_{\mathrm{asset}}=(R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA}_{50},\Delta\mathrm{MA}_{200})$ — from the price series.
-- $\mathcal X_{\mathrm{derived}}=(\alpha_{\mathrm{tax}},\mathrm{DaysToYE})$ — composites.
+- $\mathcal X_{\mathrm{derived}}=(\mathrm{TaxValue},\mathrm{DaysToYE})$ — composites.
 
-The categorical field $z=\texttt{Sector}\in\mathcal Z$ is appended separately (§3.2).
+The categorical field $z=\texttt{Sector}\in\mathcal Z$ is appended separately (§3.3). One
+in-memory field, $q_k$ (`Shares`), is carried on the snapshot but **never exported** — the
+soft-label builders need it to re-dollarize $D_k$ along forward price paths (§2.4); it is not
+a feature.
 
-### 1.4 The observation pair
+## 1.5 The observation pair
 
-Each row of `lots.csv` is a point
+Each row of `lots.csv` is a point $(x_{k,t},\,y_{k,t})\in\mathcal X\times\mathcal Y$ where the
+label space is now a six-fold product (§2.5):
 
 $$
-\bigl(x_{k,t},\,y_{k,t}\bigr)\in\mathcal X\times\mathcal Y,\qquad
-\mathcal Y=\underbrace{\{0,1\}}_{Y_{\mathrm{Oracle}}}\times\underbrace{[0,1]}_{Y_{\mathrm{Soft\,BT}}}\times\underbrace{[0,1]}_{Y_{\mathrm{Soft\,GBM}}}.
+\mathcal Y=\underbrace{\{0,1\}}_{Y_{\mathrm{Oracle}}}\times\underbrace{[0,1]^2}_{Y_{\mathrm{Soft\,BT}},\,Y_{\mathrm{Soft\,GBM}}}\times\underbrace{\mathbb R_{\ge0}}_{Y_{\mathrm{TaxValue}}}\times\underbrace{\mathbb R}_{Y_{\mathrm{Utility}}}\times\underbrace{\{0,1\}}_{Y_{\mathrm{Oracle}}^{\mathrm{gatedSpec}}}.
 $$
 
-The **panel index** is $(i,t)$ with $i$ the lot/stock and $t$ the day; under the
-oracle, $Y_{i,t}$ is $\sigma(X_{i,t})$-measurable, so observations are treated as
-conditionally independent given features (the i.i.d.-conditional-on-$x$ assumption
-of `data_memo_theory.md` §2.2).
+The **panel index** is $(i,t)$ with $i$ the lot/stock and $t$ the day. Under the oracle,
+$Y_{i,t}$ is $\sigma(X_{i,t})$-measurable, so observations are treated as conditionally
+independent given features. **This assumption is known to be imperfect and is load-bearing
+only for the supervised stage**: offset capacity $\mathrm{cap}_t$ and the TE budget are
+*shared depletable resources*, which couples lot decisions within a day — the structural
+reason a policy (v0.4), not a per-row classifier, is the eventual object
+(`GYTD_Redesign_Plan.md` §8).
 
 ---
 
-## 2. The Targets: Oracle Boundary and the `soft_bt` Label
+# §2. The Targets: the Oracle and its Label Family
 
-### 2.1 The oracle map $f^*$
+## 2.1 The oracle map $f^*$ (scalarized, v0.25)
 
 `OracleBoundary.Label` realizes the deterministic measurable function
 
 $$
 f^*:\mathcal X\to\{0,1\},\qquad
-f^*(x)=\mathbf 1[\ell\le-\theta_1]\cdot\mathbf 1[\sigma_{\mathrm{TE}}\le\theta_2]\cdot\mathbf 1[G^{\mathrm{YTD}}_t>0]\cdot\mathbf 1[\mathcal W^{A_i}_t\ge\theta_3],
+f^*(x)=\underbrace{\mathbf 1[\ell\le-\theta_1]}_{\text{loss depth}}\cdot
+\underbrace{\mathbf 1[\mathcal W^{A_i}_t\ge\theta_3]}_{\text{IRS §1091}}\cdot
+\underbrace{\mathbf 1[\sigma_{\mathrm{TE}}\le\theta_{\max}]}_{\text{tail circuit breaker}}\cdot
+\underbrace{\mathbf 1[U(x)>0]}_{\text{net-benefit test}},
 $$
 
-with the project constants
-$\theta_1=0.02$, $\theta_2=0.05$, $\theta_3=30$ (`LossThreshold`,
-`TrackingErrorCap`, `WashSaleDays`). $f^*=\mathbf 1_\Omega$ is the indicator of the
-harvest region $\Omega=H_1\cap H_2\cap H_3\cap H_4$, an intersection of four
-halfspaces — a convex polytope in the relevant coordinates. The hard label is
+with the **scalarized objective**
+
+$$
+\boxed{\ U(x)\;=\;\mathrm{TaxValue}(x)\;-\;\lambda\,\sigma_{\mathrm{TE}}^2\;-\;c_{\mathrm{trade}}\ \in\mathbb R\ }
+$$
+
+and project constants $\theta_1=0.02$, $\theta_3=30$, $\theta_{\max}=0.15$,
+$\lambda=90{,}000$, $c_{\mathrm{trade}}=\$10$ (`OracleConfig`). Note $\mathrm{TaxValue}$
+already carries the rates $\tau(h),\tau_{\mathrm{fut}}$ internally (§1.3), so $U$ applies no
+further rate factor.
+
+**Geometry — the essential change.** The v0.2 oracle was an intersection of four halfspaces,
+$\Omega=H_1\cap H_2\cap H_3\cap H_4$: a convex **polytope**, whose corner no hyperplane can
+represent. The v0.25 oracle's decision boundary is the **level set**
+
+$$
+\partial\Omega=\{x\in\mathcal X:\ U(x)=0\}
+=\Bigl\{x:\ \mathrm{TaxValue}(x)=\lambda\sigma_{\mathrm{TE}}^2+c_{\mathrm{trade}}\Bigr\},
+$$
+
+a smooth (parabolic in $(\sigma_{\mathrm{TE}},\mathrm{TaxValue})$) hypersurface intersected
+with three halfspaces. **This is why the measured tree-over-linear advantage on the oracle
+target collapsed** from a 0.155 to a 0.015 PR-AUC gap after v0.25: much of it was the box
+corner, not irreducible problem structure (`GYTD_Redesign_Plan.md` §6.1).
+
+> **Legacy (v0.2), retained as the ablation arm.** Under `--oracle=gated`,
+> $f^*_{\mathrm{gated}}(x)=\mathbf 1[\ell\le-\theta_1]\cdot\mathbf 1[\sigma_{\mathrm{TE}}\le\theta_2]\cdot\mathbf 1[G^{\mathrm{YTD}}_t>0]\cdot\mathbf 1[\mathcal W\ge\theta_3]$
+> with $\theta_2=0.05$. Because the *acting* oracle changes the trajectory (which lots are
+> harvested → wash clocks → ledger → which rows exist), the two oracles are **separate
+> simulation runs**, not two label columns of one run.
+
+## 2.2 The hard label
 
 $$
 Y_{\mathrm{Oracle}}=f^*(x)\in\{0,1\}.
 $$
 
-### 2.2 The `soft_bt` label as a path functional
+Because $f^*$ is a deterministic function of the current-timestep features, it is *perfectly
+recoverable in principle* — which makes it the project's **leakage control**: any split
+scheme under which a model fails to rank it near-perfectly is a split scheme with a problem
+(§3.2, and `ValidationHardening_v026.md`).
 
-The soft backtest label upgrades the *pointwise* gate $f^*$ to a *forward-looking
-frequency*. Fix a snapshot lot at day $t_0$ with **frozen portfolio state**
+## 2.3 The `soft_bt` label as a path functional
+
+The soft backtest label upgrades the *pointwise* gate $f^*$ to a *forward-looking frequency*.
+Fix a snapshot lot at day $t_0$ with **frozen portfolio state**
 
 $$
-\bigl(G^{\mathrm{YTD}}_{t_0},\ \sigma_{\mathrm{TE}},\ \mathcal W_0:=\mathcal W^{A_i}_{t_0},\ p_k\bigr),
+\bigl(\mathrm{ledger}_{t_0}\ (\text{hence }\mathrm{cap}_{t_0}),\ \sigma_{\mathrm{TE}},\ \mathcal W_0:=\mathcal W^{A_i}_{t_0},\ p_k,\ q_k\bigr),
 $$
 
-(held constant — see `SoftLabelBuilder.ComputeBT`), and let
-$\{P_{t_0+s}\}_{s=1}^{W}$ be the **actual realized** closing prices over the forward
-window $W=30$ trading days. Only two things vary across the window: the price
-$P_{t_0+s}$ (hence the lot's unrealized return) and the wash-sale clock, which
-advances deterministically as $\mathcal W_0+s$.
+held constant (`SoftLabelBuilder.ComputeBT`), and let $\{P_{t_0+s}\}_{s=1}^{W}$ be the
+**actual realized** closing prices over the forward window $W=30$ trading days. Three things
+advance across the window: the price $P_{t_0+s}$, the wash-sale clock $\mathcal W_0+s$, and —
+new in v0.25 — the holding period $h_k+s$, so $\tau(h)$ can flip short→long *inside* the
+window.
 
-Define the per-step forward unrealized return and the per-step oracle firing:
+Define the per-step forward return, the re-dollarized loss, and the per-step firing:
 
 $$
 \ell_s := \frac{P_{t_0+s}-p_k}{p_k},\qquad
-b_s := f^*\!\Bigl(\ell_s,\ \sigma_{\mathrm{TE}},\ G^{\mathrm{YTD}}_{t_0},\ \mathcal W_0+s\Bigr)\in\{0,1\}.
+D_s := \max\{0,\ (p_k-P_{t_0+s})q_k\},
 $$
 
-Because $\sigma_{\mathrm{TE}}$ and $G^{\mathrm{YTD}}_{t_0}$ are frozen and (in the
-generating regime) satisfy the TE/gains gates, $b_s$ reduces to the conjunction of
-the *loss* gate and the *wash* gate evaluated along the realized path:
-
 $$
-b_s = \mathbf 1[\ell_s\le-\theta_1]\cdot\mathbf 1[\sigma_{\mathrm{TE}}\le\theta_2]\cdot\mathbf 1[G^{\mathrm{YTD}}_{t_0}>0]\cdot\mathbf 1[\mathcal W_0+s\ge\theta_3].
+b_s := f^*\!\Bigl(\ell_s,\ \sigma_{\mathrm{TE}},\ g_{\mathrm{tax}}(D_s,\,h_k+s,\,\mathrm{cap}_{t_0}),\ \mathcal W_0+s\Bigr)\in\{0,1\}.
 $$
 
 The label is the **time-average firing frequency** over the window:
 
 $$
-\boxed{\ \tilde y_{\mathrm{BT}}(x)\ :=\ \frac1W\sum_{s=1}^{W} b_s\ =\ \frac{\#\{s\in[1,W]: \text{oracle fires}\}}{W}\ \in\ \Bigl\{0,\tfrac1W,\tfrac2W,\dots,1\Bigr\}.\ }
+\boxed{\ \tilde y_{\mathrm{BT}}(x)\ :=\ \frac1W\sum_{s=1}^{W} b_s\ =\ \frac{\#\{s\in[1,W]: \text{oracle fires}\}}{W}\ \in\ \Bigl\{0,\tfrac1W,\dots,1\Bigr\}.\ }
 $$
 
-This is exactly `ComputeBT`: `oracleDays / Window` with `Window = 30`. When fewer
-than $W$ forward days remain ($t_0+W\ge t_{\max}$), the functional is undefined and
-the code returns `NaN`; those rows are dropped before modeling
-($\{v:\text{not }\mathrm{NaN}(\tilde y_{\mathrm{BT}})\}$, see every trainer's `SelectTarget`).
+This is exactly `ComputeBT`: `oracleDays / Window` with `Window = 30`. When fewer than $W$
+forward days remain ($t_0+W\ge t_{\max}$) the functional is undefined and the code returns
+`NaN`; those rows are dropped before modeling (every trainer's `SelectTarget`).
 
-**Type summary.**
-$\tilde y_{\mathrm{BT}}:\mathcal X\to[0,1]\cup\{\mathrm{NaN}\}$; each $b_s:\mathcal X\times\mathbb Z_{>0}\to\{0,1\}$; the window sum is a deterministic functional of the realized price path segment $(P_{t_0+1},\dots,P_{t_0+W})\in\mathbb R_{>0}^{W}$.
+**Type summary.** $\tilde y_{\mathrm{BT}}:\mathcal X\to[0,1]\cup\{\mathrm{NaN}\}$; each
+$b_s:\mathcal X\times\mathbb Z_{>0}\to\{0,1\}$; the window sum is a deterministic functional
+of the realized price segment $(P_{t_0+1},\dots,P_{t_0+W})\in\mathbb R_{>0}^{W}$.
 
-### 2.3 Interpretation: from boundary indicator to urgency field
+**Crucially, the oracle enters as a black box.** Swapping $f^*$'s internals (v0.2 AND →
+v0.25 gates·$\mathbf 1[U>0]$) required *zero* change to this functional — the payoff of
+`OracleBoundary` being stateless and referentially transparent.
 
-$\tilde y_{\mathrm{BT}}(x)$ estimates the **harvest urgency** — the fraction of the
-near future during which this lot *would* be harvestable. A lot deep in a
-persistent drawdown fires on most of the next 30 days ($\tilde y_{\mathrm{BT}}\to1$);
-a lot grazing the $-2\%$ threshold fires intermittently ($\tilde y_{\mathrm{BT}}$ small).
-In the language of `data_memo_theory.md` §10, $\tilde y_{\mathrm{BT}}$ is a sampled
-estimate of the interior posterior $\eta$, whose level sets
+## 2.4 Interpretation: from boundary indicator to urgency field
 
-$$
-\partial\Omega_{L_c}=\{x\in\mathcal X:\eta(x)=c\},\qquad c\in[0,1],
-$$
-
-are $(d-1)$-dimensional **contours of harvest urgency**. The hard oracle only sees
-$\partial\Omega_{1/2}$; the soft label exposes the whole graded field inside $\Omega$.
-
-### 2.4 The binary target derived from `soft_bt`
-
-The supervised trainers consume a *binary* target. For `target = "soft_bt"` the
-positive class is "fires at least once in the window":
+$\tilde y_{\mathrm{BT}}(x)$ estimates the **harvest urgency** — the fraction of the near
+future during which this lot *would* be harvestable. A lot deep in a persistent drawdown fires
+on most of the next 30 days ($\to1$); a lot grazing the threshold fires intermittently. It is
+a sampled estimate of the interior posterior $\eta$, whose level sets
 
 $$
-y := \mathbf 1[\tilde y_{\mathrm{BT}}(x)>0]\in\{0,1\},
+L_c=\{x\in\mathcal X:\eta(x)=c\},\qquad c\in[0,1],
 $$
 
-(every trainer's `SelectTarget`: `r.Y_Soft_BT > 0f`). For `target = "oracle"`,
-$y=\mathbf 1[Y_{\mathrm{Oracle}}=1]$. Thus the soft label is used here in its
-"any-fire" thresholded form; the raw continuous $\tilde y_{\mathrm{BT}}$ remains
-available for future regression/calibration work.
+are $(d-1)$-dimensional **contours of harvest urgency**. The hard oracle only exposes
+$\partial\Omega$; the soft label exposes the graded field inside it.
 
-### 2.5 (Companion) the GBM soft label
+Two *orthogonal* axes of softness now coexist and should not be conflated:
 
-For completeness, `Y_Soft_GBM` replaces the realized path with Monte-Carlo paths
-under geometric Brownian motion. The price process solves
+| Object | Axis | Question |
+|---|---|---|
+| $U(x)$ | **cross-sectional** | how valuable is this lot *right now*? |
+| $\tilde y_{\mathrm{BT}}(x)$ | **temporal** | how often would it clear the test over 30 days? |
+
+## 2.5 The full label family (v0.25)
+
+| Label | Type | Definition |
+|---|---|---|
+| $Y_{\mathrm{Oracle}}$ | $\{0,1\}$ | $f^*(x)$ — the acting oracle |
+| $Y_{\mathrm{Soft\,BT}}$ | $[0,1]\cup\{\mathrm{NaN}\}$ | §2.3, realized path |
+| $Y_{\mathrm{Soft\,GBM}}$ | $[0,1]$ | §2.6, simulated ensemble |
+| $Y_{\mathrm{TaxValue}}$ | $\mathbb R_{\ge0}$ | $=g_{\mathrm{tax}}(\mathrm{ledger}_t,h_k,\ell_k)$, the regression target |
+| $Y_{\mathrm{Utility}}$ | $\mathbb R$ | $=U(x)$, raw objective before thresholding |
+| $Y_{\mathrm{Oracle}}^{\mathrm{gatedSpec}}$ | $\{0,1\}$ | the v0.2 predicate evaluated as a **spectator** on this run's rows |
+
+Two disciplines attach to this table:
+
+1. **Leakage rule for $Y_{\mathrm{TaxValue}}$.** It equals the `TaxValue` *feature* by
+   construction, so any regression on it must exclude that feature — enforced by
+   `FeatureLists.NumericFeaturesTaxValueRegression` (16 features). The task is recovering
+   $g_{\mathrm{tax}}$ from raw state, not copying a column.
+2. **Spectator $\ne$ acting.** $Y^{\mathrm{gatedSpec}}$ records what the legacy oracle *would*
+   have said on a row, but the trajectory that produced that row was generated by the acting
+   oracle. It licenses same-row boundary-geometry comparison, **not** counterfactual
+   performance claims.
+
+The binary target consumed by the classification trainers is, for `target = "soft_bt"`,
+$y:=\mathbf 1[\tilde y_{\mathrm{BT}}(x)>0]$ ("fires at least once"), and for
+`target = "oracle"`, $y:=Y_{\mathrm{Oracle}}$.
+
+## 2.6 The GBM soft label
+
+`Y_Soft_GBM` replaces the realized path with Monte-Carlo paths under geometric Brownian
+motion. The price process solves
 
 $$
-dS_u=\mu S_u\,du+\sigma S_u\,dW_u,\qquad S_{t_0}=P_{t_0},\ W_u:\Omega_{\mathrm{prob}}\times[0,T]\to\mathbb R,\ dW_u\sim\mathcal N(0,du),
+dS_u=\mu S_u\,du+\sigma S_u\,dW_u,\qquad S_{t_0}=P_{t_0},\ dW_u\sim\mathcal N(0,du),
 $$
 
 discretized at $\Delta=1/252$ with the Itô-corrected log-Euler scheme
@@ -257,290 +403,458 @@ $$
 S_{s} = S_{s-1}\exp\!\Bigl((\mu-\tfrac12\sigma^2)\Delta + \sigma\sqrt\Delta\,Z_s\Bigr),\quad Z_s\overset{\mathrm{iid}}\sim\mathcal N(0,1),
 $$
 
-with $\mu=0$ (risk-neutral default `AnnualDrift`) and $\sigma$ the annualized
-trailing-21-day realized vol (`EstimateVol`: $\sigma=\widehat{\mathrm{std}}(r)\sqrt{252}$).
-The label is the **first-passage frequency** over $N_{\mathrm{paths}}=200$ paths,
+with $\mu=0$ (risk-neutral default) and $\sigma$ the annualized trailing-21-day realized vol
+($\sigma=\widehat{\mathrm{std}}(r)\sqrt{252}$, fallback $0.20$). The label is the
+**first-passage frequency** over $N_{\mathrm{paths}}=200$ paths,
 
 $$
 \tilde y_{\mathrm{GBM}}(x)=\frac1{N_{\mathrm{paths}}}\sum_{p=1}^{N_{\mathrm{paths}}}\mathbf 1\!\bigl[\exists\,s\in[1,W]:b_s^{(p)}=1\bigr]\ \in[0,1],
 $$
 
-an unbiased Monte-Carlo estimator of $\mathbb P(\exists s\le W:\text{oracle fires})$
-under the GBM measure (`FractionFiring`, which `break`s a path on first fire). The
-$Z_s$ are generated by Box–Muller, $Z=\sqrt{-2\ln U_1}\cos(2\pi U_2)$ with
-$U_1\sim\mathrm{Unif}(0,1],U_2\sim\mathrm{Unif}[0,1)$. The contrast with §2.2 is
-exactly *realized path* (one deterministic trajectory) vs. *simulated ensemble*
-(expectation over the price law).
+an unbiased Monte-Carlo estimator of $\mathbb P(\exists s\le W:\text{oracle fires})$ under the
+GBM measure (`FractionFiring` breaks a path on first fire — once harvested, later moves on
+that path are counterfactual). The $Z_s$ come from Box–Muller,
+$Z=\sqrt{-2\ln U_1}\cos(2\pi U_2)$. The contrast with §2.3 is exactly *realized path* (one
+trajectory) vs. *simulated ensemble* (expectation over the price law).
 
 ---
 
-## 3. Shared Train/Test Protocol and Preprocessing
+# §3. Train/Test Protocol and Preprocessing
 
-### 3.1 Protocol (identical across all supervised trainers)
+## 3.1 Protocol (identical across all supervised trainers)
 
 Given filtered rows $D=\{(x_i,y_i)\}_{i=1}^N$:
 
-1. **Stratified split** $D=D_{\mathrm{tr}}\sqcup D_{\mathrm{te}}$, test fraction $0.20$, seed $42$ (`StratifiedSplit.Split`). Same seed ⇒ *all models share the identical split*, which is what makes the champion-selection comparison valid.
-2. **Median imputation** fit on $D_{\mathrm{tr}}$ only (`MedianImputer.Fit`), applied to both folds — a training-fold-only invariant (leak-free).
-3. **Balanced class weights** computed on $D_{\mathrm{tr}}$ only:
+1. **Split** $D=D_{\mathrm{tr}}\sqcup D_{\mathrm{te}}$, test fraction $0.20$ — via the
+   `DataSplit` facade (§3.2), which dispatches on `SplitPolicy`. All models share the
+   identical split, which is what makes the champion comparison valid.
+2. **Median imputation** fit on $D_{\mathrm{tr}}$ only (`MedianImputer.Fit`), applied to both
+   folds — a training-fold-only invariant.
+3. **Balanced class weights** on $D_{\mathrm{tr}}$ only:
    $$w_c=\frac{N_{\mathrm{tr}}}{K\,n_c},\quad c\in\{0,1\},\ K=2,$$
-   with $n_c=\#\{i\in D_{\mathrm{tr}}:y_i=c\}$ (`ClassWeights.AttachBalancedWeights`). This is the ML.NET analogue of sklearn's `class_weight='balanced'`.
-4. **5-fold stratified CV** over a finite hyperparameter grid, on $D_{\mathrm{tr}}$ only (`StratifiedKFold` + `GridSearchCV`), scored by **PR-AUC** (average precision).
+   the ML.NET analogue of sklearn's `class_weight='balanced'`.
+4. **5-fold CV** over a finite hyperparameter grid, on $D_{\mathrm{tr}}$ only, scored by
+   **PR-AUC**.
 5. **Refit** on all of $D_{\mathrm{tr}}$ with the CV-best hyperparameters.
-6. **Evaluate once** on $D_{\mathrm{te}}$ — but only for the champion model(s) (rubric: best 1–2 touch the test set).
+6. **Evaluate once** on $D_{\mathrm{te}}$ — only for the champion model(s).
 
-### 3.2 The preprocessing map $\phi$
+## 3.2 Two partition schemes (v0.26)
+
+$$
+\text{SplitPolicy}\in\{\textsf{StratifiedRandom},\ \textsf{TemporalPurged}\}.
+$$
+
+**Stratified random** (legacy default) shuffles within each class, so $D_{\mathrm{te}}$ is a
+random 20% of *all* years and inherits the full-sample prevalence exactly.
+
+**Temporal purged** splits chronologically on $\texttt{Timestep}$ at a row-mass boundary
+$T^\star$, and *purges* an embargo band of width $E$:
+
+$$
+D_{\mathrm{te}}=\{i: t_i\ge T^\star\},\qquad
+D_{\mathrm{tr}}=\{i: t_i\le T^\star-E-1\},\qquad E\ge W=30 .
+$$
+
+The condition $E\ge W$ is the point: a training row at $t\le T^\star-E-1$ has its entire label
+window $(t,t+W]$ ending strictly before $T^\star$, so **no training label can see the test
+period**. Without it, the 30-day forward windows of rows adjacent to the boundary overlap the
+test set. `PurgedFolds` applies the same purge on *both* sides of each interior CV block.
+
+**The measured consequence (v0.26).** ROC-AUC held or rose under the temporal scheme while
+PR-AUC fell sharply. Since ROC-AUC is prevalence-insensitive and the deterministic oracle
+target stayed at $\approx1.0$ across all schemes, **ranking leakage is ruled out**; the PR-AUC
+move is the prevalence collapse of the aged-out tail (§5.2). Standing rule: report ROC-AUC,
+PR-AUC, *and* test-period positive rate together.
+
+## 3.3 The preprocessing map $\phi$
 
 `PreprocessingPipeline.Build` realizes
 
 $$
-\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{15}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=15+m,
+\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{17}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=17+m,
 $$
 
-where $\mathrm{Norm}$ is mean–variance standardization
-$\mathrm{Norm}(x)_j=(x_j-\mu_j)/\sigma_j$ with $(\mu_j,\sigma_j)$ estimated on the
-training fold, and $m=|\mathcal Z_{\mathrm{tr}}|$ is the sector vocabulary learned on
-the training fold. For tree models $\mathrm{Norm}$ is order-preserving per
-coordinate, hence a no-op for split selection (kept only for schema consistency).
-
-All model objectives below are functions of $\phi_i:=\phi(x_i,z_i)$.
+where $\mathrm{Norm}(x)_j=(x_j-\mu_j)/\sigma_j$ with $(\mu_j,\sigma_j)$ estimated on the
+training fold, and $m=|\mathcal Z_{\mathrm{tr}}|$ is the sector vocabulary learned on the
+training fold. For tree models $\mathrm{Norm}$ is order-preserving per coordinate, hence a
+no-op for split selection (kept for schema consistency). All objectives below are functions of
+$\phi_i:=\phi(x_i,z_i)$.
 
 ---
 
-## 4. Supervised Models
+# §4. Supervised Models
 
-For each, "$\sum_{i}$" abbreviates $\sum_{i\in D_{\mathrm{tr}}}$ and $w_{y_i}$ is the balanced weight of example $i$'s class.
+"$\sum_i$" abbreviates $\sum_{i\in D_{\mathrm{tr}}}$; $w_{y_i}$ is the balanced weight of
+example $i$'s class.
 
-### 4.1 Logistic regression — `LbfgsLogisticRegression` / `LogisticTrainer`
+## 4.1 Logistic regression — `LbfgsLogisticRegression`
 
-Hypothesis: a calibrated linear-logit posterior
-$\hat\eta:\mathbb R^d\to(0,1)$,
+Hypothesis: a calibrated linear-logit posterior $\hat\eta:\mathbb R^d\to(0,1)$,
 
 $$
 \hat\eta(\phi)=\sigma(w^\top\phi+b)=\bigl(1+e^{-(w^\top\phi+b)}\bigr)^{-1},\qquad w\in\mathbb R^d,\ b\in\mathbb R.
 $$
 
-Weighted regularized cross-entropy (negative log-likelihood) objective:
+Weighted regularized cross-entropy:
 
 $$
 \min_{w,b}\ \sum_i w_{y_i}\Bigl[-y_i\log\hat\eta(\phi_i)-(1-y_i)\log\bigl(1-\hat\eta(\phi_i)\bigr)\Bigr]+\lambda\lVert w\rVert_2^2,
 $$
 
-with $\lambda=1/C$ and $C\in\{0.01,0.1,1,10\}$ selected by CV. The gradient
+with $\lambda=1/C$, $C\in\{0.01,0.1,1,10\}$ by CV. The gradient
 $\nabla_w=\sum_i w_{y_i}(\hat\eta(\phi_i)-y_i)\phi_i+2\lambda w$ vanishes at the optimum;
-L-BFGS solves it. Coefficients are recovered by walking
-$\textsf{CalibratedModelParametersBase}\to\textsf{LinearBinaryModelParameters}$
-(`ExtractCoefficients`/`FindLinearPredictor`).
+L-BFGS solves it.
 
-### 4.2 Elastic-net logistic — `SdcaLogisticRegression` / `ElasticNetTrainer`
+## 4.2 Elastic-net logistic — `SdcaLogisticRegression`
 
-Same logistic hypothesis, but the penalty is the elastic net
-$\lambda_1\lVert w\rVert_1+\lambda_2\lVert w\rVert_2^2$:
+Same hypothesis, elastic-net penalty:
 
 $$
 \min_{w,b}\ \sum_i w_{y_i}\,\ell_{\log}\!\bigl(y_i,\ w^\top\phi_i+b\bigr)+\lambda_1\lVert w\rVert_1+\lambda_2\lVert w\rVert_2^2,
 \qquad \ell_{\log}(y,z)=\log\!\bigl(1+e^{z}\bigr)-yz,
 $$
 
-solved by stochastic dual coordinate ascent (SDCA). Grid:
-$\lambda_1\in\{0.001,0.01,0.1\}$, $\lambda_2\in\{0.001,0.01,0.1\}$ (9 configs). The
-$\ell_1$ term induces **sparsity** (feature selection by zeroing weights), the
-$\ell_2$ term **shrinkage**. Semantic map to sklearn
-`LogisticRegression(penalty='elasticnet', l1_ratio=\rho, C=c)`:
-$\lambda_1=\rho/c$, $\lambda_2=(1-\rho)/(2c)$ (see `MLNetSemanticReconciliation.md` §5).
-Same coefficient-extraction walk as §4.1 (SDCA yields the same calibrated linear
-base type).
+by stochastic dual coordinate ascent. Grid $\lambda_1,\lambda_2\in\{0.001,0.01,0.1\}$ (9
+configs). The $\ell_1$ term induces sparsity, the $\ell_2$ term shrinkage. sklearn map:
+$\lambda_1=\rho/c$, $\lambda_2=(1-\rho)/(2c)$ — see `MLNetLayer.md`.
 
-### 4.3 Gradient-boosted trees — `FastTree` / `GradientBoostedTreesTrainer`
+## 4.3 Gradient-boosted trees — `FastTree`
 
-A boosted additive ensemble of regression trees fit to the **functional gradient**
-of logistic loss. Let $F_0\equiv\mathrm{logit}(\bar y)$ and iterate for $m=1,\dots,M$:
+A boosted additive ensemble fit to the **functional gradient** of logistic loss. With
+$F_0\equiv\mathrm{logit}(\bar y)$, iterate for $m=1,\dots,M$:
 
 $$
 F_m(\phi)=F_{m-1}(\phi)+\nu\,f_m(\phi),\qquad
 f_m=\arg\min_{f\in\mathcal T_J}\sum_i w_{y_i}\bigl(r_{i}^{(m)}-f(\phi_i)\bigr)^2,
 $$
 
-where $\mathcal T_J$ is the class of regression trees with $J$ leaves, $\nu$ the
-learning rate (shrinkage), and the pseudo-residual is the negative gradient of the
-logistic loss in score space,
+where $\mathcal T_J$ is the class of $J$-leaf regression trees, $\nu$ the learning rate, and
 
 $$
 r_i^{(m)}=-\frac{\partial \ell_{\log}(y_i,F)}{\partial F}\Big|_{F=F_{m-1}(\phi_i)}=y_i-\sigma\!\bigl(F_{m-1}(\phi_i)\bigr).
 $$
 
-The final score $F_M(\phi)\in\mathbb R$ is mapped to a probability by Platt
-calibration $\hat\eta(\phi)=\sigma(aF_M(\phi)+b)$. Grid (8 configs):
-$M=\texttt{numberOfTrees}\in\{100,200\}$,
-$\nu=\texttt{learningRate}\in\{0.10,0.05\}$,
-$J=\texttt{numberOfLeaves}\in\{20,31\}$. sklearn map:
-$M\!\equiv\!\texttt{n\_estimators}$, $\nu\!\equiv\!\texttt{learning\_rate}$,
-$J\!\equiv\!\texttt{max\_leaf\_nodes}$.
+Final score $F_M(\phi)\in\mathbb R$ is Platt-calibrated,
+$\hat\eta(\phi)=\sigma(aF_M(\phi)+b)$. Grid (8 configs): $M\in\{100,200\}$,
+$\nu\in\{0.10,0.05\}$, $J\in\{20,31\}$.
 
-### 4.4 Random forest — `FastForest` / `RandomForestTrainer`
+## 4.4 Random forest — `FastForest`
 
-A **bagged** ensemble — averaging, not boosting. Draw $T$ bootstrap resamples
-$D^{(t)}$ of $D_{\mathrm{tr}}$; on each, grow a tree $f_t$ choosing each split from a
-random feature subset of fraction $\kappa=\texttt{FeatureFraction}=0.7$. The score
-is the ensemble average
+A **bagged** ensemble. Draw $T$ bootstrap resamples; on each grow a tree choosing each split
+from a random feature subset of fraction $\kappa$. The score is the average
 
 $$
 F(\phi)=\frac1T\sum_{t=1}^{T}f_t(\phi)\in[0,1],
 $$
 
-interpreted directly as a probability proxy (FastForest is **uncalibrated** — it
-emits `Score` but no `Probability` column, which is why `BinaryMetrics.Compute`
-falls back to `Score`). Variance reduction comes from decorrelation: with per-tree
-variance $\varsigma^2$ and pairwise correlation $\rho$,
-$\mathrm{Var}(F)=\rho\varsigma^2+\frac{1-\rho}{T}\varsigma^2$, and feature
-subsampling lowers $\rho$. Grid (4 configs):
-$T\in\{100,200\}$, $J\in\{20,31\}$. The random feature subsampling
-$\kappa$ is ML.NET's analogue of sklearn's `max_features` (default $\approx\sqrt p/p$).
-
-### 4.5 Linear regression on a binary target — `Sdca` regression / `LinearRegressionTrainer` (deliberate poor fit)
-
-Hypothesis: an **unbounded** affine map (no sigmoid),
+used directly as a probability proxy (FastForest is **uncalibrated** — it emits `Score` but no
+`Probability`, which is why `BinaryMetrics.Compute` falls back to `Score`). Variance reduction
+is decorrelation: with per-tree variance $\varsigma^2$ and pairwise correlation $\rho$,
 
 $$
-\hat y:\mathbb R^d\to\mathbb R,\qquad \hat y(\phi)=w^\top\phi+b,
+\mathrm{Var}(F)=\rho\varsigma^2+\frac{1-\rho}{T}\varsigma^2,
 $$
 
-trained against the float label $\tilde Y\in\{0,1\}$ (`FloatLabel`) under
-$\ell_2$-regularized squared error:
+and feature subsampling lowers $\rho$. Grid: $T\in\{100,200\}$, $J\in\{20,31\}$,
+$\kappa\in\{0.3,0.5,0.7\}$ — $\kappa$ is ML.NET's analogue of sklearn's `max_features` and the
+single most important RF knob.
+
+## 4.5 Linear regression on a binary target — deliberate poor fit
+
+Hypothesis: an **unbounded** affine map (no sigmoid), $\hat y(\phi)=w^\top\phi+b$, trained
+against the float label under $\ell_2$-regularized squared error:
 
 $$
 \min_{w,b}\ \sum_i w_{y_i}\bigl(\tilde Y_i-w^\top\phi_i-b\bigr)^2+\lambda\lVert w\rVert_2^2,\qquad \lambda\in\{10^{-4},10^{-3},10^{-2}\}.
 $$
 
-**Why this is structurally misspecified as a probabilistic classifier.** The target
-of the pipeline is the calibrated posterior $\eta:\mathcal X\to[0,1]$. OLS fits a
-hyperplane to $\{0,1\}$ outcomes, so its image is all of $\mathbb R$, not $[0,1]$:
-predictions escape the unit interval and cannot be read as probabilities. The
-diagnostic reported is the escape fraction
+**Why this is structurally misspecified.** The pipeline's target is the calibrated posterior
+$\eta:\mathcal X\to[0,1]$. OLS fits a hyperplane to $\{0,1\}$ outcomes, so its image is all of
+$\mathbb R$: predictions escape the unit interval and cannot be read as probabilities. The
+diagnostic is the escape fraction
 
 $$
-\mathrm{FractionOutsideUnit}=\frac1{|D_{\mathrm{te}}|}\sum_{i\in D_{\mathrm{te}}}\mathbf 1\bigl[\hat y(\phi_i)<0\ \lor\ \hat y(\phi_i)>1\bigr]\in[0,1],
+\mathrm{FractionOutsideUnit}=\frac1{|D_{\mathrm{te}}|}\sum_{i\in D_{\mathrm{te}}}\mathbf 1\bigl[\hat y(\phi_i)<0\ \lor\ \hat y(\phi_i)>1\bigr],
 $$
 
-(empirically $\approx25\%$). Further, Gauss–Markov optimality requires homoskedastic
-errors, but a Bernoulli outcome has $\mathrm{Var}(Y\mid x)=\eta(x)(1-\eta(x))$ —
-intrinsically heteroskedastic — so OLS standard errors are invalid and the fit is
-not BLUE for this DGP. To still produce ROC/PR numbers, the raw score is used as a
-probability *proxy* ($\hat\eta:=\hat y$, clipping implied by the metric sweep); this
-is precisely the abuse the `FractionOutsideUnit` statistic quantifies. Geometrically
-(per `data_memo_theory.md` §3–4): the oracle is a level-curve boundary $\partial\Omega$
-and the calibrated models learn a smooth field on $\Omega^\circ$ bounded in $[0,1]$;
-an unbounded hyperplane has neither the boundedness nor the level-set geometry, so it
-is the sharpest principled negative control.
+empirically $\approx24\%$. Further, Gauss–Markov optimality requires homoskedastic errors, but
+a Bernoulli outcome has $\mathrm{Var}(Y\mid x)=\eta(x)(1-\eta(x))$ — intrinsically
+heteroskedastic — so OLS is not BLUE for this DGP. It is retained as the sharpest principled
+**negative control**: a model with neither the $[0,1]$ codomain nor level-set geometry.
+
+## 4.6 Tax-value regression (v0.25) — the regression analogue
+
+`TaxValueRegressionPipeline` regresses the continuous $Y_{\mathrm{TaxValue}}$ on the
+16-feature set (excluding `TaxValue` itself, §2.5):
+
+$$
+\min_{\theta}\ \sum_i\bigl(Y^{\mathrm{TaxValue}}_i-\hat g_\theta(\phi_i)\bigr)^2,
+$$
+
+for $\hat g_\theta\in\{\text{SDCA linear},\ \text{FastTree}\}$. The target is
+**zero-inflated** ($\approx98\%$ of rows have no harvestable loss), so alongside
+RMSE/MAE/$R^2$ the artifact reports RMSE on the $\{Y^{\mathrm{TaxValue}}>0\}$ subset, where
+the structure lives.
+
+**Why it is a clean experiment.** $g_{\mathrm{tax}}$ (§1.3) is a $\min$/$\max$-kinked function
+with a discrete rate jump at $h=365$ — exactly what a hyperplane cannot represent and
+axis-aligned splits can. Measured: $R^2\approx0.10$ (linear) vs $\approx0.92$ (trees). This is
+the regression mirror of the classification story, and the fitted $\hat g$ is a warm-start
+candidate for the v0.4 value function.
 
 ---
 
-## 5. Evaluation Functionals (`BinaryMetrics`)
+# §5. Evaluation Functionals
 
-Given scored test rows $\{(y_i,\hat\eta_i)\}$ sorted by $\hat\eta$ descending,
-with $n_+=\#\{y_i=1\}$, $n_-=\#\{y_i=0\}$, sweep the threshold and accumulate
-$\mathrm{TP}(\tau),\mathrm{FP}(\tau)$. Define
+## 5.1 Definitions
+
+Given scored test rows $\{(y_i,\hat\eta_i)\}$ sorted by $\hat\eta$ descending, with
+$n_+=\#\{y_i=1\}$, $n_-=\#\{y_i=0\}$, sweep the threshold and accumulate
+$\mathrm{TP}(\tau),\mathrm{FP}(\tau)$:
 
 $$
-\mathrm{TPR}(\tau)=\frac{\mathrm{TP}(\tau)}{n_+},\quad
-\mathrm{FPR}(\tau)=\frac{\mathrm{FP}(\tau)}{n_-},\quad
-\mathrm{Prec}(\tau)=\frac{\mathrm{TP}(\tau)}{\mathrm{TP}(\tau)+\mathrm{FP}(\tau)},\quad
+\mathrm{TPR}(\tau)=\frac{\mathrm{TP}}{n_+},\quad
+\mathrm{FPR}(\tau)=\frac{\mathrm{FP}}{n_-},\quad
+\mathrm{Prec}(\tau)=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}},\quad
 \mathrm{Rec}(\tau)=\mathrm{TPR}(\tau).
 $$
 
-ROC-AUC is the trapezoidal integral $\int_0^1\mathrm{TPR}\,d(\mathrm{FPR})$; PR-AUC
-is the average-precision step integral $\sum_k(\mathrm{Rec}_k-\mathrm{Rec}_{k-1})\mathrm{Prec}_k$.
-The $F_1$ at threshold $\tau$ is the harmonic mean
-$F_1=2\,\mathrm{Prec}\cdot\mathrm{Rec}/(\mathrm{Prec}+\mathrm{Rec})$, reported at
-$\tau=0.5$ and at the $F_1$-maximizing $\tau^\*$. **PR-AUC is the CV selection
-criterion** because the positive class (harvest events) is rare — precision/recall
-geometry is the relevant operating regime, and PR-AUC is sensitive to it where
-ROC-AUC is optimistic under imbalance.
+ROC-AUC is $\int_0^1\mathrm{TPR}\,d(\mathrm{FPR})$; PR-AUC is the average-precision step
+integral $\sum_k(\mathrm{Rec}_k-\mathrm{Rec}_{k-1})\mathrm{Prec}_k$; $F_1$ is the harmonic
+mean of precision and recall, reported at $\tau=0.5$ and at the maximizing $\tau^\star$.
+
+## 5.2 The prevalence asymmetry — why both AUCs are reported
+
+The two AUCs have **different no-skill baselines**, and confusing them is the single easiest
+misreading of this project's numbers:
+
+$$
+\mathrm{ROC\text{-}AUC}_{\text{no-skill}}=\tfrac12\quad\text{(prevalence-invariant)},
+\qquad
+\mathrm{PR\text{-}AUC}_{\text{no-skill}}=p:=\frac{n_+}{n_++n_-}\quad\text{(prevalence-bounded)}.
+$$
+
+A no-skill classifier has $\mathrm{Prec}(\tau)\equiv p$ at every recall, so its PR curve is the
+horizontal line $y=p$ and its area is $p$. Hence **the "0.5 = random" rule is ROC-only**; a
+PR-AUC of $0.46$ at $p=0.0022$ is $\approx209\times$ no-skill, not "barely better than
+chance." They coincide only on balanced data ($p=\tfrac12$).
+
+A second-order consequence matters for model comparison: PR-AUC's prevalence sensitivity is
+**largest for imperfect rankers**. A perfect ranker has $\mathrm{Prec}\equiv1$ up to the last
+positive, so its PR-AUC $\approx1$ at *any* $p$. This is why, under the temporal scheme, the
+deterministic oracle target barely moved while the stochastic soft target fell sharply — the
+same prevalence crash, filtered through different ranking quality.
+
+**PR-AUC remains the CV selection criterion** (the positive class is rare and precision/recall
+geometry is the operating regime), but per the v0.26 standing rule, ROC-AUC and the
+test-period prevalence are reported alongside it — never PR-AUC alone.
 
 ---
 
-## 6. Unsupervised Models
+# §6. Unsupervised Models
 
-### 6.1 PCA — `PcaPipeline`
+## 6.1 PCA
 
-On the standardized numeric training matrix $X\in\mathbb R^{n\times15}$ (columns
-zero-mean, unit-variance), form the sample covariance and eigendecompose:
-
-$$
-C=\frac1{n-1}X^\top X\in\mathbb R^{15\times15},\qquad C u_j=\lambda_j u_j,\ \ \lambda_1\ge\dots\ge\lambda_{15}\ge0,\ u_j\in\mathbb R^{15}.
-$$
-
-The explained-variance ratio is $\rho_j=\lambda_j/\sum_k\lambda_k$, and the retained
-dimension is the smallest $r$ with cumulative coverage past the threshold,
+On the standardized numeric training matrix $X\in\mathbb R^{n\times17}$ (columns zero-mean,
+unit-variance), form the sample covariance and eigendecompose:
 
 $$
-r=\min\Bigl\{r':\sum_{j=1}^{r'}\rho_j\ge0.95\Bigr\},
+C=\frac1{n-1}X^\top X\in\mathbb R^{17\times17},\qquad C u_j=\lambda_j u_j,\ \ \lambda_1\ge\dots\ge\lambda_{17}\ge0.
 $$
 
-projecting $x\mapsto U_r^\top x\in\mathbb R^r$ with $U_r=[u_1\cdots u_r]$. The low-rank
-structure is justified by the factor model $\Sigma=B\Sigma_F B^\top+D$ of
-`data_memo_theory.md` §6 — a spectral gap after the leading factors.
+The explained-variance ratio is $\rho_j=\lambda_j/\sum_k\lambda_k$ and the retained dimension
+is the smallest $r$ with cumulative coverage past threshold,
+$r=\min\{r':\sum_{j\le r'}\rho_j\ge0.95\}$, projecting $x\mapsto U_r^\top x$. Low-rank
+structure is justified by the factor model $\Sigma=B\Sigma_F B^\top+D$
+(`data_memo_theory.md` §6). Note that near-constant coordinates (e.g. `K`, and
+`LossCarryforward` in a gated-arm run where it never accumulates) contribute
+near-zero eigenvalues by construction.
 
-### 6.2 K-means — `KMeansPipeline`
+## 6.2 K-means
 
-Aggregate, per symbol $s$, the four asset-level features across time into
-$g_s\in\mathbb R^4$ (then standardize), and solve the within-cluster sum-of-squares
-problem
+Aggregate, per symbol $s$, the four asset-level features across time into $g_s\in\mathbb R^4$
+(then standardize) and solve the within-cluster sum-of-squares problem
 
 $$
-\min_{\{\mu_c\}_{c=1}^k,\ \{a_s\}}\ \sum_s\lVert g_s-\mu_{a_s}\rVert_2^2,\qquad a_s\in\{1,\dots,k\},\ \mu_c\in\mathbb R^4,
+\min_{\{\mu_c\}_{c=1}^k,\ \{a_s\}}\ \sum_s\lVert g_s-\mu_{a_s}\rVert_2^2,
 $$
 
-by Lloyd's alternating algorithm (assign $a_s=\arg\min_c\lVert g_s-\mu_c\rVert$;
-update $\mu_c=\mathrm{mean}\{g_s:a_s=c\}$). The cluster count is chosen by maximum
-average silhouette over $k\in\{5,10,15,20,25\}$, where the silhouette of point $s$ is
-$\mathrm{sil}(s)=\frac{b(s)-a(s)}{\max\{a(s),b(s)\}}\in[-1,1]$ with $a(s)$ the mean
-intra-cluster distance and $b(s)$ the mean distance to the nearest other cluster.
+by Lloyd's alternating algorithm. The cluster count is chosen by maximum average silhouette
+over $k\in\{5,10,15,20,25\}$, where
+$\mathrm{sil}(s)=\frac{b(s)-a(s)}{\max\{a(s),b(s)\}}\in[-1,1]$.
 
 ---
 
-## 7. Champion Selection (test-set discipline)
+# §7. Champion Selection (test-set discipline)
 
-All models are CV-scored by mean PR-AUC on $D_{\mathrm{tr}}$ and ranked on a single
-leaderboard. Let $\widehat{\mathrm{PRAUC}}_{\mathrm{CV}}(\mathcal M)$ be model
-$\mathcal M$'s mean fold PR-AUC. The champion set is the top one or two classifiers,
+All models are CV-scored by mean PR-AUC on $D_{\mathrm{tr}}$ and ranked on one leaderboard.
+The champion set is the top two classifiers,
 
 $$
 \mathcal M^\star=\operatorname*{top-2}_{\mathcal M}\ \widehat{\mathrm{PRAUC}}_{\mathrm{CV}}(\mathcal M),
 $$
 
-and **only** $\mathcal M^\star$ (plus the deliberate poor-fit demonstrator) is refit
-and evaluated on $D_{\mathrm{te}}$. The test set is thus touched exactly once, by the
-champion only — satisfying the rubric constraint and preventing test-set
-adaptation. Because the seed-42 split is shared, the leaderboard comparison and the
-champion's test estimate are on the same partition of the data.
+and **only** $\mathcal M^\star$ (plus the deliberate poor-fit demonstrator) is refit and
+evaluated on $D_{\mathrm{te}}$. The test set is touched exactly once, by the champion only.
+This is enforced by *code shape* — the function that touches test data is only reachable for
+champions — not by convention. Because the split is shared, the leaderboard comparison and
+the champion's test estimate are on the same partition.
 
 ---
 
-## 8. The Chain of Approximations (summary)
+# §8. The Chain of Approximations
 
 $$
 f^*_{\mathrm{true}}\ \xrightarrow{\ \text{myopic}\ }\ f^*_{\mathrm{oracle}}\ \xrightarrow{\ \text{forward window}\ }\ \tilde y_{\mathrm{BT}}\ \xrightarrow{\ \text{ERM over }\mathcal H\ }\ \hat\eta.
 $$
 
-The mechanistic oracle $f^*$ fixes the boundary $\partial\Omega$ (Source 1 of
-tax-alpha — irreducible by any classifier). The soft label $\tilde y_{\mathrm{BT}}$
-samples the interior urgency field, and the supervised models learn $\hat\eta$ — a
-smooth $[0,1]$-valued estimate of $\eta$ whose level sets $L_c$ prioritize *which*
-in-region lots to harvest *first* (Source 2 — closeable, and the project's empirical
-contribution). The linear-regression comparator exists precisely to show that a
-model without the $[0,1]$ codomain and level-set geometry cannot represent this
-field at all.
+The mechanistic oracle $f^*$ fixes the boundary $\partial\Omega$ (Source 1 of tax alpha —
+irreducible by any classifier). The soft label samples the interior urgency field, and the
+supervised models learn $\hat\eta$, whose level sets prioritize *which* in-region lots to
+harvest *first* (Source 2 — closeable, the project's empirical contribution).
+
+**Where each arrow is known to be lossy**, and what closes it:
+
+| Arrow | Loss | Closed by |
+|---|---|---|
+| true $\to$ oracle | myopia: one-step $U$, no sequential value | v0.4 policy layer (reward $=\sum_t\gamma^tU$) |
+| oracle $\to$ soft | frozen portfolio state over the window | endogenous state in the v0.4 environment |
+| soft $\to$ $\hat\eta$ | ERM error, finite $\mathcal H$ | model capacity — measured, and small for trees |
+
+The conditional-independence assumption of §1.5 is the arrow that *cannot* be closed
+supervised: shared depletable resources couple lots within a day, which is the structural
+argument for a policy object rather than a per-row classifier.
+
+---
+
+# Appendix A. Standing Definitions (every symbol pinned)
+
+*This appendix is the maximally explicit layer: one object per display, type stated at the
+point of use. It restates §0–§3 for a reader who wants no inference.*
+
+The feature space is
+
+$$
+\mathcal X\subset\mathbb R^{17}.
+$$
+
+A feature vector is
+
+$$
+x\in\mathcal X,\qquad x=\langle x_1,\dots,x_{17}\rangle.
+$$
+
+A lot-indexed observation at lot $k$ and day $t$ is
+
+$$
+x_{k,t}\in\mathcal X.
+$$
+
+The binary label space is
+
+$$
+\mathcal Y=\{0,1\}.
+$$
+
+A dataset of $N$ examples is
+
+$$
+D=\{(x_i,y_i)\}_{i=1}^{N},\qquad x_i\in\mathcal X,\qquad y_i\in\{0,1\}.
+$$
+
+The ideal posterior function is
+
+$$
+\eta(x)=\mathbb P(Y=1\mid X=x),\qquad \eta:\mathcal X\to[0,1].
+$$
+
+The supervised learning goal is to learn an estimate
+
+$$
+\hat\eta:\mathcal X\to[0,1],
+$$
+
+interpreted as the model's estimated probability that lot $x$ should be harvested.
+
+The oracle is a deterministic measurable map
+
+$$
+f^*:\mathcal X\to\{0,1\}.
+$$
+
+The scalarized objective is
+
+$$
+U:\mathcal X\to\mathbb R.
+$$
+
+The tax-value map is
+
+$$
+g_{\mathrm{tax}}:\ \mathcal L\times\mathbb Z_{\ge0}\times\mathbb R\ \to\ \mathbb R_{\ge0},
+$$
+
+where $\mathcal L$ is the space of ledger states
+$\mathrm{ledger}_t=(G^{\mathrm{net}}_t,C^{\mathrm{fwd}}_t)\in\mathbb R\times\mathbb R_{\ge0}$.
+
+The offset capacity is
+
+$$
+\mathrm{cap}:\ \mathcal L\to\mathbb R_{\ge0}.
+$$
+
+The preprocessing map is
+
+$$
+\phi:\ \mathcal X\times\mathcal Z\ \to\ \mathbb R^{d},\qquad d=17+m .
+$$
+
+The backtest soft label is
+
+$$
+\tilde y_{\mathrm{BT}}:\ \mathcal X\to[0,1]\cup\{\mathrm{NaN}\}.
+$$
+
+The GBM soft label is
+
+$$
+\tilde y_{\mathrm{GBM}}:\ \mathcal X\to[0,1].
+$$
+
+The indicator is $\mathbf 1[\,\cdot\,]:\{\text{prop}\}\to\{0,1\}$ and the logistic sigmoid is
+$\sigma:\mathbb R\to(0,1)$, $\sigma(z)=(1+e^{-z})^{-1}$.
+
+### A.1 Constant table (current values)
+
+| Symbol | Value | Source |
+|---|---|---|
+| $\theta_1$ loss threshold | $0.02$ | `OracleConfig.LossThreshold` |
+| $\theta_3$ wash window | $30$ days | `OracleConfig.WashSaleDays` (IRS §1091) |
+| $\theta_{\max}$ TE ceiling | $0.15$ | `OracleConfig.TrackingErrorCeiling` |
+| $\lambda$ TE price | $90{,}000$ | `OracleConfig.Lambda` |
+| $c_{\mathrm{trade}}$ | $\$10$ | `OracleConfig.CTrade` |
+| $\tau_{\mathrm{ST}}$ | $0.37$ | `TaxLedger.TauShortTerm` |
+| $\tau_{\mathrm{LT}}$ | $0.20$ | `TaxLedger.TauLongTerm` |
+| $\tau_{\mathrm{fut}}$ | $0.20$ | `TaxLedger.TauFuture` |
+| $\delta$ carryforward discount | $0.5$ | `TaxLedger.CarryforwardDiscount` |
+| ordinary offset cap | $\$3{,}000$/yr | `TaxLedger.AnnualOrdinaryOffsetCap` (§1211(b)) |
+| $W$ label horizon | $30$ days | `SoftLabelBuilder.Window` |
+| $E$ embargo | $\ge30$ days | `SplitPolicy.EmbargoDays` |
+| $\theta_2$ *(legacy)* | $0.05$ | `OracleConfig.LegacyTrackingErrorCap` |
 
 ---
 
 ## Cross-reference
 
-- `DataMemo/data_memo_theory.md` — probability space, oracle/boundary geometry, currents/Stokes, ERM theory.
-- `DataMemo/MLNetPipeline.md` — high-level pipeline and prior model equations.
-- `DataMemo/MLNetSemanticReconciliation.md` — ML.NET ↔ sklearn parameter map (§§5–15).
-- `DataMemo/MLNetLeakageAudit.md` — training-fold-only invariants.
-- `src/Core/Portfolio/LotStateVector.cs` — canonical 15-feature schema.
-- `src/Core/Oracle/OracleBoundary.cs` — the map $f^*$ and thresholds $\theta_1,\theta_2,\theta_3$.
+- `data_memo_theory.md` / `_part2.md` — probability space, boundary geometry, ERM theory, the v0.3–v0.4 program.
+- `PortfolioMath.md` — lot accounting, the state triple, the TaxLedger.
+- `SimulationMath.md` — price process, day loop, soft-label closures.
+- `GYTD_Redesign_Plan.md` — why the oracle is scalarized; §6.1 the measured ablation.
+- `ValidationHardening_v026.md` — purged temporal splits and the leakage-vs-prevalence diagnosis.
+- `MLNetLayer.md` — implementation architecture + ML.NET ↔ sklearn parameter map.
+- `MLNetLeakageAudit.md` — training-fold-only invariants.
+- `src/Core/Portfolio/LotStateVector.cs` — canonical d=17 schema · `TaxLedger.cs` — $g_{\mathrm{tax}}$.
+- `src/Core/Oracle/OracleBoundary.cs`, `OracleConfig.cs` — $f^*$, $U$, constants.
 - `src/Core/Simulation/SoftLabelBuilder.cs`, `GbmSimulator.cs` — $\tilde y_{\mathrm{BT}}$, $\tilde y_{\mathrm{GBM}}$.
+- `src/ML/CSharp/MLNet/Splits/` — `DataSplit`, `SplitPolicy`, `TemporalSplit`.
 - `src/ML/CSharp/MLNet/Models/*.cs` — trainer implementations.

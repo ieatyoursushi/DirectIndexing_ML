@@ -3,7 +3,7 @@
 > **Purpose.** One document that walks the *entire* v0.1–0.2 codebase from first principles:
 > what every layer does, in what order, why it exists, and the math it implements — with the
 > same explicit-domain "statically typed math" discipline as
-> `ML_Derivations_Explicit_Rigorous_DollarMath.md` (every symbol declares its set; every layer
+> `MLDerivations.md` (every symbol declares its set; every layer
 > declares its signature). Section 8 directly audits the intuition map from the simulation-layer
 > code review (the I–V questions), confirming or correcting each. Diagrams are Mermaid
 > (renders natively on GitHub / VS Code preview — no compile step) with ASCII fallbacks.
@@ -464,7 +464,7 @@ $$
 
 Each model family is a hypothesis space $\mathcal H\subset\{h:\mathcal X\to\mathbb R\}$ plus
 an objective; training selects $\hat\eta\in\mathcal H$. (Full per-model derivations:
-`ML_Derivations_Explicit_Rigorous_DollarMath.md` §§5–10.)
+`MLDerivations.md` §§5–10.)
 
 | Model | Hypothesis space (the set being searched) | Grid |
 |---|---|---|
