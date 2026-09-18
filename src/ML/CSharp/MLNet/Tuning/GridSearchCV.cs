@@ -39,7 +39,7 @@ public static class GridSearchCV
         int seed = 42)
     {
         var configs = Expand(grid).ToArray();
-        var folds   = StratifiedKFold.Folds(trainData, labelSelector, k, seed).ToArray();
+        var folds   = DataSplit.Folds(trainData, labelSelector, k, seed).ToArray();
 
         var all = new List<(IReadOnlyDictionary<string, object> Params, double MeanScore, double[] FoldScores)>();
         IReadOnlyDictionary<string, object>? bestParams = null;

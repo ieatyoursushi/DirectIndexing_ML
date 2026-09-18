@@ -44,7 +44,7 @@ public static class LogisticTrainer
         string target)
     {
         var (filtered, label) = SelectTarget(data, target);
-        var (train, _) = StratifiedSplit.Split(
+        var (train, _) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var grid = new Dictionary<string, object[]>
@@ -71,7 +71,7 @@ public static class LogisticTrainer
     {
         var (filtered, label) = SelectTarget(data, target);
 
-        var (train, test) = StratifiedSplit.Split(
+        var (train, test) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         // Grid search on training fold only.

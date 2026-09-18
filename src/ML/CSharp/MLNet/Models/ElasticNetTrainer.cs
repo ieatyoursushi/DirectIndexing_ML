@@ -46,7 +46,7 @@ public static class ElasticNetTrainer
         string target)
     {
         var (filtered, label) = SelectTarget(data, target);
-        var (train, _) = StratifiedSplit.Split(
+        var (train, _) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var search = GridSearchCV.Search(
@@ -67,7 +67,7 @@ public static class ElasticNetTrainer
         string target)
     {
         var (filtered, label) = SelectTarget(data, target);
-        var (train, test) = StratifiedSplit.Split(
+        var (train, test) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var search = GridSearchCV.Search(

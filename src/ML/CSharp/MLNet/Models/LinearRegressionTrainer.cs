@@ -60,7 +60,7 @@ public static class LinearRegressionTrainer
         string target)
     {
         var (filtered, label) = SelectTarget(data, target);
-        var (train, _) = StratifiedSplit.Split(
+        var (train, _) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var (best, foldScores, all) = InlineCvSearch(ml, train, label, k: 5);
@@ -79,7 +79,7 @@ public static class LinearRegressionTrainer
         string target)
     {
         var (filtered, label) = SelectTarget(data, target);
-        var (train, test) = StratifiedSplit.Split(
+        var (train, test) = DataSplit.TrainTest(
             filtered, r => label(r) ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var (bestParams, perFoldScores, all) = InlineCvSearch(ml, train, label, k: 5);
@@ -143,7 +143,7 @@ public static class LinearRegressionTrainer
             int k)
     {
         var grid  = BuildGrid();
-        var folds = StratifiedKFold.Folds(trainData, r => label(r) ? 1 : 0, k, seed: 42).ToArray();
+        var folds = DataSplit.Folds(trainData, r => label(r) ? 1 : 0, k, seed: 42).ToArray();
 
         var all = new List<(Dictionary<string, object> Params, double Mean)>();
         Dictionary<string, object>? bestParams = null;

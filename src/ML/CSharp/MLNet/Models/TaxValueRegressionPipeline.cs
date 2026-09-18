@@ -44,7 +44,7 @@ public static class TaxValueRegressionPipeline
         Directory.CreateDirectory(artifactsDir);
         var ml = new MLContext(seed: 42);
 
-        var (train, test) = StratifiedSplit.Split(
+        var (train, test) = DataSplit.TrainTest(
             data, r => r.Y_TaxValue > 0f ? 1 : 0, testFraction: 0.20, seed: 42);
 
         var medians   = MedianImputer.Fit(train);
