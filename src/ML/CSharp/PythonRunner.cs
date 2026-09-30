@@ -39,7 +39,7 @@ public static class PythonRunner
         return p.ExitCode;
     }
 
-    private static string LocateRepoRoot()
+    public static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
         while (dir != null)

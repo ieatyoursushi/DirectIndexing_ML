@@ -39,13 +39,13 @@ flowchart LR
     NS11 -->|5| NS14
     NS12 -->|5| NS13
     NS15 -->|5| NS2
+    NS0 -->|5| NS6
     NS7 -->|4| NS9
     NS11 -->|4| NS10
     NS11 -->|4| NS15
     NS0 -->|4| NS14
     NS8 -->|3| NS2
     NS10 -->|3| NS7
-    NS0 -->|3| NS6
     NS7 -->|2| NS2
     NS7 -->|2| NS6
     NS0 -->|2| NS5
@@ -201,9 +201,9 @@ flowchart LR
     PriceLoader -->|1| GbmSimulator
     Program -->|12| MLnetPipeline
     Program -->|7| LotStateVectorCsvReader
+    Program -->|5| PythonRunner
     Program -->|5| PriceLoader
     Program -->|3| SplitPolicy
-    Program -->|3| PythonRunner
     Program -->|2| SimulationEngine
     Program -->|2| SoftLabelBuilder
     Program -->|2| SimulationExporter
@@ -267,7 +267,7 @@ Fan-out = types this type references (breadth) / total mentions (weight). Fan-in
 | Type | Kind | Namespace | Fan-out (types / refs) | Fan-in (types / refs) |
 |---|---|---|---|---|
 | `LotStateVector` | record | Core.Portfolio | 0 / 0 | 17 / 80 |
-| `Program` | entrypoint | (entrypoint) | 13 / 41 | 0 / 0 |
+| `Program` | entrypoint | (entrypoint) | 13 / 43 | 0 / 0 |
 | `GradientBoostedTreesTrainer` | class | ML.MLNet.Models | 9 / 20 | 1 / 3 |
 | `LogisticTrainer` | class | ML.MLNet.Models | 9 / 21 | 1 / 3 |
 | `DataSplit` | class | ML.MLNet.Splits | 6 / 19 | 4 / 6 |
@@ -305,7 +305,7 @@ Fan-out = types this type references (breadth) / total mentions (weight). Fan-in
 | `StratifiedKFold` | class | ML.MLNet.Splits | 1 / 6 | 1 / 1 |
 | `StratifiedSplit` | class | ML.MLNet.Splits | 1 / 8 | 1 / 1 |
 | `TemporalSplit` | class | ML.MLNet.Splits | 1 / 13 | 1 / 2 |
-| `PythonRunner` | class | ML | 0 / 0 | 2 / 5 |
+| `PythonRunner` | class | ML | 0 / 0 | 2 / 7 |
 | `MarketDataDownloader` | class | DataCollection | 0 / 0 | 1 / 1 |
 | `MLnetPipeline` | class | ML.MLNet | 0 / 0 | 1 / 12 |
 | `CurvePointDto` | record | ML.MLNet | 0 / 0 | 1 / 4 |
@@ -353,7 +353,7 @@ Statically resolvable call sites: `Receiver.Method(...)` where the receiver is a
 | `Program` | `MLnetPipeline` | `RunAllSupervised`, `RunRender`, `RunSupervisedModel` |
 | `Program` | `MarketDataDownloader` | `.ctor` |
 | `Program` | `PriceLoader` | `.ctor`, `CalibrateGbmUniverse`, `FromGbm`, `UniformGbmUniverse` |
-| `Program` | `PythonRunner` | `Run` |
+| `Program` | `PythonRunner` | `LocateRepoRoot`, `Run` |
 | `Program` | `SimulationEngine` | `.ctor` |
 | `Program` | `SimulationExporter` | `WriteCsv` |
 | `Program` | `SoftLabelBuilder` | `.ctor` |

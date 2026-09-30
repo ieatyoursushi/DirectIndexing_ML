@@ -85,11 +85,20 @@ if (mode is ("simulate" or "simulate-mc") && contribCfg.Enabled)
 //   lots_contrib.csv + temporal → data/artifacts-mlnet_contrib-temporal/
 // --ctrade=<x> tags the simulated dataset (lots_ctrade<x>.csv) the same way.
 var ctradeTag      = ctradeArg is null ? "" : $"_ctrade{oracleCfg.CTrade.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-var lotsPath       = Path.GetFullPath(StringFlag("--lots=", "../data/lots.csv"));
+// All default paths are anchored at the repo root (the directory holding
+// DirectIndexing.sln), so `dotnet run --project src -- …` from the root and
+// `cd src && dotnet run -- …` behave identically. A user-supplied --lots is
+// resolved against the shell's working directory, as any CLI path would be.
+var repoRoot       = PythonRunner.LocateRepoRoot();
+var dataDir        = Path.Combine(repoRoot, "data");
+var exportDir      = Path.Combine(repoRoot, "src", "Export");
+var lotsArg        = args.FirstOrDefault(a => a.StartsWith("--lots="));
+var lotsPath       = lotsArg is null ? Path.Combine(dataDir, "lots.csv")
+                                     : Path.GetFullPath(lotsArg["--lots=".Length..]);
 var datasetTag     = DatasetTagOf(lotsPath);
-var mlnetArtifacts = Path.GetFullPath($"../data/artifacts-mlnet{datasetTag}{SplitPolicy.ArtifactTag}/");
-var edaOut         = Path.GetFullPath("Export/eda-mlnet/");
-var modelsOut      = Path.GetFullPath("Export/models-mlnet/");
+var mlnetArtifacts = Path.Combine(dataDir, $"artifacts-mlnet{datasetTag}{SplitPolicy.ArtifactTag}") + Path.DirectorySeparatorChar;
+var edaOut         = Path.Combine(exportDir, "eda-mlnet");
+var modelsOut      = Path.Combine(exportDir, "models-mlnet");
 if (mode.StartsWith("mlnet") || mode is "codebook")
     Console.WriteLine($"[Data] lots={lotsPath}\n[Data] artifacts={mlnetArtifacts}");
 
@@ -129,7 +138,7 @@ switch (mode)
                 throw new InvalidOperationException("Both --from and --to dates must be specified together, or neither.");
 
             await new MarketDataDownloader(apiKey)
-                .DownloadAllHistoricalData("../data/raw", years: years, startDate: startDate, endDate: endDate);
+                .DownloadAllHistoricalData(Path.Combine(dataDir, "raw"), years: years, startDate: startDate, endDate: endDate);
 
             sw.Stop();
             Console.WriteLine($"[download] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
@@ -149,7 +158,7 @@ switch (mode)
     {
         var sw = Stopwatch.StartNew();
         var loader = new PriceLoader();
-        loader.Load("../data/raw", "../data/constituents.json");
+        loader.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
 
         var engine    = new SimulationEngine(loader, oracleCfg, contribCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
@@ -157,7 +166,7 @@ switch (mode)
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = $"../data/lots{contribCfg.DatasetTag}{ctradeTag}.csv";
+        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{ctradeTag}.csv");
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] → {outPath}  " +
@@ -183,7 +192,7 @@ switch (mode)
         else
         {
             var real = new PriceLoader();
-            real.Load("../data/raw", "../data/constituents.json");
+            real.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
             universe = PriceLoader.CalibrateGbmUniverse(real);
         }
 
@@ -191,7 +200,7 @@ switch (mode)
         var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg).Run(10_000_000m);
         new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            $"../data/lots-mc{contribCfg.DatasetTag}{ctradeTag}.csv");
+            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{ctradeTag}.csv"));
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -282,7 +291,7 @@ switch (mode)
     {
         var rc = PythonRunner.Run("scripts.codebook",
             "--lots", lotsPath,
-            "--out",  Path.GetFullPath("Export/codebook/"));
+            "--out",  Path.Combine(exportDir, "codebook"));
         Environment.ExitCode = rc;
     }
     break;
@@ -303,8 +312,8 @@ switch (mode)
     case "deps":
     {
         var rc = PythonRunner.Run("scripts.dependencies",
-            "--src", "../../../src",
-            "--out", "../../Export/diagrams/");
+            "--src", Path.Combine(repoRoot, "src"),
+            "--out", Path.Combine(exportDir, "diagrams"));
         Environment.ExitCode = rc;
     }
     break;
@@ -408,9 +417,6 @@ double DoubleFlag(string prefix, double fallback)
         System.Globalization.NumberStyles.Float,
         System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
 }
-
-string StringFlag(string prefix, string fallback) =>
-    args.FirstOrDefault(x => x.StartsWith(prefix))?[prefix.Length..] ?? fallback;
 
 // "lots.csv" → "", "lots_contrib.csv" → "_contrib", "lots-mc.csv" → "-mc",
 // any other file name → "_<stem>" (so a renamed dataset still gets its own dir).
