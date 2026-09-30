@@ -42,6 +42,7 @@ public static class OracleBoundary
     /// <param name="washClock">𝒲_t^{A_i} — days since last harvest of this ticker</param>
     /// <param name="taxValue">taxValueₖ — capacity-aware harvest value in dollars</param>
     /// <param name="config">thresholds and the economic terms of U</param>
+    // [math:f_star] — DataMemo/spec/SymbolTable.md
     public static int Label(
         decimal unrealizedReturn,
         float   sigmaTE,
@@ -63,6 +64,7 @@ public static class OracleBoundary
     /// the v0.4 RL reward — that is pinned at portfolio level in the SymbolTable.
     /// f* = 𝟙[U &gt; 0] keeps the codomain {0,1}.
     /// </summary>
+    // [math:U] — DataMemo/spec/SymbolTable.md
     public static decimal Utility(decimal taxValue, float sigmaTE, OracleConfig config)
     {
         decimal s = (decimal)sigmaTE;

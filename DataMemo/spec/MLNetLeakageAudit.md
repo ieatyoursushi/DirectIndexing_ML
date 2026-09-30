@@ -1,5 +1,8 @@
 # MLNet Leakage Audit — training-fold-only invariants
 
+> **Status: LIVE SPEC** — must match the code; checked by `dotnet run --project src -- docs-check`.
+> Index of every symbol ↔ code member ↔ test: [`SymbolTable.md`](SymbolTable.md).
+
 This memo enumerates the points in the pipeline where the test set could leak into training — and shows how the ML.NET pipeline's structure makes the correct order **structurally enforced** rather than just "documented and hope".
 
 For each item: the Python pipeline's behavior, the ML.NET pipeline's behavior, and the structural reason the ML.NET version cannot regress without an active code change.

@@ -82,6 +82,7 @@ public static class MLnetPipeline
     /// Champion = argmax of mean CV PR-AUC. A pure function of the CV results, so the
     /// selection rule is testable without touching any test set.
     /// </summary>
+    // [math:champion] — DataMemo/spec/SymbolTable.md
     public static string SelectChampion(IEnumerable<CvResult> cvResults) =>
         cvResults.OrderByDescending(r => r.MeanCvScore).First().ModelName;
 

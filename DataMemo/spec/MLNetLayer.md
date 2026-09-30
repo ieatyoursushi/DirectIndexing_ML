@@ -1,5 +1,8 @@
 # The ML.NET Layer — architecture, pipeline shape, and the sklearn reconciliation
 
+> **Status: LIVE SPEC** — must match the code; checked by `dotnet run --project src -- docs-check`.
+> Index of every symbol ↔ code member ↔ test: [`SymbolTable.md`](SymbolTable.md).
+
 > **Purpose.** Everything about *how* the ML layer is built in C#/ML.NET: why it exists in this
 > language at all (§1), the typed pipeline shape from `LotStateVector` outward (§2), and the
 > complete map of every place ML.NET's parameterization differs from sklearn's and how the

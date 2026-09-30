@@ -43,6 +43,7 @@ public sealed class TrackingErrorProxy
     /// Returns annualised tracking error for the current open-lot universe.
     /// Call once per trading day before the lot loop.
     /// </summary>
+    // [math:sigma_te] — DataMemo/spec/SymbolTable.md
     public float Update(IEnumerable<string> openSymbols)
     {
         // Build open set (restrict to symbols known in our covariance universe)
@@ -86,6 +87,7 @@ public sealed class TrackingErrorProxy
     /// priced. That is a look-ahead in a feature (σ_TE, which also enters U), slated
     /// for the point-in-time estimator in v0.3-4 (ROADMAP, finding F1).
     /// </summary>
+    // [math:cov_hat] — DataMemo/spec/SymbolTable.md
     internal static float[,] ComputeCovariance(PriceLoader prices, List<string> symbols, int N)
     {
         var retArrays = symbols.Select(s => prices.GetReturnArray(s)).ToArray();

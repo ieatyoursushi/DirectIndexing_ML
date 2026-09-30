@@ -57,6 +57,7 @@ public static class BinaryMetrics
         return Compute(rows);
     }
 
+    // [math:pr_auc] [math:roc_auc] [math:f1] — DataMemo/spec/SymbolTable.md
     public static BinaryMetricsResult Compute(IReadOnlyList<ScoredRow> rows)
     {
         // Sort descending by probability — once — and reuse for both curves.

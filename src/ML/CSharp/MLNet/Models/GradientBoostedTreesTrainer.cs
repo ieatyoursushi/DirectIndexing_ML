@@ -25,6 +25,7 @@ namespace DirectIndexing.ML.MLNet.Models;
 /// <b>Class balance:</b> balanced example weights are attached via
 /// <c>ExampleWeightColumnName</c>, same pattern as the logistic trainer.
 /// </summary>
+// [math:eta_hat_gbt] — DataMemo/spec/SymbolTable.md
 public static class GradientBoostedTreesTrainer
 {
     public record GbtOutput(
@@ -125,6 +126,7 @@ public static class GradientBoostedTreesTrainer
             .Append(ml.BinaryClassification.Trainers.FastTree(options));
     }
 
+    // [math:y_target_bin] — DataMemo/spec/SymbolTable.md
     private static (List<LotStateVector> Filtered, Func<LotStateVector, bool> Label)
         SelectTarget(IReadOnlyList<LotStateVector> data, string target) =>
         target.ToLowerInvariant() switch

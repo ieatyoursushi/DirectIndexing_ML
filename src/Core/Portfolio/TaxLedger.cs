@@ -28,6 +28,7 @@ namespace DirectIndexing.Core.Portfolio;
 /// character-preserving carryforward; splitting them is a bounded future
 /// extension.
 /// </summary>
+// [math:ledger] — DataMemo/spec/SymbolTable.md
 public sealed class TaxLedger
 {
     // ── Tax-law constants ────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ public sealed class TaxLedger
     /// max(0, $3,000 − net loss already realized). Resets implicitly at
     /// year-end because it is derived from RealizedGainsYTD.
     /// </summary>
+    // [math:offset_budget] — DataMemo/spec/SymbolTable.md
     public decimal OrdinaryOffsetBudget =>
         Math.Max(0m, AnnualOrdinaryOffsetCap - Math.Max(0m, -RealizedGainsYTD));
 
@@ -86,6 +88,7 @@ public sealed class TaxLedger
     /// offsetCapacity_t — dollars of a NEW harvested loss usable this tax year:
     /// net gains still un-offset plus the remaining ordinary allowance.
     /// </summary>
+    // [math:offset_capacity] — DataMemo/spec/SymbolTable.md
     public decimal OffsetCapacity =>
         Math.Max(0m, RealizedGainsYTD) + OrdinaryOffsetBudget;
 
@@ -108,6 +111,7 @@ public sealed class TaxLedger
     /// LossCarryforward; the annual accumulator resets. Mirrors Schedule D
     /// year-boundary netting under the blended-pool simplification.
     /// </summary>
+    // [math:year_end_roll] — DataMemo/spec/SymbolTable.md
     public void RollYearEnd()
     {
         decimal netLoss = Math.Max(0m, -RealizedGainsYTD);
@@ -138,6 +142,7 @@ public sealed class TaxLedger
     /// offsetCapacity at the snapshot and re-value the loss along future price
     /// paths without holding a ledger reference.
     /// </summary>
+    // [math:g_tax] — DataMemo/spec/SymbolTable.md
     public static decimal ComputeTaxValue(decimal lossDollars, int holdingDays, decimal offsetCapacity)
     {
         if (lossDollars <= 0m) return 0m;

@@ -34,6 +34,7 @@ public static class TemporalSplit
     /// Timestep train; the latest ≈testFraction test; train rows within
     /// <paramref name="embargoDays"/> of the boundary are purged.
     /// </summary>
+    // [math:split_temporal] — DataMemo/spec/SymbolTable.md
     public static (List<LotStateVector> Train, List<LotStateVector> Test) TrainTest(
         IReadOnlyList<LotStateVector> data,
         double testFraction = 0.20,
@@ -68,6 +69,7 @@ public static class TemporalSplit
     /// (the standard purged k-fold of the finance-ML literature; it uses more
     /// data per fold than forward-chaining while giving the same guarantee).
     /// </summary>
+    // [math:purged_folds] — DataMemo/spec/SymbolTable.md
     public static IEnumerable<(List<LotStateVector> Train, List<LotStateVector> Val)> PurgedFolds(
         IReadOnlyList<LotStateVector> data,
         int k = 5,

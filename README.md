@@ -7,8 +7,8 @@ every tax lot on every day with a harvesting rulebook, and trains supervised mod
 
 > **New here, or coming back after a while?** Read this README for the front-door tour (what it
 > is, how to run it, the methodology). For the full project recap, the comparison to the original
-> proposal, and the v0.3–v0.4 plan, see **[`PSTAT231_RECAP.md`](PSTAT231_RECAP.md)**. For the
-> first-principles math walk of the whole codebase, see **[`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md)**. (PSTAT 231 being the intro-ML grad project based course)
+> proposal, and the v0.3–v0.4 plan, see **[`PSTAT231_RECAP.md`](DataMemo/archive/PSTAT231_RECAP.md)**. For the
+> first-principles math walk of the whole codebase, see **[`DataMemo/archive/Lifecycle_v02.md`](DataMemo/archive/Lifecycle_v02.md)**. (PSTAT 231 being the intro-ML grad project based course)
 
 **Status:** v0.1 → **v0.26 complete**. v0.2 was the PSTAT 231 final submission; the pipeline was
 then **scaled from a fixed 2-year window to a custom range of up to ~20 years**
@@ -90,7 +90,7 @@ The whole codebase derives from the tax code in five steps:
    > carry forward indefinitely), so the gains information moved *inside* `TaxValue` as a
    > capacity-aware value term. Removing it collapsed the tree-over-linear gap on the oracle
    > target from 0.155 to 0.015 — the polytope corner, not problem structure, had been doing
-   > the work. See [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md).
+   > the work. See [`DataMemo/decisions/GYTD_Redesign_Plan.md`](DataMemo/decisions/GYTD_Redesign_Plan.md).
 3. **Why simulate → the rulebook is executable.** Replay real prices through a portfolio that obeys
    the rule and log every `(lot, day)` state. The simulator *is* the problem's physics (with real
    price risk), not an approximation of it.
@@ -281,7 +281,7 @@ clobbering each other — the directory name records *how the numbers were produ
 | `artifacts-mlnet/` | `mlnet-*` on `lots.csv`, random split | **the canonical** scalarized-oracle results |
 | `artifacts-mlnet-gated/` | same, after swapping `lots_gated.csv` → `lots.csv` | the v0.2 gated-oracle **ablation baseline** (the 2×2 comparison in the report) |
 | `artifacts-mlnet-temporal/` | `mlnet-* --split=temporal` | the honest-split results (last written wins between the 80/20 and `--testfrac=0.5` decade runs) |
-| `artifacts-mlnet-temporal-8020/` | a preserved copy of the 80/20 temporal run | kept aside so the decade run doesn't overwrite it — see [`DataMemo/ValidationHardening_v026.md`](DataMemo/ValidationHardening_v026.md) |
+| `artifacts-mlnet-temporal-8020/` | a preserved copy of the 80/20 temporal run | kept aside so the decade run doesn't overwrite it — see [`DataMemo/decisions/ValidationHardening_v026.md`](DataMemo/decisions/ValidationHardening_v026.md) |
 
 ## Results
 
@@ -333,7 +333,7 @@ Three things the scale-up established (full narrative in the rewritten
 
 > When quoting a number, know which window you mean — and note the oracle-target numbers sit on
 > the 4-gate rule that v0.25 deprecates. Full divergence story:
-> [`PSTAT231_RECAP.md` §6](PSTAT231_RECAP.md).
+> [`PSTAT231_RECAP.md` §6](DataMemo/archive/PSTAT231_RECAP.md).
 
 ## Methodology & philosophy
 
@@ -341,7 +341,7 @@ Five disciplines hold the project together. Breaking any of them silently corrup
 are the things to preserve as the project grows.
 
 - **Labels may peek at the future; features never may.** The single invariant (see [core idea](#why-its-built-this-way-the-core-idea) #5). Every new feature must be computable from information available at day *t*; only labels may use *t+1 … t+30*.
-- **Leakage invariants are types, not conventions.** Median imputation and class weights have *no overload* that accepts the full dataset — they only accept a training fold. Normalization and one-hot encoding live inside the fitted pipeline. The leakage mistake scikit-learn lets you make implicitly, the C# layer makes *unrepresentable*. (Details: [`DataMemo/MLNetLeakageAudit.md`](DataMemo/MLNetLeakageAudit.md).)
+- **Leakage invariants are types, not conventions.** Median imputation and class weights have *no overload* that accepts the full dataset — they only accept a training fold. Normalization and one-hot encoding live inside the fitted pipeline. The leakage mistake scikit-learn lets you make implicitly, the C# layer makes *unrepresentable*. (Details: [`DataMemo/spec/MLNetLeakageAudit.md`](DataMemo/spec/MLNetLeakageAudit.md).)
 - **Champion selection is enforced by code shape.** Cross-validation ranks all five models; only the top-two classifiers ever reach the function that touches the sealed test set. "Only the best one or two models touch test" is a *structural* property, not a promise.
 - **PR-AUC, not ROC-AUC, for rare positives — but report both since v0.26.** With a rare positive rate,
   ROC-AUC is blind to a flood of false positives; precision-recall AUC punishes drowning the true
@@ -361,7 +361,7 @@ are the things to preserve as the project grows.
 > modeling core but deliberately keeps the **simulator** — because there *is* no fixed dataset to pull
 > for this problem; the simulator is how the tabular dataset is manufactured, with real price risk. The
 > trade-offs of that choice, and how the final project diverged from the original proposal, are written
-> up in [`PSTAT231_RECAP.md` §5](PSTAT231_RECAP.md).
+> up in [`PSTAT231_RECAP.md` §5](DataMemo/archive/PSTAT231_RECAP.md).
 
 ## Roadmap
 
@@ -385,26 +385,25 @@ the open research bet being whether RL and neural methods recover meaningfully m
 or lower tracking error — than the supervised oracle-approximation baseline.
 
 **The full version-by-version plan, the open-issue ledger, and the recommended critical path for v0.3
-and v0.4 live in [`PSTAT231_RECAP.md` §7–§9](PSTAT231_RECAP.md).**
+and v0.4 live in [`PSTAT231_RECAP.md` §7–§9](DataMemo/archive/PSTAT231_RECAP.md).**
 
 ## Further reading
 
 | Document | What's in it |
 |---|---|
 | [**`ROADMAP.md`**](ROADMAP.md) | **The authoritative version planner** (v0.1 → v1.0): what each version delivers, its gate criteria, and the standing rules. When it and an older doc disagree, it wins. |
-| [`PSTAT231_RECAP.md`](PSTAT231_RECAP.md) | The orientation doc: full v0.1–v0.2 recap, current-state vs. frozen-submission divergence, and the comparison to the original proposal. (Roadmap sections here are superseded by `ROADMAP.md`.) |
-| [`DataMemo/Lifecycle_v02.md`](DataMemo/Lifecycle_v02.md) | First-principles walk of the *entire* codebase: every layer's signature, the day-loop sequence, the lot lifecycle state machine, and the math each piece implements. |
-| [`DataMemo/SimulationMath.md`](DataMemo/SimulationMath.md) · [`PortfolioMath.md`](DataMemo/PortfolioMath.md) | The simulation and portfolio mathematics (ledger transitions, year-end roll, tracking-error derivation, the endogenous dataset-size identity). |
-| [`DataMemo/MLDerivations.md`](DataMemo/MLDerivations.md) | **The ML mathematics, layered** — plain-language orientation (§0), the typed working body (§1–§8: feature space, oracle, label family, protocol, per-model objectives), and an every-symbol-pinned appendix. Current at schema v3 / scalarized oracle. |
-| [`DataMemo/MLNetLayer.md`](DataMemo/MLNetLayer.md) | **The ML.NET layer** — why C# and not sklearn, the typed pipeline shape, and the complete sklearn ↔ ML.NET parameter/solver/metric reconciliation. |
-| [`DataMemo/MLNetLeakageAudit.md`](DataMemo/MLNetLeakageAudit.md) | Where every fit happens and why none of them leak. |
-| [`DataMemo/GYTD_Redesign_Plan.md`](DataMemo/GYTD_Redesign_Plan.md) | The gains-gate redesign v2 (shipped in v0.25): the scalarized oracle, the `TaxLedger`, and §6.1's **measured** gated-vs-scalarized ablation table. |
-| [`DataMemo/ValidationHardening_v026.md`](DataMemo/ValidationHardening_v026.md) | **(v0.26)** Why the old random splits were suspect, and the ROC-AUC-vs-PR-AUC diagnosis that ruled out leakage and isolated the cost-basis-aging prevalence crash. |
-| [`DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md`](DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md) | Parity assessment of a ChatGPT-5.5-Pro architecture thread (companion `..._plan.md`) against the actual repo, plus the synthesized v0.25→v1.0 version planner (the deep expansion of this Roadmap). Slated for promotion to `DataMemo/ArchitecturePlan.md`. |
-| [`DataMemo/data_memo_theory.md`](DataMemo/data_memo_theory.md) · [`data_memo_theory_part2.md`](DataMemo/data_memo_theory_part2.md) | The theory pair: the pre-implementation formal framework, and the post-course reconciliation (what converged/deviated/emerged) + the v0.3–v0.4 theoretical program (GARCH, covariance cleaning, tax ledger, RL MDP). |
+| [`PSTAT231_RECAP.md`](DataMemo/archive/PSTAT231_RECAP.md) | The orientation doc: full v0.1–v0.2 recap, current-state vs. frozen-submission divergence, and the comparison to the original proposal. (Roadmap sections here are superseded by `ROADMAP.md`.) |
+| [`DataMemo/archive/Lifecycle_v02.md`](DataMemo/archive/Lifecycle_v02.md) | First-principles walk of the *entire* codebase: every layer's signature, the day-loop sequence, the lot lifecycle state machine, and the math each piece implements. |
+| [`DataMemo/spec/SimulationMath.md`](DataMemo/spec/SimulationMath.md) · [`PortfolioMath.md`](DataMemo/spec/PortfolioMath.md) | The simulation and portfolio mathematics (ledger transitions, year-end roll, tracking-error derivation, the endogenous dataset-size identity). |
+| [`DataMemo/spec/MLDerivations.md`](DataMemo/spec/MLDerivations.md) | **The ML mathematics, layered** — plain-language orientation (§0), the typed working body (§1–§8: feature space, oracle, label family, protocol, per-model objectives), and an every-symbol-pinned appendix. Current at schema v3 / scalarized oracle. |
+| [`DataMemo/spec/MLNetLayer.md`](DataMemo/spec/MLNetLayer.md) | **The ML.NET layer** — why C# and not sklearn, the typed pipeline shape, and the complete sklearn ↔ ML.NET parameter/solver/metric reconciliation. |
+| [`DataMemo/spec/MLNetLeakageAudit.md`](DataMemo/spec/MLNetLeakageAudit.md) | Where every fit happens and why none of them leak. |
+| [`DataMemo/decisions/GYTD_Redesign_Plan.md`](DataMemo/decisions/GYTD_Redesign_Plan.md) | The gains-gate redesign v2 (shipped in v0.25): the scalarized oracle, the `TaxLedger`, and §6.1's **measured** gated-vs-scalarized ablation table. |
+| [`DataMemo/decisions/ValidationHardening_v026.md`](DataMemo/decisions/ValidationHardening_v026.md) | **(v0.26)** Why the old random splits were suspect, and the ROC-AUC-vs-PR-AUC diagnosis that ruled out leakage and isolated the cost-basis-aging prevalence crash. |
+| [`DataMemo/archive/architecture_thread/direct_indexing_concept_architecture_plan_contextualized.md`](DataMemo/archive/architecture_thread/direct_indexing_concept_architecture_plan_contextualized.md) | Parity assessment of a ChatGPT-5.5-Pro architecture thread (companion `..._plan.md`) against the actual repo, plus the synthesized v0.25→v1.0 version planner (the deep expansion of this Roadmap). Slated for promotion to `DataMemo/ArchitecturePlan.md`. |
+| [`DataMemo/archive/data_memo_theory.md`](DataMemo/archive/data_memo_theory.md) · [`data_memo_theory_part2.md`](DataMemo/archive/data_memo_theory_part2.md) | The theory pair: the pre-implementation formal framework, and the post-course reconciliation (what converged/deviated/emerged) + the v0.3–v0.4 theoretical program (GARCH, covariance cleaning, tax ledger, RL MDP). |
 | [`src/ML/Python/notebooks/final_report.ipynb`](src/ML/Python/notebooks/final_report.ipynb) | The rewritten 20-year analysis report (generated by `scripts/build_report_notebook.py`; the frozen 2-year submission version lives in `src/Export/report/`). |
-| [`DataMemo/DataMemo.ipynb`](DataMemo/DataMemo.ipynb) | The original pre-implementation proposal (with the professor's feedback). |
-| [`AI_USAGE.md`](AI_USAGE.md) | AI-assistance disclosure for the course submission. |
+| [`DataMemo/archive/DataMemo.ipynb`](DataMemo/archive/DataMemo.ipynb) | The original pre-implementation proposal (with the professor's feedback). |
 
 
 ## Project Images: 

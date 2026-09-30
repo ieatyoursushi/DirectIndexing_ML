@@ -1,5 +1,7 @@
 # Direct Indexing Concept Architecture Plan — Contextualized Against the Repository
 
+> **Status: ARCHIVE (frozen)** — the parity review of the architecture thread; its §5 version planner was promoted to [`ROADMAP.md`](../../../ROADMAP.md).
+
 > **Status:** parity assessment + synthesized version planner. Companion to
 > `direct_indexing_concept_architecture_plan.md` (the ChatGPT 5.5 Pro inquiry thread) in this
 > same `temp/` directory. This document is the repository-aware response: how much the GPT

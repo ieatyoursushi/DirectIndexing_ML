@@ -1,4 +1,6 @@
 # Data Memo Background — PSTAT 231 
+
+> **Status: ARCHIVE (frozen)** — the pre-implementation theory memo (PSTAT 231 proposal era). Its forward program lives on in `ROADMAP.md` and [`../spec/SymbolTable.md`](../spec/SymbolTable.md).
 ### Gabriel Kung, Co-Authored by Claude Sonnet 
 ## *Machine Learning for Tax-Loss Harvesting Decisions in a Simulated Direct Indexing Portfolio*
 

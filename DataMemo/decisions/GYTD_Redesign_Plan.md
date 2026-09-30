@@ -1,5 +1,8 @@
 # G_YTD Redesign Plan v2 — from binary gains gate to scalarized tax-aware objective
 
+> **Status: DESIGN RECORD** — dated and frozen after merge; superseded, never edited.
+> The live mathematics is in [`../spec/`](../spec/SymbolTable.md).
+
 > **Status:** ratified design, v0.2-capstone → v0.25/v0.3 target (issue #23). Supersedes the
 > original `GYTD_Redesign_Plan.md` (v1, "Options A/B/C") — v1's text survives in git history.
 >

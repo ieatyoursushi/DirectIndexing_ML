@@ -1,5 +1,8 @@
 # ML Mathematical Derivations — Lot Vector Space, Oracle, and Model Family
 
+> **Status: LIVE SPEC** — must match the code; checked by `dotnet run --project src -- docs-check`.
+> Index of every symbol ↔ code member ↔ test: [`SymbolTable.md`](SymbolTable.md).
+
 ### Gabriel Kung, co-authored with Claude
 
 > **Purpose.** This memo makes explicit, with full domain/codomain typing for every object,
@@ -163,6 +166,11 @@ R_t &= \frac{P_t-P_{t-1}}{P_{t-1}}\in\mathbb R
    &&\text{days to year-end}
 \end{aligned}
 $$
+
+> ⚠ **Known unit error (ROADMAP finding F6, fixed in v0.3-2).** $h_k=t-s_k$ counts
+> **trading** days, but the long-term threshold 365 is a **calendar** quantity, so
+> $\mathbf 1[h\ge365]$ means ≈1.45 calendar years. §1222's "more than one year" is
+> $\mathrm{date}(t)>\mathrm{date}(s_k)+1\,\mathrm{yr}$ (`SymbolTable.md` `lt_flag_cal`).
 
 where $H_t,L_t$ are the day-$t$ high/low and
 $\tau:\mathbb Z_{\ge0}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
@@ -759,10 +767,13 @@ $$
 The indicator is $\mathbf 1[\,\cdot\,]:\{\text{prop}\}\to\{0,1\}$ and the logistic sigmoid is
 $\sigma:\mathbb R\to(0,1)$, $\sigma(z)=(1+e^{-z})^{-1}$.
 
-### A.1 Constant table (current values)
+### A.1 Constants
 
-| Symbol | Value | Source |
-|---|---|---|
+The constant table lives in exactly one place — [`SymbolTable.md`](SymbolTable.md) §K — where
+`docs-check` compares every value against its C# declaration. (A second copy here is how
+constants drift.)
+
+---|---|---|
 | $\theta_1$ loss threshold | $0.02$ | `OracleConfig.LossThreshold` |
 | $\theta_3$ wash window | $30$ days | `OracleConfig.WashSaleDays` (IRS §1091) |
 | $\theta_{\max}$ TE ceiling | $0.15$ | `OracleConfig.TrackingErrorCeiling` |

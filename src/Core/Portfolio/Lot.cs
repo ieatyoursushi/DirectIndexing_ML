@@ -8,6 +8,7 @@ namespace DirectIndexing.Core.Portfolio;
 ///   p_k  = CostBasis        (purchase price — the basis of the atom)
 ///   s_k  = PurchaseDayIndex (purchase day — the time support point)
 /// </summary>
+// [math:lot] — DataMemo/spec/SymbolTable.md
 public class Lot
 {
     public string  Symbol          { get; init; }
@@ -33,10 +34,12 @@ public class Lot
         (currentPrice - CostBasis) / CostBasis;
 
     // h = t − s_k  ∈ ℤ_{≥0}
+    // [math:holding_period] — DataMemo/spec/SymbolTable.md
     public int HoldingPeriod(int currentDay) =>
         currentDay - PurchaseDayIndex;
 
     // s = 𝟙[h ≥ 365]  ∈ {0, 1}
+    // [math:lt_flag] — DataMemo/spec/SymbolTable.md
     public bool IsLongTerm(int currentDay) =>
         HoldingPeriod(currentDay) >= 365;
 }

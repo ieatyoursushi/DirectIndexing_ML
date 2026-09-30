@@ -286,6 +286,17 @@ switch (mode)
         Environment.ExitCode = rc;
     }
     break;
+    // ── docs-check — the math ↔ code ↔ test spine (DataMemo/spec/SymbolTable.md) ──
+    // Fails (exit 1) on: a [math:<id>] tag with no SymbolTable row, a live row with no
+    // tag, a named code/test member that no longer exists, a §K constant that differs
+    // from its declaration, schema-order drift, or a broken relative markdown link.
+    case "docs-check":
+    {
+        var rc = PythonRunner.Run("scripts.check_math_sync");
+        Environment.ExitCode = rc;
+    }
+    break;
+
     // ── DevTools — dependency/coupling atlas of this C# layer ────────────────
     // Brute-force regex scan of src/**/*.cs (same approach as Zombtoy
     // DevTools/Diagrams) → one markdown file of mermaid diagrams + tables.
@@ -369,6 +380,11 @@ switch (mode)
 
         // ── Model-suite tests ───────────────────────────────────────────────
         new GbtTrainerTests().Test_GbtCv_SeparableData();
+        var metricTests = new BinaryMetricsTests();
+        metricTests.Test_AveragePrecision_And_Roc_HandComputed();
+        metricTests.Test_PerfectRanker_IsOne_AtAnyPrevalence();
+        metricTests.Test_NoSkill_Floors_RocHalf_PrEqualsPrevalence();
+
         var championTests = new ChampionSelectionTests();
         championTests.Test_SelectChampion_IsArgmaxOfCv();
         championTests.Test_GbtBeatsLogisticOnNonLinearTarget();

@@ -49,6 +49,7 @@ public sealed class PriceLoader
     /// Loads all JSON price files from rawDataDir and the optional constituents file.
     /// Call once before RunAsync().
     /// </summary>
+    // [math:price_world] — DataMemo/spec/SymbolTable.md
     public void Load(string rawDataDir, string? constituentsFile = null)
     {
         LoadConstituents(constituentsFile);
@@ -222,6 +223,7 @@ public sealed class PriceLoader
     /// <param name="seed">RNG seed — the world is a deterministic function of (universe, days, seed, drift).</param>
     /// <param name="annualDrift">μ, annualised (default 0).</param>
     /// <param name="start">First calendar date (default 2000-01-03, a Monday).</param>
+    // [math:price_world] — DataMemo/spec/SymbolTable.md
     public static PriceLoader FromGbm(
         IReadOnlyList<(string Symbol, string Sector, float AnnualSigma)> universe,
         int days, int seed, float annualDrift = 0f, DateOnly? start = null)

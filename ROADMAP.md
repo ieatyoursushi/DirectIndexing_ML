@@ -2,7 +2,7 @@
 
 > **The authoritative version planner.** This file supersedes the roadmap sections scattered
 > across `README.md` §Roadmap, `PSTAT231_RECAP.md` §7–§9, and the working plans in
-> `DataMemo/temp/` (the GPT-thread architecture review and its contextualized parity
+> `DataMemo/archive/architecture_thread/` (the GPT-thread architecture review and its contextualized parity
 > assessment, from which the v0.25→v1.0 spine below was synthesized). When this file and an
 > older doc disagree, this file wins. Deep rationale per stage lives in the linked memos.
 >
@@ -17,8 +17,8 @@
 | v0.1 | Supervised baseline (ML.NET rewrite) | ✅ complete | issue #10 |
 | v0.2 | PSTAT 231 submission — champions, PCA/K-means, report layer | ✅ complete | PR #11 |
 | — | 20-year scale-up (`download --from/--to`, 1.85M rows, report rewrite) | ✅ complete | commit `c421c4f`, issues #19/#20 |
-| v0.25 | Oracle redesign — `TaxLedger`, scalarized `f*`, ablation arms | ✅ complete | PRs #24–#27, issue #23, `DataMemo/GYTD_Redesign_Plan.md` |
-| v0.26 | Validation hardening — purged chronological splits | ✅ complete | PR #30, `DataMemo/ValidationHardening_v026.md` |
+| v0.25 | Oracle redesign — `TaxLedger`, scalarized `f*`, ablation arms | ✅ complete | PRs #24–#27, issue #23, `DataMemo/decisions/GYTD_Redesign_Plan.md` |
+| v0.26 | Validation hardening — purged chronological splits | ✅ complete | PR #30, `DataMemo/decisions/ValidationHardening_v026.md` |
 | **v0.3** | **Simulator realism + economic metric layer** | **⏭ next (P0: cost-basis-aging fix)** | issues #12/#17/#22 |
 | v0.35 | Universe & replacement layer (core+reserve, SubScore) | planned | issues #5/#6 |
 | v0.4a | Constrained execution baseline (optimizer, no RL) | planned | — |
@@ -56,7 +56,7 @@ landing). Scalarized oracle `f* = 𝟙[ℓ≤−θ₁]·𝟙[𝒲≥30]·𝟙[σ
 `U = TaxValue − λσ_TE² − c_trade` is canonical; `--oracle=gated` reruns the v0.2 rule as the
 ablation baseline. Measured (design doc §6.1): oracle-target GBT−logistic gap 0.155 → 0.015;
 soft-target tree advantage oracle-invariant; value-regression R² 0.10 linear vs 0.92 trees;
-carryforward load-bearing ($4.3M/20y). → `DataMemo/GYTD_Redesign_Plan.md`
+carryforward load-bearing ($4.3M/20y). → `DataMemo/decisions/GYTD_Redesign_Plan.md`
 
 ## ✅ v0.26 — Validation hardening (complete, July 2026, PR #30)
 
@@ -71,7 +71,7 @@ reproduces v0.25 bit-for-bit; temporal artifacts → `data/artifacts-mlnet-tempo
 → **no material ranking leakage in v0.1–v0.25**. The decade walk-forward (train 2006–16,
 test 2016–26) isolated mild honest drift (soft ROC 0.997 → 0.961). In lift over no-skill the
 temporal model is *better* (~25× → ~210×). Gate: **pass, with a mandate** (standing rule 5).
-→ `DataMemo/ValidationHardening_v026.md`
+→ `DataMemo/decisions/ValidationHardening_v026.md`
 
 **Carried forward (planned in the v0.26 spec, consciously deferred):**
 - [ ] Gated-arm re-validation under temporal splits (the full 2×2 was cut to the canonical
@@ -174,8 +174,8 @@ monitoring, standing guardrails as operating policy.
 | `ROADMAP.md` (this file) | Authoritative version planner + status |
 | `PSTAT231_RECAP.md` | Orientation: what the project is, layer by layer, and why |
 | `README.md` | Commands, schema, results snapshot |
-| `DataMemo/GYTD_Redesign_Plan.md` | v0.25 design + measured ablations |
-| `DataMemo/ValidationHardening_v026.md` | v0.26 method + leakage-vs-regime diagnosis |
-| `DataMemo/Lifecycle_v02.md` | First-principles codebase walk (frozen at v0.2) |
-| `DataMemo/data_memo_theory.md` / `_part2.md` | Pre-plan theory + post-course reconciliation |
-| `DataMemo/temp/…contextualized.md` | Working parity review this roadmap was distilled from |
+| `DataMemo/decisions/GYTD_Redesign_Plan.md` | v0.25 design + measured ablations |
+| `DataMemo/decisions/ValidationHardening_v026.md` | v0.26 method + leakage-vs-regime diagnosis |
+| `DataMemo/archive/Lifecycle_v02.md` | First-principles codebase walk (frozen at v0.2) |
+| `DataMemo/archive/data_memo_theory.md` / `_part2.md` | Pre-plan theory + post-course reconciliation |
+| `DataMemo/archive/architecture_thread/…contextualized.md` | Working parity review this roadmap was distilled from |

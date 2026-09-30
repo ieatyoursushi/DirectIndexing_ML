@@ -1,4 +1,6 @@
 # Project Recap — Direct Indexing ML
+
+> **Status: ARCHIVE (frozen)** — the course-era project recap (v0.1–v0.26). Its roadmap sections were superseded by [`ROADMAP.md`](../../ROADMAP.md).
 ### v0.1–v0.26 complete · 20-year scale-up, oracle redesign, and validation hardening all shipped · next: v0.3
 
 > **Why this file exists.** Post-v0.2 you're starting to drift from what's *fundamentally*
@@ -8,18 +10,18 @@
 > README** (commands reproduced in §3) and points to the deeper synthesis docs in `DataMemo/`
 > for the math.
 >
-> **⚠️ Roadmap sections in this file are superseded by [`ROADMAP.md`](ROADMAP.md)**, which is now
+> **⚠️ Roadmap sections in this file are superseded by [`ROADMAP.md`](../../ROADMAP.md)**, which is now
 > the authoritative version planner (v0.1 → v1.0, with gate criteria and standing rules). Where
 > this file and `ROADMAP.md` disagree about *what comes next*, `ROADMAP.md` wins. The historical
 > recap below — what was built and why — remains current.
 >
 > Companion docs (do not duplicate — read for depth):
-> `DataMemo/Lifecycle_v02.md` (full first-principles codebase walk),
-> `DataMemo/SimulationMath.md`, `DataMemo/PortfolioMath.md`,
-> `DataMemo/MLDerivations.md`,
-> `DataMemo/MLNetLeakageAudit.md`, `DataMemo/GYTD_Redesign_Plan.md` (the tax-ledger design),
-> and the theory pair `DataMemo/data_memo_theory.md` (pre-plan) /
-> `DataMemo/data_memo_theory_part2.md` (post-course reconciliation + the v0.3–v0.4 program).
+> `DataMemo/archive/Lifecycle_v02.md` (full first-principles codebase walk),
+> `DataMemo/spec/SimulationMath.md`, `DataMemo/spec/PortfolioMath.md`,
+> `DataMemo/spec/MLDerivations.md`,
+> `DataMemo/spec/MLNetLeakageAudit.md`, `DataMemo/decisions/GYTD_Redesign_Plan.md` (the tax-ledger design),
+> and the theory pair `DataMemo/archive/data_memo_theory.md` (pre-plan) /
+> `DataMemo/archive/data_memo_theory_part2.md` (post-course reconciliation + the v0.3–v0.4 program).
 
 ---
 
@@ -153,7 +155,7 @@ Three results that *are* the project's science:
 
 ## 5. DataMemo (the pre-plan) vs. v0.2 (what shipped)
 
-The original `DataMemo/DataMemo.ipynb` was your pre-implementation conceptual plan (professor-required). Here's how the final project diverged from it — what survived, what changed, and what the professor pushed back on.
+The original `DataMemo/archive/DataMemo.ipynb` was your pre-implementation conceptual plan (professor-required). Here's how the final project diverged from it — what survived, what changed, and what the professor pushed back on.
 
 ### What the DataMemo got right and *survived intact*
 - **The core problem framing** — lot-level harvest decision as a **binary classification** `y ∈ {0,1}`, treating each time-dependent lot as i.i.d. via an oracle rule (so no true time-series model needed). This is exactly what shipped. Your professor explicitly blessed the rule-based-label workaround.
@@ -266,4 +268,4 @@ Build portfolio-level metrics — **total tax alpha** `α = Σ(P_cost − P_harv
 
 ---
 
-*Cross-references: `DataMemo/Lifecycle_v02.md` (§ numbering used above), `DataMemo/GYTD_Redesign_Plan.md` (the tax-ledger design in full), `DataMemo/data_memo_theory.md` + `data_memo_theory_part2.md` (theory pre-plan and post-course reconciliation/v0.3–v0.4 program), `DataMemo/SimulationMath.md`, `DataMemo/PortfolioMath.md`, `DataMemo/MLNetLeakageAudit.md`. Frozen-submission numbers: PR #11. 20-year numbers: the rewritten `src/ML/Python/notebooks/final_report.ipynb`. Oracle redesign: issue #23 + the Wealthfront stock-level TLH whitepaper. Original pre-plan: `DataMemo/DataMemo.ipynb`.*
+*Cross-references: `DataMemo/archive/Lifecycle_v02.md` (§ numbering used above), `DataMemo/decisions/GYTD_Redesign_Plan.md` (the tax-ledger design in full), `DataMemo/archive/data_memo_theory.md` + `data_memo_theory_part2.md` (theory pre-plan and post-course reconciliation/v0.3–v0.4 program), `DataMemo/spec/SimulationMath.md`, `DataMemo/spec/PortfolioMath.md`, `DataMemo/spec/MLNetLeakageAudit.md`. Frozen-submission numbers: PR #11. 20-year numbers: the rewritten `src/ML/Python/notebooks/final_report.ipynb`. Oracle redesign: issue #23 + the Wealthfront stock-level TLH whitepaper. Original pre-plan: `DataMemo/archive/DataMemo.ipynb`.*

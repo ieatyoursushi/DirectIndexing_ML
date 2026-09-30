@@ -29,6 +29,7 @@ public static class MedianImputer
         "TaxValue",
     };
 
+    // [math:imputer] — DataMemo/spec/SymbolTable.md
     public static Dictionary<string, float> Fit(IReadOnlyList<LotStateVector> trainingFold)
     {
         var medians = new Dictionary<string, float>(FloatNumericFeatures.Length);

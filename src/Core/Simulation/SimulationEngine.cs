@@ -84,6 +84,7 @@ public sealed class SimulationEngine
         var closes = _prices.GetClosesDecimal(t);
 
         // Portfolio value (only lots with a valid close price today)
+        // [math:portfolio_value] — DataMemo/spec/SymbolTable.md
         decimal portValue = _state.OpenLots
             .Where(l => closes.ContainsKey(l.Symbol))
             .Sum(l => l.Shares * closes[l.Symbol]);
@@ -105,6 +106,7 @@ public sealed class SimulationEngine
                 Harvest(lot, close, t, portValue);
         }
 
+        // [math:reopen] — DataMemo/spec/SymbolTable.md
         // Reopen lots whose wash-sale window cleared on exactly this day
         if (_reopenQueue.TryGetValue(t, out var toReopen))
         {
@@ -162,6 +164,7 @@ public sealed class SimulationEngine
         }
     }
 
+    // [math:y_oracle] [math:y_taxvalue] [math:y_utility] — DataMemo/spec/SymbolTable.md
     private LotStateVector ExtractSnapshot(
         Lot lot, int t, decimal close, decimal portValue, float sigmaTE)
     {
@@ -257,6 +260,7 @@ public sealed class SimulationEngine
     /// Fresh lots carry <i>today's</i> cost basis, which is the entire point: they can dip
     /// below it in the next drawdown, whereas a 2007-basis lot cannot.
     /// </summary>
+    // [math:contribution] — DataMemo/spec/SymbolTable.md
     private void ProcessContribution(int t, Dictionary<string, decimal> closes, decimal portValue)
     {
         if (!_contrib.Enabled) return;

@@ -1,4 +1,7 @@
 # Portfolio Domain Model — Formal Specification
+
+> **Status: LIVE SPEC** — must match the code; checked by `dotnet run --project src -- docs-check`.
+> Index of every symbol ↔ code member ↔ test: [`SymbolTable.md`](SymbolTable.md).
 ### Gabriel Kung · Co-authored with Claude Sonnet
 
 > Companion to `data_memo_theory.md`. This document formalises the **implementation objects** in `Core/Portfolio/` and maps each C# class precisely to its mathematical definition. The goal is to make the bridge between the ML theory (§1–9 of the theory memo) and the simulation code unambiguous for future model development.
@@ -127,6 +130,13 @@ rules and therefore survived the v0.25 redesign unchanged):
 $$f^*(x) \supseteq \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
 
 After harvest, $\mathcal{W}_t^{A_i} \leftarrow 0$ and the clock counts up through `AdvanceDay()` until it reaches 30, at which point the asset becomes harvestable again.
+
+> ⚠ **Known gap (ROADMAP finding F7, fixed in v0.3-1).** The simulator enforces only the
+> *after-sale* half of §1091: no buy within the window after a loss sale. It does not block a
+> *harvest* within 30 days after a *purchase* of the same ticker. With contributions and
+> reopens making tickers multi-lot, that before-sale side is live. The clock also counts
+> **trading** days (≈42 calendar), not the law's 30 **calendar** days. Target definition:
+> [`SymbolTable.md`](SymbolTable.md) `wash_window_2s`.
 
 ### 2.5 Year-End Reset
 

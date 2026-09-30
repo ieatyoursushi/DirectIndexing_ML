@@ -1,5 +1,7 @@
 # Direct Indexing / Tax-Alpha Research Architecture
 
+> **Status: ARCHIVE (frozen)** — the external architecture-thread transcript (companion of the contextualized review). Its synthesized version planner was promoted to [`ROADMAP.md`](../../../ROADMAP.md).
+
 **Status:** Architecture context and implementation roadmap\
 **Current major completed component:** supervised machine-learning layer
 (oracle / oracle-propensity modeling)\

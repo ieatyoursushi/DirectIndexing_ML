@@ -1,5 +1,8 @@
 # Validation Hardening (v0.26) — Purged Chronological Splits and What They Revealed
 
+> **Status: DESIGN RECORD** — dated and frozen after merge; superseded, never edited.
+> The live mathematics is in [`../spec/`](../spec/SymbolTable.md).
+
 > **Status:** shipped (branch `feature/v026-temporal-validation`). This memo records the
 > method, the measured random-vs-temporal deltas, and — the load-bearing part — the
 > **diagnosis** that separates leakage-removal from regime shift. The gate result is a *pass
@@ -7,7 +10,7 @@
 > is the cost-basis-aging prevalence crash, which is precisely the v0.3 P0.
 >
 > Adopted from the GPT-thread architecture review, §4 item 1 and §5 (v0.26) of
-> `DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md`.
+> `DataMemo/archive/architecture_thread/direct_indexing_concept_architecture_plan_contextualized.md`.
 
 ---
 
@@ -157,5 +160,5 @@ dotnet run mlnet-soft   --split=temporal --testfrac=0.5
 
 *Cross-references: `GYTD_Redesign_Plan.md` §6.1 (the random-split ablation this hardens);
 the report's cost-basis-aging section (the prevalence-crash mechanism);
-`DataMemo/temp/direct_indexing_concept_architecture_plan_contextualized.md` §4–§5 (why v0.26
+`DataMemo/archive/architecture_thread/direct_indexing_concept_architecture_plan_contextualized.md` §4–§5 (why v0.26
 gates v0.3). Method: López de Prado, purged & embargoed cross-validation.*

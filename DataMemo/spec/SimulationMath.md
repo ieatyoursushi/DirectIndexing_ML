@@ -1,5 +1,8 @@
 # Simulation Layer — Mathematical Reference
 
+> **Status: LIVE SPEC** — must match the code; checked by `dotnet run --project src -- docs-check`.
+> Index of every symbol ↔ code member ↔ test: [`SymbolTable.md`](SymbolTable.md).
+
 This memo documents the mathematical foundations and design decisions for the simulation
 layer that produces `data/lots.csv` (the training dataset, real prices) and `data/lots-mc.csv`
 (the same engine over a synthetic GBM price world).
@@ -268,6 +271,13 @@ $$
   \sum_{\substack{t=0 \\ r_t^{(i)},\, r_t^{(j)} \ne \text{NaN}}}^{T-1}
   \bigl(r_t^{(i)} - \bar{r}^{(i)}\bigr)\bigl(r_t^{(j)} - \bar{r}^{(j)}\bigr)
 $$
+
+> ⚠ **Look-ahead (ROADMAP finding F1, fixed in v0.3-4).** Because $\hat\Sigma$ uses the
+> *whole* loaded history, $\hat\sigma_{\mathrm{TE},t}$ depends on returns after $t$. It is a
+> feature and an input to $U$, so this violates "features never peek." With 20 years loaded
+> ($T\approx5{,}000>N$) the full-sample estimator was also what kept $\hat\Sigma$
+> well-conditioned. A point-in-time window with $L<N$ is rank-deficient, which makes shrinkage
+> necessary (`SymbolTable.md` `cov_hat_pit`).
 
 $\hat\Sigma$ is symmetric by construction; diagonal entries $\hat\Sigma_{ii}$ are the
 per-stock daily return variances.  A guard `max(variance, 0)` before the square root

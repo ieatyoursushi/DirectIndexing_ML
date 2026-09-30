@@ -40,6 +40,7 @@ public record WeightedRow : LotStateVector
 /// </summary>
 public static class ClassWeights
 {
+    // [math:class_weights] — DataMemo/spec/SymbolTable.md
     public static List<WeightedRow> AttachBalancedWeights(
         IReadOnlyList<LotStateVector> trainingFold,
         Func<LotStateVector, int> labelSelector)

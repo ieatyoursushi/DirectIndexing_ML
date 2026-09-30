@@ -73,6 +73,7 @@ public sealed class SoftLabelBuilder
     /// and TE-shaped comes from the snapshot; wash clock and holding period
     /// advance with s.
     /// </summary>
+    // [math:soft_step] — DataMemo/spec/SymbolTable.md
     private int StepLabel(
         float price, int s,
         float costBasis, float shares, int holdingDays0, int initClock,
@@ -96,6 +97,7 @@ public sealed class SoftLabelBuilder
 
     // ── GBM soft label ────────────────────────────────────────────────────────
 
+    // [math:y_soft_gbm] — DataMemo/spec/SymbolTable.md
     private float ComputeGBM(LotStateVector snap)
     {
         if (!_prices.HasData(snap.Symbol, snap.Timestep)) return float.NaN;
@@ -135,6 +137,7 @@ public sealed class SoftLabelBuilder
 
     // ── Backtesting soft label ────────────────────────────────────────────────
 
+    // [math:y_soft_bt] — DataMemo/spec/SymbolTable.md
     private float ComputeBT(LotStateVector snap)
     {
         int t0   = snap.Timestep;
@@ -170,6 +173,7 @@ public sealed class SoftLabelBuilder
 
     // ── Trailing volatility estimate ─────────────────────────────────────────
 
+    // [math:sigma_hat_trailing] — DataMemo/spec/SymbolTable.md
     private float EstimateVol(string symbol, int t)
     {
         var returns = _prices.GetReturnArray(symbol);

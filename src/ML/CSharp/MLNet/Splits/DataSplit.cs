@@ -14,6 +14,7 @@ namespace DirectIndexing.ML.MLNet.Splits;
 /// </summary>
 public static class DataSplit
 {
+    // [math:split_policy] — DataMemo/spec/SymbolTable.md
     public static (List<LotStateVector> Train, List<LotStateVector> Test) TrainTest(
         IReadOnlyList<LotStateVector> data,
         Func<LotStateVector, int> labelSelector,

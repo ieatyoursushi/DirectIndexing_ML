@@ -1,5 +1,7 @@
 # v0.2 Lifecycle — Architecture & Mathematical Synthesis
 
+> **Status: ARCHIVE (frozen)** — a first-principles walk of the codebase *as of v0.2* (five models, gated oracle, `MonteCarloEngine`). Current code ↔ math map: [`../spec/SymbolTable.md`](../spec/SymbolTable.md).
+
 > **Purpose.** One document that walks the *entire* v0.1–0.2 codebase from first principles:
 > what every layer does, in what order, why it exists, and the math it implements — with the
 > same explicit-domain "statically typed math" discipline as

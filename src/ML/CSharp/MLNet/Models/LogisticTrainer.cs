@@ -14,13 +14,14 @@ namespace DirectIndexing.ML.MLNet.Models;
 /// L2-regularized logistic regression with stratified 5-fold CV grid search
 /// over <c>C ∈ {0.01, 0.1, 1.0, 10.0}</c>. Mirrors Python's
 /// <c>logistic.py</c>; differences are documented in
-/// <c>DataMemo/MLNetLayer.md</c>.
+/// <c>DataMemo/spec/MLNetLayer.md</c>.
 ///
 /// Two targets supported (target derivation matches <c>targets.py</c>):
 ///   "oracle"  — Y_Oracle (deterministic gate; sanity baseline; expect ROC ≈ 1).
 ///   "soft_bt" — (Y_Soft_BT > 0)  i.e. "any oracle fire in next 30 days".
 ///               NaN Y_Soft_BT rows are dropped before splitting.
 /// </summary>
+// [math:eta_hat_lr] — DataMemo/spec/SymbolTable.md
 public static class LogisticTrainer
 {
     public record LogisticOutput(
@@ -142,6 +143,7 @@ public static class LogisticTrainer
             .Append(ml.BinaryClassification.Trainers.LbfgsLogisticRegression(options));
     }
 
+    // [math:y_target_bin] — DataMemo/spec/SymbolTable.md
     private static (List<LotStateVector> Filtered, Func<LotStateVector, bool> Label)
         SelectTarget(IReadOnlyList<LotStateVector> data, string target)
     {

@@ -1,4 +1,6 @@
 # Data Memo Theory — Part II
+
+> **Status: ARCHIVE (frozen)** — the post-course reconciliation + v0.3–v0.4 program. **Superseded in part:** §C.3.1's reward $r_t=\sum\mathrm{taxValue}-\lambda\Delta\sigma_{TE}$ (an increment form that *telescopes* — see [`../spec/SymbolTable.md`](../spec/SymbolTable.md) §I) and its per-lot binary action space (replaced by the low-dimensional action space). The GARCH / Ledoit–Wolf / Marchenko–Pastur derivations in §C.2 remain the reference for v0.3-4/5.
 ### Gabriel Kung, Co-Authored by Claude Sonnet
 ## *Post-Course Reconciliation and the v0.3–v0.4 Theoretical Program*
 
