@@ -9,6 +9,10 @@
 > git checkout archive/v0.3-pre-downsize -- <path>      # restore one file
 > git worktree add ../di-archive archive/v0.3-pre-downsize   # or the whole pre-downsize tree
 > ```
+>
+> The tag and the SHA are interchangeable: `git checkout 03f0c3e -- <path>` works too, as
+> long as the downsizing PR is merged with a **merge commit** (a squash merge would orphan
+> `03f0c3e` once the branch is deleted — the tag is what guards against that).
 
 ## Why the downsizing happened (the selection criterion)
 

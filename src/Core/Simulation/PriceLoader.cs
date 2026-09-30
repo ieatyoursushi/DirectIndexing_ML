@@ -201,6 +201,125 @@ public sealed class PriceLoader
         return loader;
     }
 
+    // ── Synthetic GBM world (the second price source) ─────────────────────────
+
+    /// <summary>
+    /// Builds a fully synthetic price world: each name follows an independent GBM
+    /// S_{t+1} = S_t · exp((μ − σ²/2)Δ + σ√Δ Z), Δ = 1/252, S_0 = 100, on a weekday
+    /// calendar. The result is an ordinary <see cref="PriceLoader"/>, so the one
+    /// canonical <see cref="SimulationEngine"/> runs on it unchanged — replacing the
+    /// former MonteCarloEngine, a duplicated day loop that had drifted from the real
+    /// engine (see <c>DataMemo/archive/RetiredComponents.md</c> §8).
+    ///
+    /// Features: returns and MA-50/200 are computed from the synthetic closes exactly
+    /// as for real data. There is no intraday path, so RangeVol uses the proxy
+    /// σ_daily·√(4/π) (twice E|Z| under a Brownian-bridge approximation), and
+    /// high = low = close. Because the forward prices are real prices *of this world*,
+    /// Y_Soft_BT is defined here too.
+    /// </summary>
+    /// <param name="universe">Names, sectors and annualised σ per name (see <see cref="CalibrateGbmUniverse"/>).</param>
+    /// <param name="days">Calendar length in trading days; the engine starts at <see cref="WarmupDays"/>.</param>
+    /// <param name="seed">RNG seed — the world is a deterministic function of (universe, days, seed, drift).</param>
+    /// <param name="annualDrift">μ, annualised (default 0).</param>
+    /// <param name="start">First calendar date (default 2000-01-03, a Monday).</param>
+    public static PriceLoader FromGbm(
+        IReadOnlyList<(string Symbol, string Sector, float AnnualSigma)> universe,
+        int days, int seed, float annualDrift = 0f, DateOnly? start = null)
+    {
+        if (days <= WarmupDays)
+            throw new ArgumentException($"days must exceed the {WarmupDays}-day warmup.", nameof(days));
+
+        var loader = new PriceLoader();
+
+        var date = start ?? new DateOnly(2000, 1, 3);
+        while (loader._calendar.Count < days)
+        {
+            if (date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            {
+                loader._dateToIndex[date] = loader._calendar.Count;
+                loader._calendar.Add(date);
+            }
+            date = date.AddDays(1);
+        }
+
+        const float Dt = 1f / 252f;
+        const float RangeScale = 1.1284f;   // √(4/π)
+        var rng = new Random(seed);
+
+        foreach (var (sym, sector, sigma) in universe)
+        {
+            float ds    = sigma * MathF.Sqrt(Dt);                       // σ√Δ
+            float drift = (annualDrift - 0.5f * sigma * sigma) * Dt;    // (μ − σ²/2)Δ
+
+            var close = new float[days];
+            close[0] = 100f;
+            for (int t = 1; t < days; t++)
+                close[t] = close[t - 1] * MathF.Exp(drift + ds * GbmSimulator.NextGaussian(rng));
+
+            var ret = new float[days];
+            var rv  = new float[days];
+            ret[0] = rv[0] = float.NaN;
+            float dailySigma = sigma * MathF.Sqrt(Dt);
+            for (int t = 1; t < days; t++)
+            {
+                ret[t] = (close[t] - close[t - 1]) / close[t - 1];
+                rv[t]  = dailySigma * RangeScale;
+            }
+
+            loader._close[sym]    = close;
+            loader._high[sym]     = (float[])close.Clone();
+            loader._low[sym]      = (float[])close.Clone();
+            loader._return[sym]   = ret;
+            loader._rangeVol[sym] = rv;
+            loader._ma50[sym]     = ComputeMA(close, 50);
+            loader._ma200[sym]    = ComputeMA(close, 200);
+            loader._sector[sym]   = sector;
+        }
+
+        Console.WriteLine(
+            $"[PriceLoader] synthetic GBM world: {universe.Count} names, {days} trading days " +
+            $"({loader._calendar[0]} → {loader._calendar[^1]}), seed={seed}, μ={annualDrift}.");
+        return loader;
+    }
+
+    /// <summary>
+    /// Per-name σ for a synthetic world, calibrated from a real loader: annualised
+    /// trailing-<paramref name="window"/>-day realised volatility at the last available
+    /// day, falling back to <paramref name="fallbackSigma"/> with fewer than 5 valid returns.
+    /// </summary>
+    public static List<(string Symbol, string Sector, float AnnualSigma)> CalibrateGbmUniverse(
+        PriceLoader real, int window = 60, float fallbackSigma = 0.20f)
+    {
+        int tLast = real.DayCount - 1;
+        var universe = new List<(string, string, float)>();
+        foreach (var sym in real.Symbols.OrderBy(s => s, StringComparer.Ordinal))
+        {
+            var ret = real.GetReturnArray(sym);
+            int count = 0; double sum = 0, sumSq = 0;
+            for (int i = Math.Max(0, tLast - window); i <= tLast; i++)
+            {
+                if (float.IsNaN(ret[i])) continue;
+                sum += ret[i]; sumSq += (double)ret[i] * ret[i]; count++;
+            }
+            float sigma = fallbackSigma;
+            if (count >= 5)
+            {
+                double mean = sum / count;
+                double s    = Math.Sqrt(Math.Max(sumSq / count - mean * mean, 0.0) * 252.0);
+                if (s > 0 && !double.IsNaN(s)) sigma = (float)s;
+            }
+            universe.Add((sym, real.GetSector(sym), sigma));
+        }
+        return universe;
+    }
+
+    /// <summary>A uniform synthetic universe — no real data required (smoke tests, stress runs).</summary>
+    public static List<(string Symbol, string Sector, float AnnualSigma)> UniformGbmUniverse(
+        int names, float annualSigma = 0.25f) =>
+        Enumerable.Range(0, names)
+            .Select(i => ($"SYN{i:D3}", $"Sector{i % 11:D2}", annualSigma))
+            .ToList();
+
     // ── Lookup API ────────────────────────────────────────────────────────────
 
     public float   GetClose(string symbol, int t)     => _close[symbol][t];

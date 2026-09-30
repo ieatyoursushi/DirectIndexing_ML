@@ -82,8 +82,9 @@ public sealed class TrackingErrorProxy
     /// Σ_ij is estimated from all days t where both r_t^(i) and r_t^(j) are non-NaN.
     /// The resulting matrix is symmetric; diagonal entries are per-stock daily variances.
     ///
-    /// Exposed as <c>internal static</c> so <see cref="MonteCarloEngine"/> can reuse
-    /// it for its calibrated constructor without duplicating the logic.
+    /// Estimated over the loader's FULL history — including days after the one being
+    /// priced. That is a look-ahead in a feature (σ_TE, which also enters U), slated
+    /// for the point-in-time estimator in v0.3-4 (ROADMAP, finding F1).
     /// </summary>
     internal static float[,] ComputeCovariance(PriceLoader prices, List<string> symbols, int N)
     {

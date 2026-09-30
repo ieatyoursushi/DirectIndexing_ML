@@ -75,7 +75,7 @@ if (args.Contains("--contrib"))
     if (cnArg is not null && int.TryParse(cnArg["--contrib-names=".Length..], out var cn))
         contribCfg = contribCfg with { NamesPerContribution = cn };
 }
-if (mode is "simulate" && contribCfg.Enabled)
+if (mode is ("simulate" or "simulate-mc") && contribCfg.Enabled)
     Console.WriteLine($"[ContributionPolicy] {contribCfg.Describe()}");
 var mlnetArtifacts = $"../data/artifacts-mlnet{SplitPolicy.ArtifactTag}/";
 
@@ -150,23 +150,34 @@ switch (mode)
                           $"({sw.Elapsed.TotalMinutes:F2} minutes, {sw.Elapsed.TotalSeconds:F0}s)");
     }
     break;
-    // Alternate: Monte Carlo simulation with synthetic GBM prices.
-    // Calibrates per-stock σ from the same real data then generates N days of GBM paths.
-    // Produces data/lots-mc.csv alongside the backtesting data/lots.csv.
+    // Synthetic world: the SAME SimulationEngine over a GBM price source (the second
+    // price source; the RL environment's episode generator). σ per name is calibrated
+    // from the real cache's trailing 60 days, or — with --mc-standalone=<names> — a
+    // uniform universe that needs no data at all (smoke tests, stress runs).
+    // Flags: --mc-days=N (default 504), --mc-seed=N (default 42), --mc-sigma=S
+    // (standalone only, default 0.25). Oracle/contribution flags apply as in simulate.
     case "simulate-mc":
     {
-        var loader = new PriceLoader();
-        loader.Load("../data/raw", "../data/constituents.json");
+        int    mcDays  = IntFlag("--mc-days=", 504);
+        int    mcSeed  = IntFlag("--mc-seed=", 42);
+        int    mcNames = IntFlag("--mc-standalone=", 0);
+        float  mcSigma = (float)DoubleFlag("--mc-sigma=", 0.25);
 
-        var mcEngine  = new MonteCarloEngine(loader, annualDrift: 0f);
-        var snapshots = mcEngine.Run(
-            initialPortfolioValue: 10_000_000m,
-            simDays:    504,
-            warmupDays: 200,
-            seed:       42,
-            oracleConfig: oracleCfg);
+        List<(string Symbol, string Sector, float AnnualSigma)> universe;
+        if (mcNames > 0)
+            universe = PriceLoader.UniformGbmUniverse(mcNames, mcSigma);
+        else
+        {
+            var real = new PriceLoader();
+            real.Load("../data/raw", "../data/constituents.json");
+            universe = PriceLoader.CalibrateGbmUniverse(real);
+        }
 
-        SimulationExporter.WriteCsv(snapshots, $"../data/lots-mc{oracleCfg.DatasetTag}.csv");
+        var synthetic = PriceLoader.FromGbm(universe, mcDays, mcSeed);
+        var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg).Run(10_000_000m);
+        new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
+        SimulationExporter.WriteCsv(snapshots,
+            $"../data/lots-mc{oracleCfg.DatasetTag}{contribCfg.DatasetTag}.csv");
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -355,6 +366,12 @@ switch (mode)
         gbmTests.Test_FractionFiring_InRange_ForRealisticPredicate();
         gbmTests.Test_NextGaussian_NearStandardNormal();
 
+        var synthTests = new SyntheticWorldTests();
+        synthTests.Test_Calendar_IsWeekdaysAndCrossesYearEnd();
+        synthTests.Test_Deterministic_ForSeed();
+        synthTests.Test_RealisedVol_MatchesSigma();
+        synthTests.Test_CanonicalEngine_RunsOnSyntheticWorld();
+
         // ── ML.NET layer tests ──────────────────────────────────────────────
         new LotStateVectorCsvReaderTests().Test_RoundTrip_PreservesAllFields();
         new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
@@ -386,4 +403,19 @@ switch (mode)
         Console.WriteLine("All tests passed.");
     }
     break;
+}
+
+// ── Flag helpers ─────────────────────────────────────────────────────────────
+int IntFlag(string prefix, int fallback)
+{
+    var a = args.FirstOrDefault(x => x.StartsWith(prefix));
+    return a is not null && int.TryParse(a[prefix.Length..], out var v) ? v : fallback;
+}
+
+double DoubleFlag(string prefix, double fallback)
+{
+    var a = args.FirstOrDefault(x => x.StartsWith(prefix));
+    return a is not null && double.TryParse(a[prefix.Length..],
+        System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
 }

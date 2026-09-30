@@ -1,8 +1,8 @@
 # Simulation Layer — Mathematical Reference
 
 This memo documents the mathematical foundations and design decisions for the simulation
-layer that produces `data/lots.csv` (the training dataset) and `data/lots-mc.csv` (the
-Monte Carlo augmentation dataset).
+layer that produces `data/lots.csv` (the training dataset, real prices) and `data/lots-mc.csv`
+(the same engine over a synthetic GBM price world).
 
 See `PortfolioMath.md` for the portfolio domain model (Lot, PortfolioState, LotSnapshot).
 
@@ -11,30 +11,31 @@ See `PortfolioMath.md` for the portfolio domain model (Lot, PortfolioState, LotS
 ## §1  Architecture Overview
 
 ```
-PriceLoader  ─────────────────────────────────┐
-(real historical prices)                       │
-                                               ▼
+PriceLoader.Load(data/raw)            PriceLoader.FromGbm(universe, days, seed)
+(real historical prices)              (synthetic GBM world, σ calibrated per name)
+          │                                       │
+          └──────────────► one price source ◄─────┘
+                                 │
+                                 ▼
 SimulationEngine ──► SoftLabelBuilder ──► SimulationExporter
-(backtesting)         (Y_Soft_GBM via              │
- Y_Oracle hard label)  GbmSimulator;               ▼
-                        Y_Soft_BT via         data/lots.csv
-                        real forward window)
+(the one day loop;    (Y_Soft_GBM via          │
+ Y_Oracle hard label)  GbmSimulator;           ▼
+                       Y_Soft_BT via       data/lots.csv  |  data/lots-mc.csv
+                       forward window)
 
-GbmSimulator ◄──── used by both SoftLabelBuilder and MonteCarloEngine
-(standalone GBM engine)
-
-MonteCarloEngine ────────────────────────────► SimulationExporter
-(alternate: synthetic GBM prices,                   │
- calibrated σ from PriceLoader)                     ▼
-                                              data/lots-mc.csv
+GbmSimulator ◄──── used by SoftLabelBuilder (forward paths) and FromGbm (price world)
 ```
 
-**Two simulation modes produce the same `LotStateVector` schema:**
+**One engine, two price sources, one `LotStateVector` schema.** Until the pre-v0.3
+downsizing the synthetic world had its own engine (`MonteCarloEngine`), a duplicated day
+loop that drifted from the real one; it was folded in so every simulator fix applies to both
+(`archive/RetiredComponents.md` §8). This is also the shape the v0.4b RL environment needs:
+real history for evaluation, synthetic paths for cheap episodes and stress regimes.
 
-| Mode | Prices | Y_Oracle | Y_Soft_GBM | Y_Soft_BT |
+| Command | Prices | Y_Oracle | Y_Soft_GBM | Y_Soft_BT |
 |------|--------|----------|------------|-----------|
-| `simulate` (backtesting) | Real historical (FMP) | Deterministic | GbmSimulator | Real forward window |
-| `simulate-mc` (Monte Carlo) | Synthetic GBM | Deterministic on sim prices | GbmSimulator | NaN |
+| `simulate` | Real historical (FMP) | Deterministic | GbmSimulator | Real forward window |
+| `simulate-mc` | Synthetic GBM world | Deterministic on sim prices | GbmSimulator | Forward window of the synthetic world |
 
 ---
 
@@ -153,7 +154,7 @@ upward bias of $\sigma^2/2$ per unit time.
 | $\mu$ | Annual drift | 0 | Risk-neutral; positive for bullish scenarios |
 | $\sigma$ | Annual volatility | Calibrated per-stock | Fallback 20% if calibration fails |
 | $\Delta$ | Time step | $1/252$ | One trading day in annual units |
-| $N$ | Number of paths | 200 | For Y_Soft_GBM; 1 for MonteCarloEngine price gen |
+| $N$ | Number of paths | 200 | For Y_Soft_GBM; 1 per name for `FromGbm` price generation |
 | $H$ | Horizon | 30 | Forward window in trading days |
 
 ### 3.3  Box-Muller N(0,1) Generator
@@ -329,56 +330,57 @@ For $N=503$, $T=504$: construction $< 1\text{s}$; per-day $\approx 253\text{K} \
 
 ---
 
-## §6  Monte Carlo Engine (`MonteCarloEngine`)
+## §6  Synthetic Price World (`PriceLoader.FromGbm`)
 
 ### 6.1  Price Generation
 
-For each ticker $i$, generate a GBM price series of length $T$ starting from $S_0^{(i)} = 100$:
+For each name $i$, a GBM price series of length $T$ on a weekday calendar, $S_0^{(i)} = 100$:
 
 $$
-S_{t+1}^{(i)} = S_t^{(i)} \cdot \exp\!\Bigl((\mu - \tfrac{\sigma_i^2}{2})\Delta + \sigma_i\sqrt{\Delta}\, Z_t^{(i)}\Bigr)
+S_{t+1}^{(i)} = S_t^{(i)} \cdot \exp\!\Bigl((\mu - \tfrac{\sigma_i^2}{2})\Delta + \sigma_i\sqrt{\Delta}\, Z_t^{(i)}\Bigr),
+\qquad \Delta = 1/252,\quad Z_t^{(i)} \overset{\text{iid}}{\sim} \mathcal N(0,1).
 $$
 
-Tickers are simulated **independently** (no cross-correlation).  This is a simplification;
-in the real data, cross-sectional return correlations exist within sectors.  Correlated GBM
-via a Cholesky factored covariance matrix is a natural v0.2 extension.
+Names are simulated **independently** — the true covariance of this world is diagonal,
+$\Sigma = \operatorname{diag}(\sigma_i^2\Delta)$. (The retired engine priced σ_TE with the
+*real* data's covariance over these independent prices, an inconsistency the merge removes:
+`TrackingErrorProxy` now estimates Σ̂ from the synthetic world's own returns.) Correlated
+GBM via a Cholesky factor of a cleaned Σ̂ is the natural extension once v0.3-4 lands.
 
-### 6.2  Volatility Calibration
-
-When constructed from a `PriceLoader`:
+### 6.2  Volatility Calibration (`CalibrateGbmUniverse`)
 
 $$
 \hat\sigma_i = \sqrt{252} \cdot \hat s_i, \qquad
-\hat s_i = \sqrt{\frac{1}{T_{\text{cal}}} \sum_{t=t_{\text{last}}-60}^{t_{\text{last}}} r_t^{(i)2} - \bar r_i^2}
+\hat s_i^2 = \frac{1}{n_i} \sum_{t=t_{\text{last}}-60}^{t_{\text{last}}} r_t^{(i)2} - \bar r_i^2
 $$
 
-using the trailing 60 calendar-day return window.  Falls back to $\hat\sigma_i = 0.20$ if
-fewer than 5 valid returns are available.
+over the trailing 60 **trading**-day window of the real cache, falling back to
+$\hat\sigma_i = 0.20$ with fewer than 5 valid returns. `--mc-standalone=<n>` skips
+calibration entirely (a uniform universe at `--mc-sigma`, default 0.25) so the whole
+pipeline runs with no market data.
 
 ### 6.3  Range Volatility Proxy
 
-The real simulation uses $(H_t - L_t) / P_{t-1}$ (true intraday range).  The MC engine
-does not simulate intraday paths; it uses the expected absolute value of a one-step
-$\mathcal{N}(0, \sigma_{\text{daily}})$ draw as a proxy for the normalised daily range:
+There is no intraday path, so the normalised daily range uses
 
 $$
-\widehat{\text{RangeVol}}_t^{(i)} = \sigma_{\text{daily}}^{(i)} \cdot \sqrt{\frac{4}{\pi}} \approx 1.128\, \sigma_{\text{daily}}^{(i)}
+\widehat{\text{RangeVol}}_t^{(i)} = \sigma_{\text{daily}}^{(i)} \cdot \sqrt{\frac{4}{\pi}} \approx 1.128\, \sigma_{\text{daily}}^{(i)},
 $$
 
-The factor $\sqrt{4/\pi}$ comes from $2 \cdot E[|Z|] = 2 \cdot \sqrt{2/\pi}$ (twice the
-expected absolute half-range under a Brownian bridge approximation).
+twice the expected absolute value of a one-step $\mathcal N(0,\sigma_{\text{daily}})$ draw.
+Returns and MA-50/200 are computed from the synthetic closes exactly as for real data.
 
-### 6.4  When to Use Monte Carlo vs Backtesting
+### 6.4  When to Use the Synthetic World vs Backtesting
 
-| Criterion | Backtesting | Monte Carlo |
+| Criterion | Backtesting | Synthetic |
 |-----------|-------------|-------------|
 | Empirically correct feature distributions | ✓ | ✗ (i.i.d. GBM) |
 | Reproduces fat tails, momentum, sector correlation | ✓ | ✗ |
-| Y_Soft_BT available | ✓ | ✗ |
-| Runnable without FMP data files | ✗ | ✓ |
+| Y_Soft_BT available | ✓ | ✓ (synthetic forward window) |
+| Runnable without FMP data files | ✗ | ✓ (`--mc-standalone`) |
 | Controllable market regime (drift, vol) | ✗ | ✓ |
 | Scalable to many years / scenarios | Limited by data | ✓ |
-| Primary training data | ✓ | Supplement / augmentation |
+| Primary training data | ✓ | Supplement, smoke tests, RL episodes |
 
 ---
 
