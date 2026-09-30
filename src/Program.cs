@@ -370,6 +370,8 @@ switch (mode)
         new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
         new StratifiedKFoldTests().Test_FoldsPartitionDataAndContainPositives();
 
+        new WashSaleTests().Test_Audit_WindowEdges_SameLot_AndGains();
+
         var contribTests = new ContributionPolicyTests();
         contribTests.Test_DefaultIsDisabled();
         contribTests.Test_AmountProRatedOverInterval();

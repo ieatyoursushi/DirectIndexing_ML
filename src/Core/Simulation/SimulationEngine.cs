@@ -35,6 +35,12 @@ public sealed class SimulationEngine
     // ── Output ────────────────────────────────────────────────────────────────
     private readonly List<LotStateVector> _snapshots = new(128_000);
 
+    // ── Trade log: every lot opened or sold (audited by WashSaleAudit) ─────────
+    private readonly List<TradeEvent> _trades = new();
+
+    /// <summary>Every executed buy (initial book, reopen, contribution) and sale (harvest).</summary>
+    public IReadOnlyList<TradeEvent> Trades => _trades;
+
     // ── Reopen queue: reopenDay → list of (symbol, sector, dollars) ──────────
     private readonly Dictionary<int, List<(string Symbol, string Sector, decimal Dollars)>>
         _reopenQueue = new();
@@ -142,6 +148,7 @@ public sealed class SimulationEngine
                 if (shares == 0) continue;
                 var lot = new Lot(sym, sector, price, shares, t);
                 _state.OpenLot(lot);
+                _trades.Add(new TradeEvent(_prices.GetDate(t), t, sym, TradeKind.Buy, lot, price, 0m));
                 _lotCount[sym] = (_lotCount.GetValueOrDefault(sym) + 1);
             }
             _reopenQueue.Remove(t);
@@ -235,6 +242,8 @@ public sealed class SimulationEngine
         decimal dollars = lot.Shares * close;
         int     lotsBefore = _lotCount.GetValueOrDefault(lot.Symbol, 1);
 
+        _trades.Add(new TradeEvent(_prices.GetDate(t), t, lot.Symbol, TradeKind.Sell, lot, close,
+                                   (close - lot.CostBasis) * lot.Shares));
         _state.HarvestLot(lot, close);
 
         _lotCount[lot.Symbol] = Math.Max(0, lotsBefore - 1);
@@ -299,7 +308,9 @@ public sealed class SimulationEngine
             int shares = (int)(perName / price);
             if (shares == 0) continue;
 
-            _state.OpenLot(new Lot(symbol, _prices.GetSector(symbol), price, shares, t));
+            var lot = new Lot(symbol, _prices.GetSector(symbol), price, shares, t);
+            _state.OpenLot(lot);
+            _trades.Add(new TradeEvent(_prices.GetDate(t), t, symbol, TradeKind.Buy, lot, price, 0m));
             _lotCount[symbol] = _lotCount.GetValueOrDefault(symbol) + 1;
             _contributedTotal += shares * price;
             _contributedLots++;
@@ -325,6 +336,7 @@ public sealed class SimulationEngine
             string sector = _prices.GetSector(symbol);
             var lot = new Lot(symbol, sector, price, shares, day0);
             _state.OpenLot(lot);
+            _trades.Add(new TradeEvent(_prices.GetDate(day0), day0, symbol, TradeKind.Buy, lot, price, 0m));
             _lotCount[symbol] = 1;
         }
 
