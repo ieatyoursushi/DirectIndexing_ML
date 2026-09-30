@@ -169,9 +169,7 @@ switch (mode)
         SimulationExporter.WriteCsv(snapshots, $"../data/lots-mc{oracleCfg.DatasetTag}.csv");
     }
     break;
-    case "train": throw new NotImplementedException("Training not yet built — use mlnet-supervised.");
-
-    // ── ML.NET layer — typed, in-process supervised/unsupervised pipeline ─────
+    // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
     // Each case loads data/lots.csv into List<LotStateVector>, then hands it
     // straight to LoadFromEnumerable. No CSV inside ML.NET, no [LoadColumn]
     // round-trip — the typed schema flows all the way through.
@@ -183,25 +181,6 @@ switch (mode)
         Environment.ExitCode = rc;
     }
     break;
-    case "mlnet-unsupervised":
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
-    }
-    break;
-    case "mlnet-supervised":   // PRIMARY: logistic on Y_Soft_BT (backward compat)
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
-    }
-    break;
-    case "mlnet-baseline":     // SANITY: logistic on Y_Oracle (backward compat)
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervised(data, target: "oracle", artifactsDir: mlnetArtifacts);
-    }
-    break;
-
     // ── Individual model cases (full CV + test eval for a single model) ──────
     case "mlnet-gbt":
     {
@@ -210,29 +189,15 @@ switch (mode)
         MLnetPipeline.RunSupervisedModel("gbt", data, "oracle",  mlnetArtifacts);
     }
     break;
-    case "mlnet-rf":
+    case "mlnet-logistic":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("rf", data, "soft_bt", mlnetArtifacts);
-        MLnetPipeline.RunSupervisedModel("rf", data, "oracle",  mlnetArtifacts);
-    }
-    break;
-    case "mlnet-elnet":
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("elnet", data, "soft_bt", mlnetArtifacts);
-        MLnetPipeline.RunSupervisedModel("elnet", data, "oracle",  mlnetArtifacts);
-    }
-    break;
-    case "mlnet-linreg":
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunSupervisedModel("linreg", data, "soft_bt", mlnetArtifacts);
-        MLnetPipeline.RunSupervisedModel("linreg", data, "oracle",  mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("logistic", data, "soft_bt", mlnetArtifacts);
+        MLnetPipeline.RunSupervisedModel("logistic", data, "oracle",  mlnetArtifacts);
     }
     break;
 
-    // ── Champion-selection run: CV all models → best 1-2 get test eval ───────
+    // ── Comparison run: CV GBT + logistic → leaderboard → test eval of both ───
     case "mlnet-compare":
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
@@ -280,8 +245,7 @@ switch (mode)
     {
         var sw = Stopwatch.StartNew();
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
-        // Champion-selection: CV all supervised models, full eval for best 1-2 + linreg demonstration.
+        // Comparison run: CV GBT + logistic, leaderboard names the champion, test eval both.
         MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
         MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
         var rc = MLnetPipeline.RunRender(
@@ -310,7 +274,6 @@ switch (mode)
     case "report-all":   // mlnet-all training + report, one command
     {
         var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunUnsupervised(data, mlnetArtifacts);
         MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
         MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
         var rc = PythonRunner.Run("scripts.report",
@@ -409,7 +372,6 @@ switch (mode)
         temporalTests.Test_PurgedFolds_EmbargoBothSides();
         temporalTests.Test_Deterministic();
         temporalTests.Test_DataSplit_PolicyDispatch();
-        new SilhouetteTests().Test_TwoBlobsHighSilhouette();
         var preprocessing = new PreprocessingTests();
         preprocessing.Test_MedianImputerReplacesNaNs();
         preprocessing.Test_ClassWeightsBalanced();
@@ -417,12 +379,9 @@ switch (mode)
 
         // ── Model-suite tests ───────────────────────────────────────────────
         new GbtTrainerTests().Test_GbtCv_SeparableData();
-        new RfTrainerTests().Test_RfCv_SeparableData();
-        new ElasticNetTrainerTests().Test_ElnetCv_BothPenaltiesSearched();
-        var linRegTests = new LinRegTrainerTests();
-        linRegTests.Test_LinRegCv_ProducesLowerPrAucThanGbt();
-        linRegTests.Test_LinRegRun_FractionOutsideUnit();
-        new ChampionSelectionTests().Test_GbtBeatsLinregOnSeparableData();
+        var championTests = new ChampionSelectionTests();
+        championTests.Test_SelectChampion_IsArgmaxOfCv();
+        championTests.Test_GbtBeatsLogisticOnNonLinearTarget();
 
         Console.WriteLine("All tests passed.");
     }

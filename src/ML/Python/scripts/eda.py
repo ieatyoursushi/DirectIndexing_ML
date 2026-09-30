@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import matplotlib
@@ -15,14 +16,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Schema v3 (v0.25): d = 17. G_YTD → three TaxLedger columns; TaxAlpha → TaxValue.
-NUMERIC = [
-    "L", "H", "S", "B", "W", "K",
-    "RealizedGainsYTD", "LossCarryforward", "OrdinaryOffsetBudget",
-    "Sigma_TE", "WashClock",
-    "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
-    "TaxValue", "DaysToYE",
-]
+from scripts.codebook_schema import COLUMNS
+
+# The numeric feature block, read from the single schema source (codebook_schema.py)
+# rather than restated here — a hand-kept copy is how the 5×3 grid below silently
+# fell behind when d went 15 → 17.
+NUMERIC = [c["name"] for c in COLUMNS
+           if c["role"].startswith("feature") and not c["dtype"].startswith("string")]
 
 
 def main() -> int:
@@ -60,8 +60,11 @@ def main() -> int:
     fig.savefig(out / "corr_heatmap.png", dpi=120)
     plt.close(fig)
 
-    # ── feature distributions (5 × 3 grid) ──────────────────────────────────
-    fig, axes = plt.subplots(5, 3, figsize=(12, 14))
+    # ── feature distributions (grid sized to d) ─────────────────────────────
+    nrows = math.ceil(len(NUMERIC) / 3)
+    fig, axes = plt.subplots(nrows, 3, figsize=(12, 2.8 * nrows), squeeze=False)
+    for ax in axes.flat[len(NUMERIC):]:
+        ax.set_visible(False)
     for i, col in enumerate(NUMERIC):
         ax = axes[i // 3, i % 3]
         series = df[col].replace([np.inf, -np.inf], np.nan).dropna()
