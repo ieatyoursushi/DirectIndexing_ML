@@ -97,9 +97,8 @@ COLUMNS: list[dict] = [
         "description": (
             "Signed net realized gain/loss for the calendar year to date "
             "(the pre-v0.25 G_YTD), shared by every lot at the same timestep. "
-            "In gated-oracle runs it is seeded with external gains "
-            "(+$1,000,000 = 10% of the $10M portfolio) at simulation start and "
-            "after each year-end reset; harvesting a loss pushes it down. "
+            "Starts at 0 (no external-gains seed: the honest loss-only book); "
+            "harvesting a loss pushes it down, realized gains push it up. "
             "Resets to 0 at year-end (net loss beyond the $3k ordinary "
             "allowance rolls into LossCarryforward instead of vanishing)."
         ),
@@ -263,13 +262,13 @@ COLUMNS: list[dict] = [
         "units": "—",
         "role": "label (hard)",
         "description": (
-            "Deterministic oracle harvest decision — in gated (v0.2-legacy) "
-            "runs, the conjunction of four gates: 1[L ≤ −0.02] · "
-            "1[Sigma_TE ≤ 0.05] · 1[RealizedGainsYTD > 0] · 1[WashClock ≥ 30]. "
-            "The gains gate is a tracked defect (issue #23); the v0.25 "
-            "scalarized oracle replaces it with a utility threshold. This is "
-            "the decision boundary the supervised models try to learn. Never "
-            "used as a model input."
+            "Deterministic scalarized-oracle harvest decision: "
+            "1[L ≤ −0.02] · 1[WashClock ≥ 30] · 1[Sigma_TE ≤ 0.15] · 1[U > 0], "
+            "U = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = $10). "
+            "The decision boundary is the level set {U = 0}. This is the "
+            "cross-sectional target the supervised models recover (the leakage "
+            "control: it is deterministic in current features). Never used as "
+            "a model input."
         ),
         "encoding": "0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.",
         "missing": "None.",
@@ -339,32 +338,13 @@ COLUMNS: list[dict] = [
             "flat round-trip harvest friction, override via --ctrade=). The "
             "scalarized oracle fires iff U > 0 (plus the hard gates), so the "
             "decision boundary is the level set {U = 0}. "
-            "Computed under the run's OracleConfig in both gated and scalarized "
-            "runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
+            "Computed under the run's OracleConfig. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
             "exported as the issue-#17 continuous target and the v0.4 RL "
             "per-decision reward."
         ),
         "encoding": "Signed continuous dollars.",
         "missing": "None.",
         "source": "OracleBoundary.Utility(TaxValue, Sigma_TE, config)",
-    },
-    {
-        "name": "Y_Oracle_GatedSpec",
-        "dtype": "int (binary)",
-        "units": "—",
-        "role": "label (ablation spectator)",
-        "description": (
-            "What the v0.2 four-gate oracle would decide on THIS row, with "
-            "legacy G_YTD bookkeeping (seed + realized P&L of this run's "
-            "harvests, re-seeded each year-end) carried counterfactually "
-            "alongside the acting oracle. Equals Y_Oracle in gated runs; in "
-            "scalarized runs it enables same-row boundary-geometry comparison. "
-            "Spectator ≠ acting: the trajectory (which rows exist, wash clocks, "
-            "ledger state) was produced by the acting oracle."
-        ),
-        "encoding": "0 = legacy oracle would not harvest, 1 = would harvest.",
-        "missing": "None.",
-        "source": "OracleBoundary legacy overload over spectator G_YTD",
     },
     {
         "name": "Symbol",

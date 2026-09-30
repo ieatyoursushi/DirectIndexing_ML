@@ -9,7 +9,7 @@ using DirectIndexing.Core.Oracle;
 /// </summary>
 public class OracleScalarizedTests
 {
-    private static readonly OracleConfig Cfg = OracleConfig.Scalarized;
+    private static readonly OracleConfig Cfg = OracleConfig.Default;
 
     // Test 1: the U > 0 level set replaces the gains gate — fires with zero
     // net realized gains (the exact case the old gate wrongly vetoed).
@@ -20,7 +20,6 @@ public class OracleScalarizedTests
         int label = OracleBoundary.Label(
             unrealizedReturn: -0.05m,
             sigmaTE:           0.025f,          // penalty = 90000·0.000625 ≈ $56
-            netRealizedYtd:    0m,
             washClock:         999,
             taxValue:          400m,            // U ≈ 400 − 56 > 0
             config:            Cfg);
@@ -36,7 +35,6 @@ public class OracleScalarizedTests
         int label = OracleBoundary.Label(
             unrealizedReturn: -0.05m,
             sigmaTE:           0.05f,           // penalty = 90000·0.0025 = $225
-            netRealizedYtd:    1_000_000m,      // irrelevant in scalarized mode
             washClock:         999,
             taxValue:          150m,            // U = 150 − 225 < 0
             config:            Cfg);
@@ -49,8 +47,8 @@ public class OracleScalarizedTests
     // fails at elevated TE clears at calm TE (no box corner, a curved boundary).
     public void Test_TradeOff_TaxValueVsTrackingError()
     {
-        int atCalmTE = OracleBoundary.Label(-0.05m, 0.025f, 0m, 999, 150m, Cfg);
-        int atHighTE = OracleBoundary.Label(-0.05m, 0.050f, 0m, 999, 150m, Cfg);
+        int atCalmTE = OracleBoundary.Label(-0.05m, 0.025f, 999, 150m, Cfg);
+        int atHighTE = OracleBoundary.Label(-0.05m, 0.050f, 999, 150m, Cfg);
         Debug.Assert(atCalmTE == 1 && atHighTE == 0,
             $"Same lot must clear at calm TE and fail at elevated TE, got {atCalmTE}/{atHighTE}");
         Console.WriteLine("Scalarized Test 3 passed: same taxValue clears at calm TE, fails at high TE");
@@ -65,7 +63,6 @@ public class OracleScalarizedTests
         int label = OracleBoundary.Label(
             unrealizedReturn: -0.50m,
             sigmaTE:           0.20f,
-            netRealizedYtd:    0m,
             washClock:         999,
             taxValue:          1_000_000m,      // U ≫ 0 — but the ceiling vetoes
             config:            Cfg);
@@ -78,37 +75,44 @@ public class OracleScalarizedTests
     public void Test_LossAndWashGates_StillBind()
     {
         // Loss too shallow (−1% > −θ₁)
-        int shallow = OracleBoundary.Label(-0.01m, 0.02f, 0m, 999, 500m, Cfg);
+        int shallow = OracleBoundary.Label(-0.01m, 0.02f, 999, 500m, Cfg);
         Debug.Assert(shallow == 0, "Loss-depth gate must still bind");
 
         // Wash-sale window active (clock 15 < 30)
-        int washed = OracleBoundary.Label(-0.05m, 0.02f, 0m, 15, 500m, Cfg);
+        int washed = OracleBoundary.Label(-0.05m, 0.02f, 15, 500m, Cfg);
         Debug.Assert(washed == 0, "Wash-sale gate must still bind (IRS §1091)");
 
         Console.WriteLine("Scalarized Test 5 passed: loss-depth and wash-sale hard gates unchanged");
     }
 
-    // Test 6: gated mode through the SAME config-driven entry point is
-    // bit-identical to the legacy overload (the ablation baseline contract).
-    public void Test_GatedMode_MatchesLegacyOverload()
+    // Test 6: the §1091 gate opens exactly at the window length (clock = 30 fires,
+    // 29 does not) — the boundary case ported from the retired gated-arm suite.
+    public void Test_WashGate_OpensExactlyAtBoundary()
     {
-        var cases = new (decimal ell, float te, decimal gYtd, int wash)[]
+        int atEdge   = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays,     400m, Cfg);
+        int oneShort = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays - 1, 400m, Cfg);
+        Debug.Assert(atEdge == 1 && oneShort == 0,
+            $"wash gate must open at clock = {Cfg.WashSaleDays}, got {atEdge}/{oneShort}");
+        Console.WriteLine("Scalarized Test 6 passed: wash gate opens exactly at the window length");
+    }
+
+    // Test 8: the snapshot overload (the engine's call site) is the scalar form.
+    public void Test_SnapshotOverload_MatchesScalarForm()
+    {
+        var cases = new (float ell, float te, int wash, float tv)[]
         {
-            (-0.05m, 0.01f,  500m, 999),   // all gates open → 1
-            (-0.05m, 0.01f,    0m, 999),   // gains gate closed → 0
-            (-0.05m, 0.06f,  500m, 999),   // legacy TE cap binds → 0
-            (-0.01m, 0.01f,  500m, 999),   // loss too shallow → 0
-            (-0.05m, 0.01f,  500m,  10),   // wash active → 0
+            (-0.05f, 0.025f, 999, 400f), (-0.05f, 0.05f, 999, 150f),
+            (-0.01f, 0.02f, 999, 500f),  (-0.05f, 0.02f,  15, 500f),
         };
-        foreach (var (ell, te, gYtd, wash) in cases)
+        foreach (var (ell, te, wash, tv) in cases)
         {
-            int legacy = OracleBoundary.Label(ell, te, gYtd, wash);
-            int routed = OracleBoundary.Label(ell, te, gYtd, wash,
-                                              taxValue: 12345m, OracleConfig.Gated);
-            Debug.Assert(legacy == routed,
-                $"Gated mode must ignore taxValue and match legacy: case ({ell},{te},{gYtd},{wash})");
+            var snap = new DirectIndexing.Core.Portfolio.LotStateVector
+                { L = ell, Sigma_TE = te, WashClock = wash, TaxValue = tv };
+            int viaSnap   = OracleBoundary.Label(snap, Cfg);
+            int viaScalar = OracleBoundary.Label((decimal)ell, te, wash, (decimal)tv, Cfg);
+            Debug.Assert(viaSnap == viaScalar, $"snapshot/scalar mismatch at ({ell},{te},{wash},{tv})");
         }
-        Console.WriteLine("Scalarized Test 6 passed: gated mode bit-identical to legacy overload");
+        Console.WriteLine("Scalarized Test 8 passed: snapshot overload ≡ scalar form");
     }
 
     // Test 7: Utility arithmetic — default-agnostic on CTrade so the PR-3

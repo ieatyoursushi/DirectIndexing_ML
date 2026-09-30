@@ -95,11 +95,11 @@ public sealed class TaxLedger
     public void RecordRealized(decimal delta) => RealizedGainsYTD += delta;
 
     /// <summary>
-    /// External/exogenous gains — the legacy G_YTD "seed" representing client
-    /// activity outside the simulated book. Deliberately does NOT net against
-    /// LossCarryforward, so gated-mode behaviour stays bit-identical to the
-    /// pre-ledger engine; carryforward netting against endogenous gains arrives
-    /// with the sell-winner trim process (v0.3+).
+    /// External/exogenous gains — client activity outside the simulated book
+    /// (the hook for the v0.5 outside-gains client personas; the engine no longer
+    /// seeds it since the gated oracle was retired). Deliberately does NOT net
+    /// against LossCarryforward; carryforward netting against endogenous gains
+    /// arrives with the sell-winner trim process (v0.3-7).
     /// </summary>
     public void RecordExternalGains(decimal amount) => RealizedGainsYTD += amount;
 

@@ -66,8 +66,8 @@ $$\mathcal{S}_t = \left(\mu_t,\ \text{ledger}_t,\ \mathcal{W}_t\right)$$
 | $\text{ledger}_t$ | `Ledger` | `TaxLedger` | Schedule D bookkeeping: `RealizedGainsYTD` $\in \mathbb{R}$ (signed net, the pre-v0.25 `G_YTD`), `LossCarryforward` $\in \mathbb{R}_{\ge 0}$ (survives year-end), derived `OrdinaryOffsetBudget` $\in [0, 3000]$ and `OffsetCapacity` |
 | $\mathcal{W}_t : \mathcal{S} \to \mathbb{Z}_{\geq 0}$ | `_washClocks` | `Dictionary<string,int>` | Days since last harvest per ticker |
 
-`PortfolioState.G_YTD` survives as a read alias of `Ledger.RealizedGainsYTD` — identical
-values, so the legacy (gated) oracle and all logging are unchanged.
+The pre-v0.25 name `G_YTD` survives only as a reading aid; the code reads
+`Ledger.RealizedGainsYTD` directly (the alias was retired with the gated oracle).
 
 ### 2.2 Time Evolution
 
@@ -89,7 +89,7 @@ $$\mathcal{W}_{t+1}^{A_i} = 0$$
 
 `RealizedGainsYTD` is a **signed scalar** tracking net realised P&L for the year:
 
-- **Positive**: net realised gains dominate (external/seeded gains exceed harvested losses)
+- **Positive**: net realised gains dominate (realized/external gains exceed harvested losses)
 - **Negative**: net realised losses dominate (TLH has offset or exceeded gains)
 
 Harvesting a losing lot ($P_t < p_k$) makes $\Delta G < 0$, pushing the net **more negative**.
@@ -113,7 +113,7 @@ with $D_k$ the loss in dollars, $\tau(h) \in \{0.37, 0.20\}$ (short/long at $h =
 $\tau_f = 0.20$, and $\delta = 0.5$ a constant stand-in for a hazard-rate discount on banked
 losses. At year-end, `RollYearEnd()` banks $\max(0, \text{netLoss} - \$3{,}000)$ into
 `LossCarryforward` (which **survives**) and zeroes the annual accumulator. The legacy gate
-survives only in the `--oracle=gated` ablation arm.
+was retired with the gated oracle arm (`archive/RetiredComponents.md` §6).
 
 ### 2.4 The Wash-Sale Clock $\mathcal{W}_t$
 
@@ -132,7 +132,7 @@ After harvest, $\mathcal{W}_t^{A_i} \leftarrow 0$ and the clock counts up throug
 
 On January 1 of each simulated year the ledger rolls: net loss beyond the \$3k ordinary
 allowance banks into `LossCarryforward` (which persists), then `RealizedGainsYTD` resets to
-0 (the gated ablation arm then re-seeds it). Wash-sale clocks intentionally **do not
+0. Wash-sale clocks intentionally **do not
 reset** — the IRS 30-day window crosses year-end boundaries.
 
 ```csharp
@@ -170,11 +170,10 @@ LotSnapshot ∈ ℝ^d × 𝒴
     ├── Y_Soft   ∈ [0,1]              ← soft labels ỹ(x)  (GBM + BT)
     ├── Y_TaxValue ∈ ℝ≥0              ← continuous regression target (≡ TaxValue feature;
     │                                    regressions on it exclude that feature)
-    ├── Y_Utility ∈ ℝ                 ← raw U(x)  (diagnostic / v0.4 RL reward)
-    └── Y_Oracle_GatedSpec ∈ {0,1}    ← v0.2 spectator predicate (ablation)
+    └── Y_Utility ∈ ℝ                 ← raw U(x)  (per-lot diagnostic; see MLDerivations §2.5)
 ```
 
-So $d = 17$ before one-hot encoding of `Sector` (schema v3; was 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
+So $d = 17$ before one-hot encoding of `Sector` (schema v4, unchanged in $d$ since v3; was 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
 
 **Schema-first timing:** `LotSnapshot` is defined now as the **interface contract** before the simulation exists. Every downstream component — `PriceLoader`, `OracleGate`, `SoftLabelBuilder`, `SimulationExporter` — is built against this schema. Defining it late would mean those components implicitly define the schema through whatever they happen to produce, which is riskier in a typed system.
 
@@ -229,8 +228,7 @@ So $d = 17$ before one-hot encoding of `Sector` (schema v3; was 15 pre-v0.25). T
 | `Y_Oracle` | $f^*(x) \in \{0,1\}$ | Hard label from the acting oracle |
 | `Y_Soft` | $\tilde{y}(x) \in [0,1]$ | Soft labels from forward windows (GBM + BT) |
 | `Y_TaxValue` | $\in \mathbb{R}_{\ge 0}$ | Continuous target ≡ `TaxValue` (exclude that feature when regressing) |
-| `Y_Utility` | $U(x) \in \mathbb{R}$ | Raw scalarized objective; v0.4 RL per-decision reward |
-| `Y_Oracle_GatedSpec` | $\in \{0,1\}$ | v0.2 gated predicate as spectator (ablation diagnostics) |
+| `Y_Utility` | $U(x) \in \mathbb{R}$ | Raw scalarized objective (per-lot, one-step) |
 
 #### Metadata (drop before modelling)
 
@@ -328,16 +326,15 @@ curve in $(\sigma_{\text{TE}}, \text{taxValue})$ space — rather than the corne
 axis-aligned box. The fine-grained TE trade-off lives inside $U$ (priced by $\lambda$);
 the marginal TE cap of v0.2 ($\theta_2 = 0.05$) is demoted.
 
-**Legacy (v0.2 gated, `--oracle=gated` ablation arm only):** the conjunction of four
+**Retired (v0.2 gated oracle, removed in the pre-v0.3 downsizing):** the conjunction of four
 halfspace indicators — the harvest region a convex polytope, per §3.1 of the theory memo:
 
 $$f^*_{\text{gated}}(x) = \mathbb{1}[\ell \leq -\theta_1] \cdot \mathbb{1}[\sigma_{\text{TE}} \leq \theta_2] \cdot \mathbb{1}[G_t^{\text{YTD}} > 0] \cdot \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
 
 The gains gate was removed because its information is magnitude/timing, not permission
 (§2.3); its box-corner geometry — not linear-model capacity — is what made the gated oracle
-linearly unrecoverable at scale (measured: `GYTD_Redesign_Plan.md` §6.1). The gated
-predicate remains evaluable on every row of every run via the spectator label
-`Y_Oracle_GatedSpec`.
+linearly unrecoverable at scale (measured: `GYTD_Redesign_Plan.md` §6.1). Findings:
+`archive/RetiredComponents.md` §6.
 
 ---
 

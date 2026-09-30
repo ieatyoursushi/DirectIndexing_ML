@@ -9,18 +9,20 @@ using DirectIndexing.ML.MLNet.Splits;
 
 var mode = args.FirstOrDefault() ?? "simulate";
 
-// ── Oracle ablation flag (v0.25, issue #23) ─────────────────────────────────
-// --oracle=scalarized (default): 3 hard gates · 𝟙[U>0], no external-gains seed.
-// --oracle=gated: v0.2-legacy 4-gate oracle incl. G_YTD>0 + seed — the ablation
-// baseline. Datasets are kept apart (lots.csv vs lots_gated.csv) because the
-// ACTING oracle changes the trajectory itself; they are separate runs, not
-// two label columns of one run.
-var oracleCfg = args.Contains("--oracle=gated")
-    ? DirectIndexing.Core.Oracle.OracleConfig.Gated
-    : DirectIndexing.Core.Oracle.OracleConfig.Scalarized;
+// ── Oracle configuration ────────────────────────────────────────────────────
+// The scalarized oracle: 3 hard gates · 𝟙[U>0], U = taxValue − λσ_TE² − c_trade.
+// The v0.2 gated arm (--oracle=gated) was retired in the pre-v0.3 downsizing; fail
+// loudly rather than silently running the scalarized oracle under an old command.
+if (args.Any(a => a.StartsWith("--oracle=")))
+{
+    Console.Error.WriteLine("[ERROR] --oracle was retired with the gated oracle arm (schema v4). " +
+        "Findings: DataMemo/archive/RetiredComponents.md §6; code: tag archive/v0.3-pre-downsize.");
+    Environment.Exit(2);
+}
+var oracleCfg = DirectIndexing.Core.Oracle.OracleConfig.Default;
 
 // --ctrade=<dollars>: override the flat per-harvest friction inside U(x)
-// (e.g. --ctrade=0 for the PR-3 ablation arm). Scalarized mode only.
+// (e.g. --ctrade=0 for the frictionless ablation arm).
 var ctradeArg = args.FirstOrDefault(a => a.StartsWith("--ctrade="));
 if (ctradeArg is not null && decimal.TryParse(ctradeArg["--ctrade=".Length..],
         System.Globalization.NumberStyles.Number,
@@ -28,12 +30,10 @@ if (ctradeArg is not null && decimal.TryParse(ctradeArg["--ctrade=".Length..],
     oracleCfg = oracleCfg with { CTrade = ctradeOverride };
 
 // The oracle flags only shape simulate/simulate-mc; warn instead of silently
-// no-op'ing when passed to other modes (e.g. `mlnet-oracle --oracle=gated`
-// does NOT retrain the gated arm — swap in lots_gated.csv for that).
-if (mode is not ("simulate" or "simulate-mc")
-    && (args.Contains("--oracle=gated") || ctradeArg is not null))
-    Console.WriteLine($"[WARN] --oracle/--ctrade have no effect on mode '{mode}' — " +
-                      "they configure the simulation only. mlnet-* modes read data/lots.csv as-is.");
+// no-op'ing when passed to other modes (mlnet-* modes read a lots CSV as-is).
+if (mode is not ("simulate" or "simulate-mc") && ctradeArg is not null)
+    Console.WriteLine($"[WARN] --ctrade has no effect on mode '{mode}' — " +
+                      "it configures the simulation only. mlnet-* modes read the lots CSV as-is.");
 
 // ── Split policy (v0.26, validation hardening) ──────────────────────────────
 // --split=temporal: chronological purged splits (embargo >= 30d label horizon)
@@ -143,10 +143,10 @@ switch (mode)
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = $"../data/lots{oracleCfg.DatasetTag}{contribCfg.DatasetTag}.csv";
+        var outPath = $"../data/lots{contribCfg.DatasetTag}.csv";
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
-        Console.WriteLine($"[simulate] oracle={oracleCfg.Mode} → {outPath}  " +
+        Console.WriteLine($"[simulate] → {outPath}  " +
                           $"({sw.Elapsed.TotalMinutes:F2} minutes, {sw.Elapsed.TotalSeconds:F0}s)");
     }
     break;
@@ -177,7 +177,7 @@ switch (mode)
         var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg).Run(10_000_000m);
         new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            $"../data/lots-mc{oracleCfg.DatasetTag}{contribCfg.DatasetTag}.csv");
+            $"../data/lots-mc{contribCfg.DatasetTag}.csv");
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -322,26 +322,16 @@ switch (mode)
         // Move to a proper xUnit/NUnit project when the simulation layer is added.
 
         var portfolioTests = new PortfolioStateTests();
-        portfolioTests.Test_HarvestLoss_DecreasesGYTD();
+        portfolioTests.Test_HarvestLoss_DecreasesRealizedGains();
         portfolioTests.Test_WashSaleClock_StartsAtZeroAfterHarvest();
-        portfolioTests.Test_OracleBlocked_WhenGYTD_IsNegative();
-        portfolioTests.Test_SeedGYTD_EnablesOracleGate();
-        portfolioTests.Test_SeedGYTD_ReSeeds_AfterYearEndReset();
+        portfolioTests.Test_YearEnd_BanksNetLoss_AndClocksPersist();
 
         var ledgerTests = new TaxLedgerTests();
-        ledgerTests.Test_LedgerNet_MatchesLegacyGYTD();
+        ledgerTests.Test_LedgerNet_AccumulatesSignedRealized();
         ledgerTests.Test_RollYearEnd_BanksExcessLoss();
         ledgerTests.Test_OffsetBudget_And_Capacity_DrawDown();
         ledgerTests.Test_ComputeTaxValue_CapacitySplit_And_Rates();
         ledgerTests.Test_PortfolioState_RoutesThroughLedger();
-
-        var oracleTests = new OracleBoundaryTests();
-        oracleTests.Test_Oracle_FiresWhenAllConditionsMet();
-        oracleTests.Test_Oracle_Blocked_WhenLossInsufficient();
-        oracleTests.Test_Oracle_Blocked_WhenTEOverBudget();
-        oracleTests.Test_Oracle_Blocked_WhenGYTD_Zero();
-        oracleTests.Test_Oracle_Blocked_WhenWashSaleActive();
-        oracleTests.Test_Oracle_Fires_AtWashSaleBoundary();
 
         var scalarizedTests = new OracleScalarizedTests();
         scalarizedTests.Test_Fires_WithoutRealizedGains();
@@ -349,7 +339,8 @@ switch (mode)
         scalarizedTests.Test_TradeOff_TaxValueVsTrackingError();
         scalarizedTests.Test_HardCeiling_BindsInPathologicalRegimes();
         scalarizedTests.Test_LossAndWashGates_StillBind();
-        scalarizedTests.Test_GatedMode_MatchesLegacyOverload();
+        scalarizedTests.Test_WashGate_OpensExactlyAtBoundary();
+        scalarizedTests.Test_SnapshotOverload_MatchesScalarForm();
         scalarizedTests.Test_Utility_Arithmetic_And_CTrade();
 
         var teTests = new TrackingErrorProxyTests();

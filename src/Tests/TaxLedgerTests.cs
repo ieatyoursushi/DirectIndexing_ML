@@ -8,18 +8,18 @@ using DirectIndexing.Core.Portfolio;
 /// </summary>
 public class TaxLedgerTests
 {
-    // Test 1: legacy equivalence — seed + harvest deltas reproduce the old
-    // G_YTD trajectory exactly (the byte-identity invariant for gated mode).
-    public void Test_LedgerNet_MatchesLegacyGYTD()
+    // Test 1: the net-realized accumulator is the signed sum of realized deltas
+    // (external gains + harvest losses), with no netting against carryforward.
+    public void Test_LedgerNet_AccumulatesSignedRealized()
     {
         var ledger = new TaxLedger();
-        ledger.RecordExternalGains(1_000_000m);      // old SeedGYTD
+        ledger.RecordExternalGains(1_000_000m);      // client gains realized elsewhere
         ledger.RecordRealized(-250_000m);            // harvest a loss
         ledger.RecordRealized(-100_000m);
 
         Debug.Assert(ledger.RealizedGainsYTD == 650_000m,
             $"Expected 650000, got {ledger.RealizedGainsYTD}");
-        Console.WriteLine("TaxLedger Test 1 passed: net-realized matches legacy G_YTD arithmetic");
+        Console.WriteLine("TaxLedger Test 1 passed: net realized = signed sum of realized deltas");
     }
 
     // Test 2: year-end roll — net loss beyond the $3k ordinary allowance banks
@@ -108,29 +108,23 @@ public class TaxLedgerTests
     }
 
     // Test 5: PortfolioState integration — HarvestLot routes P&L through the
-    // ledger and the legacy G_YTD alias stays value-identical.
+    // ledger; a net-positive year resets without creating carryforward.
     public void Test_PortfolioState_RoutesThroughLedger()
     {
         var state = new PortfolioState();
-        state.SeedGYTD(5_000m);
+        state.Ledger.RecordExternalGains(5_000m);
 
         var lot = new Lot("AAPL", "Tech", costBasis: 100m, shares: 10, purchaseDayIndex: 0);
         state.OpenLot(lot);
         state.HarvestLot(lot, currentPrice: 90m);    // ΔG = −100
 
-        Debug.Assert(state.G_YTD == 4_900m,
-            $"Legacy alias must track ledger net, got {state.G_YTD}");
         Debug.Assert(state.Ledger.RealizedGainsYTD == 4_900m,
             $"Ledger must record harvest P&L, got {state.Ledger.RealizedGainsYTD}");
 
-        // Year boundary: engine calls ResetForNewYear() then SeedGYTD(seed) —
-        // net resets (no carryforward: year ended net-positive), then re-seeds.
         state.ResetForNewYear();
-        Debug.Assert(state.G_YTD == 0m, "Net must reset at year-end");
+        Debug.Assert(state.Ledger.RealizedGainsYTD == 0m, "Net must reset at year-end");
         Debug.Assert(state.Ledger.LossCarryforward == 0m,
             "Net-positive year must not create carryforward");
-        state.SeedGYTD(5_000m);
-        Debug.Assert(state.G_YTD == 5_000m, "Re-seed must restore the legacy trajectory");
 
         Console.WriteLine("TaxLedger Test 5 passed: PortfolioState routes P&L through the ledger");
     }

@@ -16,6 +16,9 @@ namespace DirectIndexing.Core.Portfolio;
 ///   L   — negative for a harvestable lot  (ℓ = (P_t − p_k)/p_k &lt; 0)
 ///   RealizedGainsYTD — signed net realized P&amp;L YTD (the pre-v0.25 G_YTD);
 ///   positive means net gains exist to offset, negative after net-loss harvests
+///
+/// Schema v4 (pre-v0.3 downsizing): d = 17 numeric features, 25 exported columns —
+/// v3 minus the retired Y_Oracle_GatedSpec spectator label.
 /// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
 public record LotStateVector
@@ -133,19 +136,9 @@ public record LotStateVector
     /// U(x) = TaxValue − λσ_TE² − c_trade ∈ ℝ — the scalarized objective's raw
     /// score before thresholding (issue #17 family; the v0.4 RL per-decision
     /// reward). Label/diagnostic, never a feature: 𝟙[U &gt; 0] is the oracle's own
-    /// boundary. Computed under the run's OracleConfig in BOTH modes.
+    /// boundary. Computed under the run's OracleConfig.
     /// </summary>
     public float Y_Utility   { get; init; }
-
-    /// <summary>
-    /// Spectator gated label ∈ {0,1}: what the v0.2 four-gate oracle would say
-    /// on THIS row, with legacy-G_YTD bookkeeping (seed + Σ realized P&amp;L of this
-    /// run's harvests) carried counterfactually alongside the acting oracle.
-    /// In gated runs it equals Y_Oracle; in scalarized runs it enables
-    /// same-row boundary-geometry comparison. Spectator ≠ acting: the
-    /// trajectory itself was produced by the acting oracle.
-    /// </summary>
-    public int   Y_Oracle_GatedSpec { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 

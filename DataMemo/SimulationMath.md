@@ -60,22 +60,12 @@ survives year-end, 26 USC §1212(b)). Derived: `OrdinaryOffsetBudget`
 $= \max(0,\ \$3{,}000 - \max(0, -\text{net}))$ (§1211(b)) and
 $\text{offsetCapacity} = \max(\text{net}, 0) + \text{OrdinaryOffsetBudget}$.
 
-Seeding is **mode-dependent** (`OracleConfig.SeedExternalGains`):
-
-- **Gated mode** (v0.2-legacy ablation arm): external gains are seeded at start and after
-  each year-end reset, $\leftarrow 0.10 \cdot V_0 = \$1{,}000{,}000$, simulating prior-year
-  or outside gains at roughly the S&P 500's long-run annual pace. Without the seed the
-  legacy gate $G^{\text{YTD}} > 0$ is permanently closed. The seed deliberately does NOT
-  net against carryforward, so gated-mode label trajectories are bit-identical to the
-  pre-ledger engine.
-- **Scalarized mode** (canonical): **no seed.** The book is honestly loss-only —
-  offsetCapacity collapses to the \$3k/yr ordinary allowance, the tax-code-accurate floor
-  for a client with no outside capital-gains activity (the conservative persona; stated in
-  the report).
-
-In both modes the engine also tracks a **spectator legacy-G_YTD** (seed + Σ realized P&L of
-*this run's* harvests, reset+reseeded at year-end) so the v0.2 four-gate predicate stays
-evaluable pointwise on every row (`Y_Oracle_GatedSpec`).
+**No external-gains seed.** The book is honestly loss-only — offsetCapacity collapses to the
+\$3k/yr ordinary allowance until the book realizes gains of its own: the tax-code-accurate
+floor for a client with no outside capital-gains activity (the conservative persona). The
+v0.2 gated arm's \$1M seed and its spectator bookkeeping were retired with that arm
+(`archive/RetiredComponents.md` §6); `TaxLedger.RecordExternalGains` remains as the hook for
+the v0.5 outside-gains personas.
 
 ### 2.2  Day Loop  ($t = t_0, \ldots, T-1$)
 
@@ -91,17 +81,14 @@ For each trading day $t$:
      $D_k = \max(0,\ (p_k - P_t) q_k)$, and the ledger valuation
      $\text{taxValue}_k = \tau(h_k)\min(D_k, \text{capacity}) + \tau_f \max(D_k - \text{capacity}, 0)\,\delta$
      with $\tau(h) = 0.37/0.20$ (short/long at $h = 365$), $\tau_f = 0.20$, $\delta = 0.5$.
-   - Evaluate the mode's oracle (`OracleBoundary.Label(snapshot, config)`):
-     - **Scalarized (canonical):**
+   - Evaluate the oracle (`OracleBoundary.Label(snapshot, config)`):
        $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
        where $U = \text{taxValue}_k - \lambda \hat\sigma_{\text{TE}}^2 - c_{\text{trade}}$
        ($\theta_{\max} = 0.15$, $\lambda = 90{,}000$, $c_{\text{trade}} = \$10$; calibration
        provenance in `OracleConfig.cs` / `GYTD_Redesign_Plan.md` v2).
-     - **Gated (legacy ablation):**
-       $f^* = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_2] \cdot \mathbf{1}[G^{\text{YTD}} > 0] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30]$.
    - Record snapshot $(k, t)$ as a `LotStateVector` row, including labels
-     `Y_TaxValue` $= \text{taxValue}_k$, `Y_Utility` $= U$, and the spectator
-     `Y_Oracle_GatedSpec` (Y_Soft labels are 0 placeholders).
+     `Y_TaxValue` $= \text{taxValue}_k$ and `Y_Utility` $= U$ (Y_Soft labels are 0
+     placeholders until the second pass).
    - If $f^* = 1$: harvest the lot (see §2.3)
 5. **Reopen queue** — lots that cleared the 30-day wash-sale window exactly on day $t$ are
    reopened at the current price with the same dollar amount.
@@ -109,7 +96,6 @@ For each trading day $t$:
 7. **Year-end reset** — if $\text{date}(t+1).\text{year} \ne \text{date}(t).\text{year}$:
    - `Ledger.RollYearEnd()`: carryforward $\mathrel{+}= \max(0,\ \text{netLoss} - \$3{,}000)$,
      then net $\leftarrow 0$ (budget resets implicitly since it is derived)
-   - Gated mode only: re-seed net $\leftarrow \$1{,}000{,}000$
    - Wash clocks **persist** (IRS wash-sale window crosses Dec 31)
 
 ### 2.3  Harvest Transition
@@ -122,7 +108,7 @@ $$
 $$
 
 The lot is removed from $\mu_t$, the wash clock resets $\mathcal{W}_t^{(A_k)} \leftarrow 0$,
-the spectator legacy-G_YTD also accrues $\Delta$, and a reopen entry is queued for day
+and a reopen entry is queued for day
 $t + 30$ with dollar amount $q_k P_t$.
 
 ---
@@ -217,7 +203,6 @@ For snapshot $(k, t)$:
                 \cdot \mathbf{1}\!\bigl[\text{taxValue}(D_k(P),\, h_k + s,\, \text{cap})
                       - \lambda\hat\sigma_{\text{TE}}^2 - c_{\text{trade}} > 0\bigr]
    $$
-   (gated mode substitutes the legacy four-gate AND with frozen $G^{\text{YTD}}$).
 
 3. $\tilde{y}_{\text{GBM}} = \hat{p}_{\text{fire}} \in [0, 1]$
 
@@ -402,7 +387,7 @@ $$
 where $n_0$ = lots opened on the warmup day, $T$ = active simulation days, and
 $\varepsilon$ = small leakage from NaN-close days and zero-share reopens.
 
-Current run (10% G_YTD seed): $503 \times 500 = 251{,}500$ ceiling, $2{,}730$ harvests
+Historical 2-year gated run (v0.2, 10% G_YTD seed — both retired): $503 \times 500 = 251{,}500$ ceiling, $2{,}730$ harvests
 costing $80{,}426$ lot-days, $\varepsilon = 323$ (0.13%) → $N_{\text{rows}} = 170{,}751$.
 
 **Consequence:** row count is endogenous to the market path. A window with more drawdowns
@@ -412,8 +397,8 @@ the underlying price data moves $N_{\text{rows}}$ through the harvest channel.
 
 ### 7.2  Class Balance
 
-Oracle fires when all four gates pass simultaneously.  In the 2024–2026 backtesting window
-(predominantly bullish market):
+*Historical (v0.2 gated oracle, retired).* The four-gate rule fired when all gates passed
+simultaneously. In the 2024–2026 backtesting window (predominantly bullish market):
 
 | Gate | Pass rate |
 |------|-----------|

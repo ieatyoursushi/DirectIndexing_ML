@@ -38,7 +38,7 @@ public sealed class SoftLabelBuilder
     public SoftLabelBuilder(PriceLoader prices, OracleConfig? oracleConfig = null)
     {
         _prices = prices;
-        _oracle = oracleConfig ?? OracleConfig.Scalarized;
+        _oracle = oracleConfig ?? OracleConfig.Default;
     }
 
     // ── Public entry point ───────────────────────────────────────────────────
@@ -50,7 +50,7 @@ public sealed class SoftLabelBuilder
     public void Label(List<LotStateVector> snapshots)
     {
         Console.WriteLine($"[SoftLabelBuilder] Labelling {snapshots.Count} snapshots " +
-                          $"(oracle={_oracle.Mode}) …");
+                          $"(λ={_oracle.Lambda}, c_trade={_oracle.CTrade}) …");
 
         Parallel.For(0, snapshots.Count, i =>
         {
@@ -76,7 +76,7 @@ public sealed class SoftLabelBuilder
     private int StepLabel(
         float price, int s,
         float costBasis, float shares, int holdingDays0, int initClock,
-        float gYtdF, float sigmaTE, decimal frozenCapacity)
+        float sigmaTE, decimal frozenCapacity)
     {
         float ell = costBasis > 0f ? (price - costBasis) / costBasis : 0f;
 
@@ -89,7 +89,6 @@ public sealed class SoftLabelBuilder
         return OracleBoundary.Label(
             unrealizedReturn: (decimal)ell,
             sigmaTE:          sigmaTE,
-            netRealizedYtd:   (decimal)gYtdF,
             washClock:        initClock + s,
             taxValue:         taxValue,
             config:           _oracle);
@@ -109,7 +108,6 @@ public sealed class SoftLabelBuilder
             annualSigma = 0.20f;   // fallback: 20% annual vol
 
         // Frozen state from snapshot — captured by the closure below
-        float   gYtdF     = snap.RealizedGainsYTD;
         float   sigmaTE   = snap.Sigma_TE;
         int     initClock = snap.WashClock;
         float   costBasis = snap.B;
@@ -131,7 +129,7 @@ public sealed class SoftLabelBuilder
             annualSigma: annualSigma,
             firesOnStep: (price, s) =>
                 StepLabel(price, s, costBasis, shares, h0, initClock,
-                          gYtdF, sigmaTE, frozenCap) == 1,
+                          sigmaTE, frozenCap) == 1,
             rng: rng);
     }
 
@@ -145,7 +143,6 @@ public sealed class SoftLabelBuilder
         // Not enough forward data — return NaN (will be excluded from training)
         if (t0 + Window >= tMax) return float.NaN;
 
-        float   gYtdF     = snap.RealizedGainsYTD;
         float   sigmaTE   = snap.Sigma_TE;
         int     initClock = snap.WashClock;
         float   costBasis = snap.B;
@@ -164,7 +161,7 @@ public sealed class SoftLabelBuilder
             float price = _prices.GetClose(snap.Symbol, t);
 
             if (StepLabel(price, s, costBasis, shares, h0, initClock,
-                          gYtdF, sigmaTE, frozenCap) == 1)
+                          sigmaTE, frozenCap) == 1)
                 oracleDays++;
         }
 

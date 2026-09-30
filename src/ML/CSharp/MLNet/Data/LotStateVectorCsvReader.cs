@@ -32,7 +32,7 @@ public static class LotStateVectorCsvReader
             "RealizedGainsYTD","LossCarryforward","OrdinaryOffsetBudget","Sigma_TE","WashClock",
             "R_t","SigmaRange","DeltaMA50","DeltaMA200",
             "TaxValue","DaysToYE",
-            "Y_Oracle","Y_Soft_GBM","Y_Soft_BT","Y_TaxValue","Y_Utility","Y_Oracle_GatedSpec",
+            "Y_Oracle","Y_Soft_GBM","Y_Soft_BT","Y_TaxValue","Y_Utility",
             "Symbol","Sector","Timestep",
         };
         foreach (var c in required)
@@ -70,7 +70,6 @@ public static class LotStateVectorCsvReader
                 Y_Soft_BT  = ParseFloat(f[idx["Y_Soft_BT"]]),
                 Y_TaxValue = ParseFloat(f[idx["Y_TaxValue"]]),
                 Y_Utility  = ParseFloat(f[idx["Y_Utility"]]),
-                Y_Oracle_GatedSpec = ParseInt(f[idx["Y_Oracle_GatedSpec"]]),
                 Symbol     = Unquote(f[idx["Symbol"]]),
                 Sector     = Unquote(f[idx["Sector"]]),
                 Timestep   = ParseInt(f[idx["Timestep"]]),

@@ -7,8 +7,9 @@ namespace DirectIndexing.ML.MLNet.Schema;
 /// </summary>
 public static class FeatureLists
 {
-    // Schema v3 (v0.25): d = 17 numeric features. G_YTD → three TaxLedger
-    // columns; TaxAlpha → capacity-aware TaxValue.
+    // Schema v4: d = 17 numeric features (unchanged since v3, v0.25: G_YTD → three
+    // TaxLedger columns; TaxAlpha → capacity-aware TaxValue). v4 dropped the
+    // retired Y_Oracle_GatedSpec label.
     public static readonly string[] NumericFeatures =
     {
         "L", "H", "S", "B", "W", "K",
@@ -39,9 +40,6 @@ public static class FeatureLists
 
     /// <summary>Raw scalarized objective U(x) — diagnostic/RL-reward export, never a feature.</summary>
     public const string TargetUtility = "Y_Utility";
-
-    /// <summary>v0.2 gated predicate evaluated as a spectator on the acting run's rows.</summary>
-    public const string GatedSpectator = "Y_Oracle_GatedSpec";
 
     /// <summary>Feature set for the Y_TaxValue regression: everything except TaxValue.</summary>
     public static readonly string[] NumericFeaturesTaxValueRegression =
