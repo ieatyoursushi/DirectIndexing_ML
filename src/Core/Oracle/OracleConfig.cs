@@ -27,7 +27,7 @@ public sealed record OracleConfig
     /// <summary>θ₁ — minimum unrealized loss to justify harvesting (ℓ ≤ −θ₁).</summary>
     public decimal LossThreshold { get; init; } = 0.02m;
 
-    /// <summary>IRS §1091 wash-sale window in days.</summary>
+    /// <summary>IRS §1091 wash-sale window half-width, calendar days (clean iff 𝒲 &gt; this).</summary>
     public int WashSaleDays { get; init; } = 30;
 
     // ── Economic terms of U(x) = taxValue − λσ_TE² − c_trade ──────────────────

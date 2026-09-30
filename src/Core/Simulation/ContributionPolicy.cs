@@ -19,10 +19,12 @@ namespace DirectIndexing.Core.Simulation;
 ///
 /// <para><b>Two constraints shape this design.</b></para>
 /// <list type="number">
-///   <item><b>Wash-sale safety.</b> A contribution may not buy a ticker inside its 30-day
-///   wash-sale window: purchasing substantially identical stock within 30 days of the loss sale
-///   disallows the loss. Eligibility is filtered on <c>WashClock ≥ WashSaleDays</c>, so the
-///   contribution path can never invalidate a harvest the engine just booked.</item>
+///   <item><b>Wash-sale safety (§1091, both sides, calendar days — v0.3-1).</b> A contribution
+///   may not buy a ticker within 30 days after its last loss sale (<c>PortfolioState.CanBuy</c>),
+///   or it would disallow that loss. And because a fresh lot is a §1091 <i>replacement</i> for
+///   30 days, by default a contribution also skips any ticker that currently holds a
+///   harvestable lot (<see cref="SkipHarvestableNames"/>): buying the fallen names you are about
+///   to harvest is exactly what made ~24% of the P0 arm's harvests wash sales before v0.3-1.</item>
 ///   <item><b>Bounded lot growth.</b> Minting into every ticker on every contribution would grow
 ///   the open-lot set without bound and make the row count explode (rows ≈ Σ_t |open lots|).
 ///   Each contribution instead buys the <c>NamesPerContribution</c> most <i>underweight</i>
@@ -30,13 +32,13 @@ namespace DirectIndexing.Core.Simulation;
 ///   drift is the cheapest way to correct it without selling.</item>
 /// </list>
 ///
-/// <para><b>Default is disabled</b>, so an unflagged run reproduces v0.26 byte-for-byte. Turning
+/// <para><b>Default is disabled</b>, so an unflagged run is the baseline arm. Turning
 /// contributions on is a boundary-shaping change and gets its own ablation arm (standing rules 1
 /// and 2 in <c>ROADMAP.md</c>).</para>
 /// </summary>
 public sealed record ContributionPolicy
 {
-    /// <summary>Off by default — an unflagged run must reproduce v0.26 exactly.</summary>
+    /// <summary>Off by default — an unflagged run is the no-contribution baseline arm.</summary>
     public bool Enabled { get; init; } = false;
 
     /// <summary>
@@ -62,6 +64,14 @@ public sealed record ContributionPolicy
     public int NamesPerContribution { get; init; } = 20;
 
     /// <summary>
+    /// Skip tickers holding a lot at or below the oracle's loss threshold (default on). The
+    /// engine's §1091 before-side gate already keeps harvests legal either way — this decides
+    /// whether contributions <i>block</i> harvests (off) or steer around them (on, what a real
+    /// manager does). <c>--contrib-allow-harvestable</c> turns it off for the ablation.
+    /// </summary>
+    public bool SkipHarvestableNames { get; init; } = true;
+
+    /// <summary>
     /// Dollars per contribution event: the annual rate pro-rated over the interval,
     /// assuming 252 trading days per year.
     /// </summary>
@@ -76,6 +86,7 @@ public sealed record ContributionPolicy
     public string Describe() =>
         Enabled
             ? $"every {IntervalDays}d, {AnnualRate:P0}/yr of initial value, " +
-              $"{NamesPerContribution} most-underweight names"
+              $"{NamesPerContribution} most-underweight names" +
+              (SkipHarvestableNames ? ", skipping names with a harvestable lot" : "")
             : "disabled";
 }

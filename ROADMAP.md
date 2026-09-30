@@ -7,7 +7,8 @@
 > behind each version in [`DataMemo/decisions/`](DataMemo/README.md).
 >
 > Last updated: **2026-09-30**. The pre-v0.3 downsizing is complete, and **v0.3 is in
-> progress**: P0 shipped, and v0.3-1 (the two-sided §1091 wash window) is next.
+> progress**: P0 and v0.3-1 (the two-sided §1091 wash window) have shipped, and v0.3-2 (the
+> §1222 calendar holding period) is next.
 
 ---
 
@@ -21,7 +22,7 @@
 | v0.25 | Oracle redesign: `TaxLedger`, scalarized `f*` | ✅ complete | PRs #24–#27, [`decisions/GYTD_Redesign_Plan.md`](DataMemo/decisions/GYTD_Redesign_Plan.md) |
 | v0.26 | Validation hardening: purged chronological splits | ✅ complete | PR #30, [`decisions/ValidationHardening_v026.md`](DataMemo/decisions/ValidationHardening_v026.md) |
 | — | **Pre-v0.3 downsizing + the math↔code spine** | ✅ complete | PR #31, [`archive/RetiredComponents.md`](DataMemo/archive/RetiredComponents.md), [`spec/SymbolTable.md`](DataMemo/spec/SymbolTable.md) |
-| **v0.3** | **Simulator correctness + volatility sub-model + metric ladder** | **⏭ in progress** (P0 ✅; v0.3-1 next) | issues #5/#12/#17/#22 |
+| **v0.3** | **Simulator correctness + volatility sub-model + metric ladder** | **⏭ in progress** (P0 ✅, v0.3-1 ✅; v0.3-2 next) | issues #5/#12/#17/#22 |
 | v0.4a | Constrained execution baseline (optimizer, no RL) | planned | — |
 | v0.4b | RL policy layer | planned | issue #15 |
 | v0.45 | Universe & replacement layer (core+reserve, `SubScore`, PCA on $\hat\Sigma_t$) | planned; **moved after RL** | issues #5/#6 |
@@ -44,7 +45,7 @@ with the full ladder in hand.
 | **F4** | symbol overloading (λ, δ, W, τ, σ, H/L, S, U, V, D, γ, q, θ, "GBM", "days") | the main source of the cognitive load, and the root cause of F6/F7 | ✅ notation contract, [`SymbolTable.md` §J](DataMemo/spec/SymbolTable.md) |
 | **F5** | docs had drifted from code and from each other (e.g. a cited test that never existed; two R² values) | stale specs are worse than none | ✅ `docs-check` + recorded-drift table |
 | **F6** | holding period counts **trading** days but is compared with **365**, so "long-term" ≈ 1.45 calendar years (§1222) | lots held 1.0–1.45y get τ = 0.37 instead of 0.20; TaxValue/U inflated 1.85× on those rows; the `S` feature is wrong | **v0.3-2** |
-| **F7** | §1091 enforced one-sided: no buy *after* a loss sale, but nothing blocks a **harvest after a recent buy**; the window is 30 **trading** days | contributions buy the most-underweight (fallen) names, exactly the ones about to be harvested, so part of the P0's measured recovery may be wash-sale-invalid | **v0.3-1** |
+| **F7** | §1091 enforced one-sided: no buy *after* a loss sale, but nothing blocks a **harvest after a recent buy**; the window is 30 **trading** days | contributions buy the most-underweight (fallen) names, exactly the ones about to be harvested. Measured by an independent audit on a weekday-calendar synthetic world: **24.3% of the contrib arm's loss sales were wash sales** | ✅ **v0.3-1**: 0 violations after the fix |
 
 ## Standing rules (apply to every version)
 
@@ -159,13 +160,16 @@ Measured (20y, temporal test region):
 - `soft+` 0.2205% → 4.0051% (18.2×);
 - final-year ≥2%-underwater 0.062% → 2.413%.
 
-⚠ **These figures predate the §1091 fix (F7)** and must be re-measured after v0.3-1.
+⚠ **These figures predate the §1091 fix (F7)** and must be re-measured on the 20-year data. On
+the fixed-seed weekday synthetic world, the fix lowered the contrib arm's `oracle+` rate by 18%
+(0.890% → 0.728%): the removed harvests were the wash sales. Expect the real 8.7× to shrink
+somewhat.
 
 ### The PR sequence
 
 | PR | Content | Gate / measurement |
 |---|---|---|
-| **v0.3-1** §1091 two-sided window (F7) | per-ticker last-acquisition date (initial buy, reopen, contribution). A harvest is wash-clean only if no acquisition occurred in the prior 30 **calendar** days; no buy within 30 calendar days after a loss sale. Both sides use `PriceLoader` dates. Contributions skip names holding a harvestable lot. Target definition: SymbolTable `wash_window_2s` | violating harvests → **0** (independent audit pass); re-measure the P0 prevalence recovery |
+| ✅ **v0.3-1** §1091 two-sided window (F7) | calendar-dated state: a lot-level clock $\mathcal W_k$ = min(days since the ticker's last loss sale, days since a *different* open lot was acquired), with a strict gate $\mathcal W>30$ (the window is inclusive); `CanBuy` gates every buy; the reopen lands at sale + 31 calendar days; contributions skip names holding a harvestable lot (`--contrib-allow-harvestable` for the ablation). SymbolTable `wash_clock`, `can_buy`, `wash_audit` | **done:** the independent audit reads **0 violations** on worlds that had 24.3% (weekday, contrib) and 97.7% (daily calendar, reopen on day 30). Weekday world: baseline loss sales +15% (calendar window ≈ 21 trading days, not 30); contrib `oracle+` −18%. **Pending on your machine:** re-measure the P0 on the 20-year data |
 | **v0.3-2** §1222 calendar holding period (F6) | `IsLongTerm = date(t) > date(s_k) + 1yr`, one function used by `Lot`, `TaxLedger` and the soft-label forward steps; the 365 literal becomes a named constant | count rows whose `S`/τ flips; ΔTaxValue, ΔU distributions |
 | **v0.3-3** P0 close-out | retrain GBT + logistic under `--split=temporal` on the corrected `lots_contrib.csv`; class-weight re-check; decide whether `--contrib` becomes the default | ROC + PR + test prevalence vs the v0.26 baseline above |
 | **v0.3-4** point-in-time $\hat\Sigma_t$ (F1) | memo `decisions/VolatilityModel_v03.md` written **first** (design in full). `ICovarianceEstimator`: `FullSample` (legacy arm, to measure the look-ahead), `PitSample`, `PitLedoitWolf` (constant-correlation target, closed form), optional MP clipping; the eigendecomposition is exposed for the PCA successor role; `--cov=` arms | **no gate** (correctness). Measure the σ_TE shift, the spectator flip rate of $f^*$/$U$, label deltas, temporal metrics |

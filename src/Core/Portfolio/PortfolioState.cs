@@ -6,7 +6,8 @@ namespace DirectIndexing.Core.Portfolio;
 ///   μ_t      = OpenLots              — full lot measure across all assets
 ///   ledger_t = Ledger                — TaxLedger: net realized P&amp;L, loss
 ///                                      carryforward, ordinary-offset budget
-///   𝒲_t      = _washClocks           — function  ticker → days since last harvest
+///   𝒲_t      = wash-sale state       — last loss-sale date per ticker + open-lot
+///                                      acquisition dates (calendar), see WashClock
 ///
 /// v0.25: the bare G_YTD scalar became the TaxLedger (issue #23); its read alias
 /// and the external-gains seed were retired with the gated oracle (pre-v0.3
@@ -18,9 +19,15 @@ namespace DirectIndexing.Core.Portfolio;
 ///   harvested against them; the oracle reads it only through taxValue's
 ///   offset capacity cap_t = max(G^net_t, 0) + O_t.
 ///
-/// AdvanceDay() implements the time evolution of 𝒲_t (increment every clock by 1).
-/// HarvestLot() implements the state transition:
-///   remove the atom from μ_t, record realized P&amp;L in the ledger, reset 𝒲_t^{A_i} ← 0.
+/// §1091 (v0.3-1, ROADMAP F7): the wash-sale window is ±30 CALENDAR days around a loss
+/// sale, on BOTH sides. Time enters only through <see cref="SetDate"/>; clocks are date
+/// differences, never trading-day counts.
+///   • before-side — a lot may not be harvested within 30 days after a DIFFERENT lot of
+///     the ticker was acquired (that lot would be the replacement);
+///   • after-side  — the ticker may not be bought within 30 days after a loss sale
+///     (<see cref="CanBuy"/>).
+/// HarvestLot() implements the state transition: remove the atom from μ_t, record
+/// realized P&amp;L in the ledger, and (for a loss) date-stamp the ticker's loss sale.
 /// </summary>
 // [math:state] — DataMemo/spec/SymbolTable.md
 public class PortfolioState
@@ -28,35 +35,72 @@ public class PortfolioState
     // ledger_t — deterministic Schedule D bookkeeping (see TaxLedger)
     public TaxLedger Ledger { get; } = new();
 
-    // 𝒲_t : S → ℤ_{≥0}   (days since last harvest per ticker; 999 = never harvested)
-    private readonly Dictionary<string, int> _washClocks = new();
+    /// <summary>§1091 window half-width in calendar days: clean iff distance &gt; 30.</summary>
+    public const int WashWindowDays = 30;
 
-    // μ_t = { atoms currently open }
+    /// <summary>Sentinel clock value: no wash-relevant event on record.</summary>
+    public const int NeverClock = 999;
+
+    // Last LOSS sale per ticker (gain sales never start a wash window).
+    private readonly Dictionary<string, DateOnly> _lastLossSale = new();
+
+    // μ_t = { atoms currently open }, plus a per-ticker index of the same atoms
     public List<Lot> OpenLots { get; } = new();
+    private readonly Dictionary<string, List<Lot>> _openBySymbol = new();
 
-    // ─── Wash-sale helpers ───────────────────────────────────────────────────
+    /// <summary>The simulation's current calendar date (set once per day by the engine).</summary>
+    public DateOnly Today { get; private set; }
 
+    public void SetDate(DateOnly today) => Today = today;
+
+    // ─── Wash-sale state (§1091, calendar days, both sides) ────────────────────
+
+    /// <summary>Calendar days since the ticker's last loss sale (<see cref="NeverClock"/> if none).</summary>
+    public int DaysSinceLossSale(string symbol) =>
+        _lastLossSale.TryGetValue(symbol, out var d)
+            ? Math.Min(NeverClock, Today.DayNumber - d.DayNumber)
+            : NeverClock;
+
+    /// <summary>
+    /// 𝒲 for one lot — the calendar distance to the nearest wash-relevant event:
+    /// min(days since the ticker's last loss sale, days since the most recent
+    /// acquisition of a DIFFERENT open lot of the ticker), capped at 999.
+    /// Harvesting the lot is wash-clean iff 𝒲 &gt; 30.
+    /// </summary>
     // [math:wash_clock] — DataMemo/spec/SymbolTable.md
-    public int GetWashClock(string symbol) =>
-        _washClocks.GetValueOrDefault(symbol, 999);
-
-    // Blocks harvest when 𝒲_t^{A_i} < 30 (IRS 30-day wash-sale window)
-    public bool IsWashSaleBlocked(string symbol) =>
-        GetWashClock(symbol) < 30;
-
-    // ─── Time evolution ──────────────────────────────────────────────────────
-
-    /// <summary>Advance every wash-sale clock by one trading day. Days should be 1 unless testing</summary>
-    public void AdvanceDay(int days = 1)
+    public int WashClock(Lot lot)
     {
-        foreach (var key in _washClocks.Keys.ToList())
-            _washClocks[key] += days;
+        int clock = DaysSinceLossSale(lot.Symbol);
+        if (_openBySymbol.TryGetValue(lot.Symbol, out var lots))
+            foreach (var other in lots)
+                if (!ReferenceEquals(other, lot))
+                    clock = Math.Min(clock, Today.DayNumber - other.PurchaseDate.DayNumber);
+        return Math.Clamp(clock, 0, NeverClock);
     }
+
+    /// <summary>After-side of §1091: may the ticker be BOUGHT today without disallowing a recent loss?</summary>
+    // [math:can_buy] — DataMemo/spec/SymbolTable.md
+    public bool CanBuy(string symbol) => DaysSinceLossSale(symbol) > WashWindowDays;
+
+    /// <summary>First calendar date on which <see cref="CanBuy"/> turns true (today if it already is).</summary>
+    public DateOnly EarliestBuyDate(string symbol) =>
+        _lastLossSale.TryGetValue(symbol, out var d) && !CanBuy(symbol)
+            ? d.AddDays(WashWindowDays + 1)
+            : Today;
+
+    /// <summary>Open lots of one ticker (empty if none).</summary>
+    public IReadOnlyList<Lot> OpenLotsOf(string symbol) =>
+        _openBySymbol.TryGetValue(symbol, out var lots) ? lots : Array.Empty<Lot>();
 
     // ─── State transitions ───────────────────────────────────────────────────
 
-    public void OpenLot(Lot lot) =>
+    public void OpenLot(Lot lot)
+    {
         OpenLots.Add(lot);
+        if (!_openBySymbol.TryGetValue(lot.Symbol, out var lots))
+            _openBySymbol[lot.Symbol] = lots = new List<Lot>();
+        lots.Add(lot);
+    }
 
     /// <summary>
     /// Realise the P&amp;L of a lot and remove it from the measure.
@@ -70,7 +114,9 @@ public class PortfolioState
         Ledger.RecordRealized(gain);   // negative delta for a loss — sign is self-consistent
         lot.IsOpen    = false;
         OpenLots.Remove(lot);
-        _washClocks[lot.Symbol] = 0;   // reset 𝒲_t^{A_i} ← 0
+        _openBySymbol[lot.Symbol].Remove(lot);
+        if (gain < 0m)
+            _lastLossSale[lot.Symbol] = Today;   // a LOSS sale opens the §1091 window
     }
 
     // ─── Derived quantities ──────────────────────────────────────────────────

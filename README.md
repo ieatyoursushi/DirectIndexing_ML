@@ -32,9 +32,11 @@ the defects v0.25/v0.26 fixed:
   - The gated oracle arm was retired (schema v4), and the course report layer frozen.
   - The math ↔ code spine now has a typed symbol table, `[math:id]` code anchors, and a
     `docs-check` command.
-  - The audit also found three correctness bugs, now the front of v0.3: a covariance
-    look-ahead in σ_TE, a one-sided wash-sale window, and a trading-vs-calendar day unit error
-    in the long-term rule. See [`ROADMAP.md`](ROADMAP.md) findings F1–F7.
+  - The audit also found three correctness bugs, now the front of v0.3. The one-sided
+    wash-sale window is **fixed** (v0.3-1): an independent audit found 24.3% of the
+    contribution arm's harvests were wash sales, and finds 0 now. Still open: the covariance
+    look-ahead in σ_TE, and the trading-vs-calendar day unit error in the long-term rule. See
+    [`ROADMAP.md`](ROADMAP.md) findings F1–F7.
 
 The surviving headline is stronger than the original: the tree advantage on the **temporal**
 (forward-propensity) target is real and oracle-invariant. See [Results](#results).
@@ -88,7 +90,7 @@ The whole codebase derives from the tax code in five steps:
    the harvest is *worth its cost*:
 
    ```
-   f*(x) = 𝟙[L ≤ −2%] · 𝟙[WashClock ≥ 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) > 0]
+   f*(x) = 𝟙[L ≤ −2%] · 𝟙[WashClock > 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) > 0]
    where  U(x) = TaxValue − λ·σ_TE² − c_trade
    ```
 
@@ -158,7 +160,7 @@ gated-oracle spectator label. Every column's type, units and code source are in
 | Group | Columns |
 |---|---|
 | **Lot-level** | `L` unrealized return · `H` holding days · `S` short/long flag · `B` cost basis · `W` lot weight · `K` open lots in same ticker |
-| **Portfolio-level** (TaxLedger) | `RealizedGainsYTD` signed net realized P&L YTD (the pre-v0.25 `G_YTD`) · `LossCarryforward` banked losses, survives year-end (26 USC §1212(b)) · `OrdinaryOffsetBudget` remaining $3k/yr allowance · `Sigma_TE` tracking error · `WashClock` trading days since last harvest (999 = never) |
+| **Portfolio-level** (TaxLedger) | `RealizedGainsYTD` signed net realized P&L YTD (the pre-v0.25 `G_YTD`) · `LossCarryforward` banked losses, survives year-end (26 USC §1212(b)) · `OrdinaryOffsetBudget` remaining $3k/yr allowance · `Sigma_TE` tracking error · `WashClock` calendar days to the lot's nearest §1091 event (both sides; 999 = none) |
 | **Asset-level** | `R_t` daily return · `SigmaRange` range-vol proxy · `DeltaMA50` · `DeltaMA200` |
 | **Derived** | `TaxValue` = τ(h)·min(loss, capacity) + τ_f·max(loss−capacity, 0)·δ · `DaysToYE` |
 | **Labels** | `Y_Oracle ∈ {0,1}` (hard, "fires today?") · `Y_Soft_BT ∈ [0,1]` (fraction of next 30 real days the rule fires; NaN near the window end) · `Y_Soft_GBM ∈ [0,1]` (same, over 200 simulated paths) · `Y_TaxValue ∈ ℝ≥0` (regression target = `TaxValue`) · `Y_Utility ∈ ℝ` (the per-lot scalarized objective `U(x)`; the RL reward is defined at portfolio level, see SymbolTable §I) |
@@ -277,7 +279,7 @@ its own dataset, because the acting policy changes which rows exist:
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--contrib` (+ `--contrib-interval=N --contrib-rate=R --contrib-names=M`) | off | Periodic contributions mint fresh lots in the most underweight names (the cost-basis-aging fix) → `lots_contrib.csv` |
+| `--contrib` (+ `--contrib-interval=N --contrib-rate=R --contrib-names=M`) | off | Periodic contributions mint fresh lots in the most underweight §1091-eligible names that hold no harvestable lot (the cost-basis-aging fix) → `lots_contrib.csv`. `--contrib-allow-harvestable` drops the skip rule (ablation) |
 | `--ctrade=<dollars>` | `10` | Flat round-trip friction in `U`; tags the dataset `lots_ctrade<x>.csv` |
 | `--mc-days=N --mc-seed=N --mc-standalone=<names> --mc-sigma=S` | 504 / 42 / off / 0.25 | Synthetic-world shape (`simulate-mc` only) |
 

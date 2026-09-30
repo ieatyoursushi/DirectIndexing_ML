@@ -85,15 +85,15 @@ public class OracleScalarizedTests
         Console.WriteLine("Scalarized Test 5 passed: loss-depth and wash-sale hard gates unchanged");
     }
 
-    // Test 6: the §1091 gate opens exactly at the window length (clock = 30 fires,
-    // 29 does not) — the boundary case ported from the retired gated-arm suite.
-    public void Test_WashGate_OpensExactlyAtBoundary()
+    // Test 6: the §1091 gate is strict — the window is ±30 calendar days INCLUSIVE, so a
+    // clock of 30 is still inside it and 31 is the first clean value.
+    public void Test_WashGate_OpensAfterInclusiveWindow()
     {
-        int atEdge   = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays,     400m, Cfg);
-        int oneShort = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays - 1, 400m, Cfg);
-        Debug.Assert(atEdge == 1 && oneShort == 0,
-            $"wash gate must open at clock = {Cfg.WashSaleDays}, got {atEdge}/{oneShort}");
-        Console.WriteLine("Scalarized Test 6 passed: wash gate opens exactly at the window length");
+        int outside = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays + 1, 400m, Cfg);
+        int onEdge  = OracleBoundary.Label(-0.05m, 0.01f, Cfg.WashSaleDays,     400m, Cfg);
+        Debug.Assert(outside == 1 && onEdge == 0,
+            $"wash gate must open at clock = {Cfg.WashSaleDays + 1}, not {Cfg.WashSaleDays}; got {outside}/{onEdge}");
+        Console.WriteLine("Scalarized Test 6 passed: wash gate opens at 31 (window inclusive of day 30)");
     }
 
     // Test 8: the snapshot overload (the engine's call site) is the scalar form.

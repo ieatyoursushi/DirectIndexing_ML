@@ -85,7 +85,7 @@ For each trading day $t$:
      $\text{taxValue}_k = \tau(h_k)\min(D_k, \text{capacity}) + \tau_f \max(D_k - \text{capacity}, 0)\,\delta$
      with $\tau(h) = 0.37/0.20$ (short/long at $h = 365$), $\tau_f = 0.20$, $\delta = 0.5$.
    - Evaluate the oracle (`OracleBoundary.Label(snapshot, config)`):
-       $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}^{(A_k)} \ge 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
+       $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}_{k} > 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
        where $U = \text{taxValue}_k - \lambda \hat\sigma_{\text{TE}}^2 - c_{\text{trade}}$
        ($\theta_{\max} = 0.15$, $\lambda = 90{,}000$, $c_{\text{trade}} = \$10$; calibration
        provenance in `OracleConfig.cs` / `GYTD_Redesign_Plan.md` v2).
@@ -93,9 +93,13 @@ For each trading day $t$:
      `Y_TaxValue` $= \text{taxValue}_k$ and `Y_Utility` $= U$ (Y_Soft labels are 0
      placeholders until the second pass).
    - If $f^* = 1$: harvest the lot (see §2.3)
-5. **Reopen queue** — lots that cleared the 30-day wash-sale window exactly on day $t$ are
-   reopened at the current price with the same dollar amount.
-6. **Advance clocks** — `state.AdvanceDay()` increments every wash-sale clock by 1.
+5. **Reopen queue** — a harvested ticker is re-bought (same dollar amount, current price) on
+   the first trading day at least 31 **calendar** days after its loss sale. The buy is
+   re-checked with `CanBuy` and re-deferred by date if the ticker was loss-sold again
+   meanwhile (§1091 after-side).
+6. **Contributions** (if enabled) — buy the most underweight names that pass `CanBuy` and,
+   by default, hold no currently harvestable lot. (No clock is advanced: §1091 clocks are
+   calendar-date differences, recomputed from `SetDate(date(t))` at the start of each day.)
 7. **Year-end reset** — if $\text{date}(t+1).\text{year} \ne \text{date}(t).\text{year}$:
    - `Ledger.RollYearEnd()`: carryforward $\mathrel{+}= \max(0,\ \text{netLoss} - \$3{,}000)$,
      then net $\leftarrow 0$ (budget resets implicitly since it is derived)
@@ -110,9 +114,9 @@ $$
 \text{Ledger.RecordRealized}(\Delta): \text{RealizedGainsYTD} \mathrel{+}= \Delta
 $$
 
-The lot is removed from $\mu_t$, the wash clock resets $\mathcal{W}_t^{(A_k)} \leftarrow 0$,
-and a reopen entry is queued for day
-$t + 30$ with dollar amount $q_k P_t$.
+The lot is removed from $\mu_t$, the loss sale is date-stamped (opening the ticker's §1091
+window), and a reopen entry is queued for the first trading day on or after
+$\mathrm{date}(t)+31$ calendar days, with dollar amount $q_k P_t$.
 
 ---
 
@@ -201,7 +205,7 @@ For snapshot $(k, t)$:
    scalarized (canonical):
    $$
    \phi(P, s) = \mathbf{1}\!\Bigl[\frac{P - p_k}{p_k} \le -0.02\Bigr]
-                \cdot \mathbf{1}[\mathcal{W}^{(A_k)} + s \ge 30]
+                \cdot \mathbf{1}[\mathcal{W}_{k} + \Delta_{\mathrm{cal}}(t,t{+}s) > 30]
                 \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}]
                 \cdot \mathbf{1}\!\bigl[\text{taxValue}(D_k(P),\, h_k + s,\, \text{cap})
                       - \lambda\hat\sigma_{\text{TE}}^2 - c_{\text{trade}} > 0\bigr]

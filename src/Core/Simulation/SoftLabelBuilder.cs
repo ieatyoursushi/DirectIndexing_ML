@@ -70,12 +70,12 @@ public sealed class SoftLabelBuilder
     /// <summary>
     /// Evaluates the oracle at forward step s under frozen portfolio state:
     /// price is the step's (simulated or historical) close; everything ledger-
-    /// and TE-shaped comes from the snapshot; wash clock and holding period
-    /// advance with s.
+    /// and TE-shaped comes from the snapshot; the holding period advances by s
+    /// trading days and the §1091 wash clock by the CALENDAR days between t and t+s.
     /// </summary>
     // [math:soft_step] — DataMemo/spec/SymbolTable.md
     private int StepLabel(
-        float price, int s,
+        float price, int s, int calendarAhead,
         float costBasis, float shares, int holdingDays0, int initClock,
         float sigmaTE, decimal frozenCapacity)
     {
@@ -90,7 +90,7 @@ public sealed class SoftLabelBuilder
         return OracleBoundary.Label(
             unrealizedReturn: (decimal)ell,
             sigmaTE:          sigmaTE,
-            washClock:        initClock + s,
+            washClock:        initClock + calendarAhead,
             taxValue:         taxValue,
             config:           _oracle);
     }
@@ -130,7 +130,7 @@ public sealed class SoftLabelBuilder
             startPrice:  currentClose,
             annualSigma: annualSigma,
             firesOnStep: (price, s) =>
-                StepLabel(price, s, costBasis, shares, h0, initClock,
+                StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, h0, initClock,
                           sigmaTE, frozenCap) == 1,
             rng: rng);
     }
@@ -163,13 +163,24 @@ public sealed class SoftLabelBuilder
 
             float price = _prices.GetClose(snap.Symbol, t);
 
-            if (StepLabel(price, s, costBasis, shares, h0, initClock,
+            if (StepLabel(price, s, CalendarDaysAhead(t0, s), costBasis, shares, h0, initClock,
                           sigmaTE, frozenCap) == 1)
                 oracleDays++;
         }
 
         return (float)oracleDays / Window;
     }
+
+    /// <summary>
+    /// Calendar days from trading day t to t+s — read off the real calendar where it
+    /// exists, and extrapolated at 7 calendar days per 5 trading days past its end
+    /// (GBM forward paths near the tail of the data).
+    /// </summary>
+    private int CalendarDaysAhead(int t, int s) =>
+        t + s < _prices.DayCount
+            ? _prices.GetDate(t + s).DayNumber - _prices.GetDate(t).DayNumber
+            : (_prices.GetDate(_prices.DayCount - 1).DayNumber - _prices.GetDate(t).DayNumber)
+              + (7 * (t + s - (_prices.DayCount - 1)) + 4) / 5;
 
     // ── Trailing volatility estimate ─────────────────────────────────────────
 

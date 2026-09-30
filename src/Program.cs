@@ -56,7 +56,8 @@ if (mode.StartsWith("mlnet"))
 // ── Contribution policy (v0.3 P0 — the cost-basis-aging fix) ────────────────
 // --contrib enables periodic cash inflows that mint fresh lots at current prices,
 // restoring the harvestable supply that the open-once book loses to aging.
-// Off by default so an unflagged run reproduces v0.26 byte-for-byte.
+// Off by default: an unflagged run is the no-contribution baseline arm.
+// --contrib-allow-harvestable drops the default skip of names holding a harvestable lot.
 // Tunable: --contrib-interval=N (trading days), --contrib-rate=R (annual, as a
 // fraction of the INITIAL book), --contrib-names=M (most-underweight names bought).
 var contribCfg = DirectIndexing.Core.Simulation.ContributionPolicy.Off;
@@ -71,6 +72,8 @@ if (args.Contains("--contrib"))
             System.Globalization.NumberStyles.Number,
             System.Globalization.CultureInfo.InvariantCulture, out var cr))
         contribCfg = contribCfg with { AnnualRate = cr };
+    if (args.Contains("--contrib-allow-harvestable"))
+        contribCfg = contribCfg with { SkipHarvestableNames = false };
     var cnArg = args.FirstOrDefault(a => a.StartsWith("--contrib-names="));
     if (cnArg is not null && int.TryParse(cnArg["--contrib-names=".Length..], out var cn))
         contribCfg = contribCfg with { NamesPerContribution = cn };
@@ -341,7 +344,7 @@ switch (mode)
         scalarizedTests.Test_TradeOff_TaxValueVsTrackingError();
         scalarizedTests.Test_HardCeiling_BindsInPathologicalRegimes();
         scalarizedTests.Test_LossAndWashGates_StillBind();
-        scalarizedTests.Test_WashGate_OpensExactlyAtBoundary();
+        scalarizedTests.Test_WashGate_OpensAfterInclusiveWindow();
         scalarizedTests.Test_SnapshotOverload_MatchesScalarForm();
         scalarizedTests.Test_Utility_Arithmetic_And_CTrade();
 
@@ -370,7 +373,10 @@ switch (mode)
         new StratifiedSplitTests().Test_PreservesClassProportionWithin1Percent();
         new StratifiedKFoldTests().Test_FoldsPartitionDataAndContainPositives();
 
-        new WashSaleTests().Test_Audit_WindowEdges_SameLot_AndGains();
+        var washTests = new WashSaleTests();
+        washTests.Test_Audit_WindowEdges_SameLot_AndGains();
+        washTests.Test_State_BeforeSide_LotLevelClock();
+        washTests.Test_Engine_ZeroViolations_OnWorldsThatHadThem();
 
         var contribTests = new ContributionPolicyTests();
         contribTests.Test_DefaultIsDisabled();

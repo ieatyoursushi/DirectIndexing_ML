@@ -69,7 +69,7 @@ v0.25 it is a *cost-benefit test behind three hard gates*, not a four-way AND:
 
 ```text
 Harvest = 1  if   loss is deep enough          (≥ 2% below cost)
-            AND  wash-sale window has cleared  (≥ 30 days)
+            AND  wash-sale window has cleared  (> 30 calendar days, both sides of §1091)
             AND  tracking error isn't extreme  (≤ 15% — a circuit breaker)
             AND  the harvest is worth it       (U > 0)
 
@@ -150,8 +150,8 @@ O_t &\in[0,3000]
    &&\text{OrdinaryOffsetBudget — §1211(b) allowance left}\\
 \sigma_{\mathrm{TE}} &\in\mathbb R_{\ge0}
    &&\text{annualized tracking error (shared state)}\\
-\mathcal W^{A_i}_t &\in\mathbb Z_{\ge0}\cup\{999\}
-   &&\text{days since last harvest of }A_i\\[4pt]
+\mathcal W_{k,t} &\in\mathbb Z_{\ge0}\cup\{999\}
+   &&\text{calendar days to the nearest §1091 event (lot-level, v0.3-1)}\\[4pt]
 R_t &= \frac{P_t-P_{t-1}}{P_{t-1}}\in\mathbb R
    &&\text{daily return}\\
 \Sigma\mathrm{Range} &= \frac{H_t-L_t}{P_{t-1}}\in\mathbb R_{\ge0}
@@ -258,7 +258,7 @@ reason a policy (v0.4), not a per-row classifier, is the eventual object
 $$
 f^*:\mathcal X\to\{0,1\},\qquad
 f^*(x)=\underbrace{\mathbf 1[\ell\le-\theta_1]}_{\text{loss depth}}\cdot
-\underbrace{\mathbf 1[\mathcal W^{A_i}_t\ge\theta_3]}_{\text{IRS §1091}}\cdot
+\underbrace{\mathbf 1[\mathcal W_{k,t}>\theta_3]}_{\text{IRS §1091}}\cdot
 \underbrace{\mathbf 1[\sigma_{\mathrm{TE}}\le\theta_{\max}]}_{\text{tail circuit breaker}}\cdot
 \underbrace{\mathbf 1[U(x)>0]}_{\text{net-benefit test}},
 $$

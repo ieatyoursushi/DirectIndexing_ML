@@ -159,13 +159,15 @@ COLUMNS: list[dict] = [
         "units": "calendar days",
         "role": "feature (portfolio-level)",
         "description": (
-            "Days since the last harvest of this lot's ticker. The IRS "
-            "wash-sale rule blocks re-claiming a loss within 30 days, so the "
-            "oracle requires WashClock ≥ 30. Clocks persist across year-end."
+            "Calendar days to this lot's nearest §1091 event: min(days since the "
+            "ticker's last LOSS sale, days since a DIFFERENT open lot of the ticker "
+            "was acquired), capped at 999. The wash-sale window is ±30 calendar days "
+            "inclusive, so the oracle requires WashClock > 30 (v0.3-1: both sides, "
+            "calendar-dated). Clocks are date differences and persist across year-end."
         ),
-        "encoding": "Non-negative integer. Sentinel 999 = ticker never harvested.",
+        "encoding": "Non-negative integer, capped at 999 (= no §1091 event on record).",
         "missing": "None (sentinel encodes 'never').",
-        "source": "PortfolioState.GetWashClock",
+        "source": "PortfolioState.WashClock(lot)",
     },
     {
         "name": "R_t",
@@ -263,7 +265,7 @@ COLUMNS: list[dict] = [
         "role": "label (hard)",
         "description": (
             "Deterministic scalarized-oracle harvest decision: "
-            "1[L ≤ −0.02] · 1[WashClock ≥ 30] · 1[Sigma_TE ≤ 0.15] · 1[U > 0], "
+            "1[L ≤ −0.02] · 1[WashClock > 30] · 1[Sigma_TE ≤ 0.15] · 1[U > 0], "
             "U = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = $10). "
             "The decision boundary is the level set {U = 0}. This is the "
             "cross-sectional target the supervised models recover (the leakage "

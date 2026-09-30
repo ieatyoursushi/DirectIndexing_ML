@@ -87,6 +87,8 @@ public sealed class SimulationEngine
 
     private void ProcessDay(int t)
     {
+        var today  = _prices.GetDate(t);
+        _state.SetDate(today);                  // all §1091 clocks are calendar-date differences
         var closes = _prices.GetClosesDecimal(t);
 
         // Portfolio value (only lots with a valid close price today)
@@ -120,21 +122,13 @@ public sealed class SimulationEngine
             {
                 if (!closes.TryGetValue(sym, out decimal price) || price <= 0m) continue;
 
-                // Wash-sale re-check before buying back (v0.3 fix). A reopen is scheduled
-                // for harvest_day + 30, when the clock would normally read exactly 30. But
-                // the ticker can be harvested AGAIN while this reopen is pending — including
-                // earlier on this very day, since the harvest loop runs before this block —
-                // which resets its clock. Buying now would disallow that newer loss under
-                // IRS §1091, so defer the buy until the window genuinely clears.
-                //
-                // This could not occur before v0.3: with one lot per ticker there was never
-                // a second lot to re-harvest while the reopen was pending. Contributions
-                // make tickers multi-lot and thereby expose it (measured: 17.4% of
-                // run-opened lots violated before this fix, 0% after).
-                int clock = _state.GetWashClock(sym);
-                if (clock < OracleBoundary.WashSaleDays)
+                // §1091 after-side re-check (v0.3-1): the ticker may have been loss-sold
+                // AGAIN while this reopen was pending — including earlier today, since the
+                // harvest loop runs first. Buying inside that window would disallow the newer
+                // loss, so defer to the first trading day more than 30 calendar days after it.
+                if (!_state.CanBuy(sym))
                 {
-                    int retry = t + (OracleBoundary.WashSaleDays - clock);
+                    int retry = _prices.FirstIndexOnOrAfter(_state.EarliestBuyDate(sym));
                     if (retry < _prices.DayCount)
                     {
                         if (!_reopenQueue.TryGetValue(retry, out var deferred))
@@ -146,7 +140,7 @@ public sealed class SimulationEngine
 
                 int shares = (int)(dollars / price);
                 if (shares == 0) continue;
-                var lot = new Lot(sym, sector, price, shares, t);
+                var lot = new Lot(sym, sector, price, shares, t, today);
                 _state.OpenLot(lot);
                 _trades.Add(new TradeEvent(_prices.GetDate(t), t, sym, TradeKind.Buy, lot, price, 0m));
                 _lotCount[sym] = (_lotCount.GetValueOrDefault(sym) + 1);
@@ -154,15 +148,11 @@ public sealed class SimulationEngine
             _reopenQueue.Remove(t);
         }
 
-        // Contributions run AFTER harvests and reopens so they see today's wash clocks —
-        // a ticker harvested today has WashClock = 0 and is correctly ineligible — and
-        // BEFORE AdvanceDay, which is what increments those clocks.
+        // Contributions run AFTER harvests and reopens so they see today's loss sales —
+        // a ticker loss-sold today fails CanBuy and is correctly ineligible.
         ProcessContribution(t, closes, portValue);
 
-        _state.AdvanceDay();
-
         // Year-end reset (G_net ← 0, net loss rolls into carryforward, wash clocks persist)
-        var today    = _prices.GetDate(t);
         var tomorrow = t + 1 < _prices.DayCount ? _prices.GetDate(t + 1) : today.AddDays(1);
         if (tomorrow.Year != today.Year)
         {
@@ -176,7 +166,7 @@ public sealed class SimulationEngine
         Lot lot, int t, decimal close, decimal portValue, float sigmaTE)
     {
         int holdingDays = lot.HoldingPeriod(t);
-        int washClock   = _state.GetWashClock(lot.Symbol);
+        int washClock   = _state.WashClock(lot);
 
         decimal unrealized = lot.UnrealizedReturn(close);
 
@@ -248,8 +238,10 @@ public sealed class SimulationEngine
 
         _lotCount[lot.Symbol] = Math.Max(0, lotsBefore - 1);
 
-        // Schedule reopen after wash-sale window
-        int reopenDay = t + OracleBoundary.WashSaleDays;
+        // Schedule the same-ticker reopen on the first trading day MORE than 30 calendar
+        // days after the sale (§1091's window is inclusive: day +30 is still inside it).
+        int reopenDay = _prices.FirstIndexOnOrAfter(
+            _prices.GetDate(t).AddDays(PortfolioState.WashWindowDays + 1));
         if (reopenDay < _prices.DayCount)
         {
             if (!_reopenQueue.TryGetValue(reopenDay, out var list))
@@ -283,10 +275,14 @@ public sealed class SimulationEngine
             if (closes.TryGetValue(lot.Symbol, out decimal px))
                 heldValue[lot.Symbol] = heldValue.GetValueOrDefault(lot.Symbol) + lot.Shares * px;
 
-        // Eligible = priced today AND clear of the wash-sale window.
+        // Eligible = priced today AND buyable under §1091's after-side (no loss sale in the
+        // last 30 calendar days) AND — unless the ablation flag disables it — holding no
+        // currently harvestable lot: buying such a name would make the fresh lot a §1091
+        // replacement and block that harvest for 30 days (the before-side), which is why a
+        // real manager steers new cash away from names it is about to harvest.
         var eligible = closes
-            .Where(kv => kv.Value > 0m &&
-                         _state.GetWashClock(kv.Key) >= OracleBoundary.WashSaleDays)
+            .Where(kv => kv.Value > 0m && _state.CanBuy(kv.Key) &&
+                         !(_contrib.SkipHarvestableNames && HasHarvestableLot(kv.Key, kv.Value)))
             .Select(kv => kv.Key)
             .ToList();
         if (eligible.Count == 0) return;
@@ -308,7 +304,7 @@ public sealed class SimulationEngine
             int shares = (int)(perName / price);
             if (shares == 0) continue;
 
-            var lot = new Lot(symbol, _prices.GetSector(symbol), price, shares, t);
+            var lot = new Lot(symbol, _prices.GetSector(symbol), price, shares, t, _prices.GetDate(t));
             _state.OpenLot(lot);
             _trades.Add(new TradeEvent(_prices.GetDate(t), t, symbol, TradeKind.Buy, lot, price, 0m));
             _lotCount[symbol] = _lotCount.GetValueOrDefault(symbol) + 1;
@@ -316,6 +312,9 @@ public sealed class SimulationEngine
             _contributedLots++;
         }
     }
+
+    private bool HasHarvestableLot(string symbol, decimal close) =>
+        _state.OpenLotsOf(symbol).Any(l => l.UnrealizedReturn(close) <= -_oracle.LossThreshold);
 
     // ── Private: portfolio initialisation ────────────────────────────────────
 
@@ -326,6 +325,7 @@ public sealed class SimulationEngine
         if (n == 0) throw new InvalidOperationException("No price data on warmup day.");
         decimal perLot = totalValue / n;
         _initialValue  = totalValue;   // base for the exogenous contribution schedule
+        _state.SetDate(_prices.GetDate(day0));
 
         foreach (var (symbol, price) in closes)
         {
@@ -334,7 +334,7 @@ public sealed class SimulationEngine
             if (shares == 0) shares = 1;
 
             string sector = _prices.GetSector(symbol);
-            var lot = new Lot(symbol, sector, price, shares, day0);
+            var lot = new Lot(symbol, sector, price, shares, day0, _prices.GetDate(day0));
             _state.OpenLot(lot);
             _trades.Add(new TradeEvent(_prices.GetDate(day0), day0, symbol, TradeKind.Buy, lot, price, 0m));
             _lotCount[symbol] = 1;

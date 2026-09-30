@@ -7,7 +7,7 @@ namespace DirectIndexing.Core.Oracle;
 /// (the scalarized, industry-faithful composite of v0.25 / issue #23 — the
 /// Wealthfront/Betterment form):
 ///
-///   f*(x) = 𝟙[ℓ ≤ −θ₁] · 𝟙[𝒲 ≥ 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) &gt; 0]
+///   f*(x) = 𝟙[ℓ ≤ −θ₁] · 𝟙[𝒲 &gt; 30] · 𝟙[σ_TE ≤ θ_max] · 𝟙[U(x) &gt; 0]
 ///   U(x)  = taxValueₖ(ledgerₜ, hₖ, ℓₖ) − λ·σ_TE² − c_trade
 ///
 /// Hard gates survive only where they encode a genuine legal rule or threshold
@@ -29,8 +29,8 @@ public static class OracleBoundary
     public const decimal LossThreshold = 0.02m;
 
     /// <summary>
-    /// IRS §1091 wash-sale window, in the units of the simulator's wash clock
-    /// (one tick per simulated trading day — see ROADMAP finding F7 on units).
+    /// IRS §1091 wash-sale window half-width in CALENDAR days. The window is inclusive
+    /// (±30 days around the sale), so a lot is wash-clean iff its clock 𝒲 &gt; 30.
     /// </summary>
     public const int WashSaleDays = 30;
 
@@ -39,7 +39,7 @@ public static class OracleBoundary
     /// </summary>
     /// <param name="unrealizedReturn">ℓ = (P_t − p_k)/p_k — negative for a loss</param>
     /// <param name="sigmaTE">σ_TE — current annualised tracking error vs benchmark</param>
-    /// <param name="washClock">𝒲_t^{A_i} — days since last harvest of this ticker</param>
+    /// <param name="washClock">𝒲 — calendar days to the nearest wash-relevant event (PortfolioState.WashClock)</param>
     /// <param name="taxValue">taxValueₖ — capacity-aware harvest value in dollars</param>
     /// <param name="config">thresholds and the economic terms of U</param>
     // [math:f_star] — DataMemo/spec/SymbolTable.md
@@ -51,7 +51,7 @@ public static class OracleBoundary
         OracleConfig config)
     {
         bool lossDeepEnough = unrealizedReturn <= -config.LossThreshold;
-        bool washSaleClear  = washClock        >=  config.WashSaleDays;
+        bool washSaleClear  = washClock        >   config.WashSaleDays;   // §1091 window is inclusive
         bool teBelowCeiling = (decimal)sigmaTE <= config.TrackingErrorCeiling;
         bool netBenefit     = Utility(taxValue, sigmaTE, config) > 0m;
         return (lossDeepEnough && washSaleClear && teBelowCeiling && netBenefit) ? 1 : 0;

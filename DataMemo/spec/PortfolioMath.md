@@ -67,15 +67,15 @@ $$\mathcal{S}_t = \left(\mu_t,\ \text{ledger}_t,\ \mathcal{W}_t\right)$$
 |-----------|-----------|------|---------|
 | $\mu_t$ | `OpenLots` | `List<Lot>` | Full lot measure across all assets |
 | $\text{ledger}_t$ | `Ledger` | `TaxLedger` | Schedule D bookkeeping: `RealizedGainsYTD` $\in \mathbb{R}$ (signed net, the pre-v0.25 `G_YTD`), `LossCarryforward` $\in \mathbb{R}_{\ge 0}$ (survives year-end), derived `OrdinaryOffsetBudget` $\in [0, 3000]$ and `OffsetCapacity` |
-| $\mathcal{W}_t : \mathcal{S} \to \mathbb{Z}_{\geq 0}$ | `_washClocks` | `Dictionary<string,int>` | Days since last harvest per ticker |
+| $\mathcal{W}_t$ | `_lastLossSale` + open-lot `PurchaseDate`s, via `WashClock(lot)` / `CanBuy(ticker)` | `Dictionary<string,DateOnly>` + `Lot.PurchaseDate` | §1091 state on the **calendar** (v0.3-1): last loss-sale date per ticker and the acquisition dates of open lots |
 
 The pre-v0.25 name `G_YTD` survives only as a reading aid; the code reads
 `Ledger.RealizedGainsYTD` directly (the alias was retired with the gated oracle).
 
 ### 2.2 Time Evolution
 
-**AdvanceDay()** implements the daily increment of $\mathcal{W}_t$:
-$$\mathcal{W}_{t+1}^{A_i} = \mathcal{W}_t^{A_i} + 1 \quad \forall i \in \mathcal{S}$$
+**SetDate(date(t))** is the only way time enters §1091 state: every wash clock is a
+*calendar-date difference* computed on demand (§2.4), never an incremented counter.
 
 **HarvestLot()** implements the state transition on lot $k$ of asset $A_i$:
 1. Realise P&L into the ledger (`Ledger.RecordRealized`):
@@ -85,8 +85,8 @@ $$\text{RealizedGainsYTD}_{t+1} = \text{RealizedGainsYTD}_t + \Delta G$$
 2. Remove atom from the measure:
 $$\mu_{t+1}^{A_i} = \mu_t^{A_i} - q_k\,\delta_{(p_k, s_k)}$$
 
-3. Reset the wash-sale clock:
-$$\mathcal{W}_{t+1}^{A_i} = 0$$
+3. If the sale realized a **loss**, date-stamp it: $\mathrm{lastLossSale}(A_i) \leftarrow \mathrm{date}(t)$.
+   Gain sales (the v0.3-7 trim) never open a §1091 window.
 
 ### 2.3 The TaxLedger — Sign Convention and Tax-Law Semantics (supersedes the G_YTD gate detail)
 
@@ -118,25 +118,31 @@ losses. At year-end, `RollYearEnd()` banks $\max(0, \text{netLoss} - \$3{,}000)$
 `LossCarryforward` (which **survives**) and zeroes the annual accumulator. The legacy gate
 was retired with the gated oracle arm (`archive/RetiredComponents.md` §6).
 
-### 2.4 The Wash-Sale Clock $\mathcal{W}_t$
+### 2.4 The Wash-Sale Clock $\mathcal{W}$ — §1091 on both sides, in calendar days (v0.3-1)
 
-The IRS wash-sale rule prohibits claiming a loss on an asset if a substantially identical asset is purchased within 30 calendar days before or after the sale.
+**The law.** 26 USC §1091 disallows a loss if substantially identical stock is acquired
+within 30 **calendar** days **before or after** the sale. That is an inclusive window of 61
+days centered on the sale date.
 
-In the simulation:
-$$\text{IsWashSaleBlocked}(A_i) = \mathbb{1}\!\left[\mathcal{W}_t^{A_i} < 30\right]$$
+**The simulator enforces both sides** (ROADMAP finding F7, fixed in v0.3-1):
 
-This is embedded in the oracle as a hard gate (one of the two that encode genuine legal
-rules and therefore survived the v0.25 redesign unchanged):
-$$f^*(x) \supseteq \mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]$$
+- **Before-side (the harvest gate).** For lot $k$ of ticker $A$ on date $d$,
+  $$\mathcal{W}_{k} = \min\Bigl(999,\ d-\mathrm{lastLossSale}(A),\ \min_{j\in\mathrm{open}(A),\,j\ne k}\bigl(d-\mathrm{date}(s_j)\bigr)\Bigr)\quad[\mathrm{d_{cal}}],$$
+  so a **different** lot bought within 30 days is a replacement and blocks the harvest. The
+  lot being sold is never its own replacement. The oracle gate is
+  $$f^*(x) \supseteq \mathbb{1}[\mathcal{W}_{k} > 30],$$
+  **strict**, because day 30 is still inside the inclusive window.
+  (The $d-\mathrm{lastLossSale}$ term is the pre-existing conservative rule of not re-harvesting
+  a ticker within 30 days of its own harvest. It is now measured on the calendar.)
+- **After-side (every buy).** $\mathrm{CanBuy}(A)=\mathbb 1[d-\mathrm{lastLossSale}(A)>30]$.
+  The same-ticker reopen is scheduled for the first trading day on or after
+  $\mathrm{sale}+31$ calendar days, and is re-deferred by date if the ticker is loss-sold again
+  meanwhile. Contributions buy only tickers that pass CanBuy and, by default, hold no currently
+  harvestable lot.
 
-After harvest, $\mathcal{W}_t^{A_i} \leftarrow 0$ and the clock counts up through `AdvanceDay()` until it reaches 30, at which point the asset becomes harvestable again.
-
-> ⚠ **Known gap (ROADMAP finding F7, fixed in v0.3-1).** The simulator enforces only the
-> *after-sale* half of §1091: no buy within the window after a loss sale. It does not block a
-> *harvest* within 30 days after a *purchase* of the same ticker. With contributions and
-> reopens making tickers multi-lot, that before-sale side is live. The clock also counts
-> **trading** days (≈42 calendar), not the law's 30 **calendar** days. Target definition:
-> [`SymbolTable.md`](SymbolTable.md) `wash_window_2s`.
+**Audited independently.** `WashSaleAudit` restates the law over the engine's trade log (not
+its gating code). On fixed-seed synthetic worlds it found 24.3% of the contribution arm's loss
+sales to be wash sales before the fix, and 0 after.
 
 ### 2.5 Year-End Reset
 
@@ -213,7 +219,7 @@ So $d = 17$ before one-hot encoding of `Sector` (schema v4, unchanged in $d$ sin
 | `LossCarryforward` | $\sum_{\text{years}} \max(0, \text{netLoss} - \$3k)$, survives year-end | `Ledger.LossCarryforward` |
 | `OrdinaryOffsetBudget` | $\max(0, \$3k - \max(0, -\text{net}))$ | `Ledger.OrdinaryOffsetBudget` (derived) |
 | `Sigma_TE` | $\sigma_{\text{TE}} = \sqrt{\delta w^\top \Sigma\, \delta w}$ | computed in simulation |
-| `WashClock` | $\mathcal{W}_t^{A_i} \in \mathbb{Z}_{\geq 0}$ | `portfolioState.GetWashClock()` |
+| `WashClock` | $\mathcal{W}_{k} \in \mathbb{Z}_{\geq 0}\cup\{999\}$, calendar days | `PortfolioState.WashClock(lot)` |
 
 #### Asset-level (from price series, computed in `Simulation/`)
 
@@ -320,14 +326,14 @@ This is not a flaw in the model — it is a known, bounded, and handled boundary
 **Canonical (v0.25 scalarized):** hard gates survive only where they encode a genuine legal
 rule or threshold fact; everything economic is one scalarized objective thresholded at zero:
 
-$$f^*(x) = \underbrace{\mathbb{1}[\ell \leq -\theta_1]}_{\text{loss deep enough}} \cdot \underbrace{\mathbb{1}[\mathcal{W}_t^{A_i} \geq 30]}_{\text{wash-sale clear}} \cdot \underbrace{\mathbb{1}[\sigma_{\text{TE}} \leq \theta_{\max}]}_{\text{tail-risk ceiling}} \cdot \underbrace{\mathbb{1}[U(x) > 0]}_{\text{net benefit}}$$
+$$f^*(x) = \underbrace{\mathbb{1}[\ell \leq -\theta_1]}_{\text{loss deep enough}} \cdot \underbrace{\mathbb{1}[\mathcal{W}_{k} > 30]}_{\text{wash-sale clear}} \cdot \underbrace{\mathbb{1}[\sigma_{\text{TE}} \leq \theta_{\max}]}_{\text{tail-risk ceiling}} \cdot \underbrace{\mathbb{1}[U(x) > 0]}_{\text{net benefit}}$$
 
 $$U(x) = \text{taxValue}_k(\text{ledger}_t, h_k, \ell_k) - \lambda\,\sigma_{\text{TE}}^2 - c_{\text{trade}}$$
 
 | Condition | Source field(s) | Value | Grounding |
 |------|-------------|-----------|-----------|
 | Loss sufficient | `L` | $\theta_1 = 0.02$ | threshold-on-the-loss trigger (industry standard) |
-| Wash-sale clear | `WashClock` | $\geq 30$ | IRS §1091 |
+| Wash-sale clear | `WashClock` | $> 30$ calendar days | IRS §1091, both sides (v0.3-1) |
 | TE ceiling | `Sigma_TE` | $\theta_{\max} = 0.15$ | tail-only circuit breaker; binds on 0 rows in 20y |
 | Net benefit | `TaxValue`, `Sigma_TE` | $U > 0$; $\lambda = 90{,}000$, $c_{\text{trade}} = \$10$ | Wealthfront objective form / Betterment net-benefit test |
 

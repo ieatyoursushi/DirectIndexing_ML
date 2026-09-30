@@ -15,17 +15,21 @@ public class Lot
     public string  Sector          { get; init; }
     public decimal CostBasis       { get; init; }   // price per share at purchase
     public int     Shares          { get; init; }
-    public int     PurchaseDayIndex { get; init; }  // simulation day index (not DateTime)
+    public int     PurchaseDayIndex { get; init; }  // simulation day index (trading days)
+    /// <summary>Calendar date of acquisition — what §1091 and §1222 are measured in.</summary>
+    public DateOnly PurchaseDate    { get; init; }
     public bool    IsOpen          { get; set; } = true;
 
     public Lot(string symbol, string sector,
-               decimal costBasis, int shares, int purchaseDayIndex)
+               decimal costBasis, int shares, int purchaseDayIndex,
+               DateOnly purchaseDate = default)
     {
         Symbol           = symbol;
         Sector           = sector;
         CostBasis        = costBasis;
         Shares           = shares;
         PurchaseDayIndex = purchaseDayIndex;
+        PurchaseDate     = purchaseDate;
     }
 
     // ℓ = (P_t − p_k) / p_k  ∈ (−1, ∞)

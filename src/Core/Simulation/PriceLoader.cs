@@ -339,6 +339,22 @@ public sealed class PriceLoader
         _close.TryGetValue(symbol, out var arr) && t < arr.Length && IsValid(arr[t]);
 
     public DateOnly  GetDate(int t)          => _calendar[t];
+
+    /// <summary>
+    /// The first trading-day index whose date is on or after <paramref name="date"/>
+    /// (<see cref="DayCount"/> if none) — how calendar-day rules such as §1091's
+    /// 31-day reopen are mapped onto the trading calendar.
+    /// </summary>
+    public int FirstIndexOnOrAfter(DateOnly date)
+    {
+        int lo = 0, hi = _calendar.Count;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >>> 1;
+            if (_calendar[mid] < date) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    }
     public string    GetSector(string symbol) => _sector.GetValueOrDefault(symbol, "");
     public decimal   GetWeight(string symbol) => _weight.GetValueOrDefault(symbol, 0m);
 

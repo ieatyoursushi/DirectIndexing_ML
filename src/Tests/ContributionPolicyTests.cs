@@ -5,12 +5,12 @@ using DirectIndexing.Core.Simulation;
 /// <summary>
 /// Unit tests for the v0.3 contribution policy — the cost-basis-aging fix. The
 /// invariants under test are the two that make it safe: the default is OFF (so an
-/// unflagged run reproduces v0.26), and the deposit schedule is exogenous and
+/// unflagged run is the baseline arm), and the deposit schedule is exogenous and
 /// correctly pro-rated.
 ///
-/// The wash-sale eligibility filter and the underweight ranking are exercised
-/// end-to-end by the simulation itself (a contribution run asserts zero lots are
-/// opened in a ticker whose WashClock &lt; 30); see the v0.3 verification notes.
+/// The §1091 eligibility filter is exercised end-to-end by
+/// WashSaleTests.Test_Engine_ZeroViolations_OnWorldsThatHadThem: a contribution run
+/// audited by the independent WashSaleAudit must show zero wash sales.
 /// </summary>
 public class ContributionPolicyTests
 {

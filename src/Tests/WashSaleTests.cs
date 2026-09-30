@@ -43,4 +43,78 @@ public class WashSaleTests
         Debug.Assert(v5 == 0 && v6 == 0 && v7 == 0, $"exclusions: expected 0/0/0, got {v5}/{v6}/{v7}");
         Console.WriteLine("WashSale Test 1 passed: audit window is ±30 d_cal inclusive; same lot, gains, other tickers excluded");
     }
+
+    // The before-side on PortfolioState: a DIFFERENT lot acquired within 30 calendar days
+    // makes the older lot unharvestable; the fresh lot itself is not its own replacement.
+    public void Test_State_BeforeSide_LotLevelClock()
+    {
+        var d0 = new DateOnly(2024, 3, 1);
+        var state = new PortfolioState();
+        state.SetDate(d0);
+        var old   = new Lot("AAA", "X", 100m, 10, 0, d0.AddDays(-400));
+        var fresh = new Lot("AAA", "X",  80m, 10, 0, d0);
+        state.OpenLot(old);
+        state.OpenLot(fresh);
+
+        state.SetDate(d0.AddDays(30));
+        int oldAt30 = state.WashClock(old), freshAt30 = state.WashClock(fresh);
+        state.SetDate(d0.AddDays(31));
+        int oldAt31 = state.WashClock(old);
+
+        Debug.Assert(oldAt30 == 30, $"old lot's clock is the fresh buy 30 days ago, got {oldAt30}");
+        Debug.Assert(oldAt31 == 31, $"…and 31 a day later, got {oldAt31}");
+        Debug.Assert(freshAt30 == 430, $"the fresh lot sees only the OTHER lot's purchase (430 d), got {freshAt30}");
+
+        // a gain sale never opens a window
+        state.HarvestLot(fresh, 120m);
+        Debug.Assert(state.CanBuy("AAA"), "a gain sale must not block buying");
+        Console.WriteLine("WashSale Test 2 passed: lot-level clock (before-side) and gain sales exempt");
+    }
+
+    // Acceptance: after v0.3-1 the independent audit finds ZERO wash sales on the worlds
+    // where it found 24.3% (weekday calendar, contributions) and 97.7% (daily calendar,
+    // day-30 reopen) before the fix — with and without the contribution skip rule.
+    public void Test_Engine_ZeroViolations_OnWorldsThatHadThem()
+    {
+        var weekday = PriceLoader.FromGbm(PriceLoader.UniformGbmUniverse(60, 0.35f), 1260, seed: 7);
+        var contrib = ContributionPolicy.Off with { Enabled = true, IntervalDays = 21, NamesPerContribution = 5 };
+        foreach (var skip in new[] { true, false })
+        {
+            var e = new SimulationEngine(weekday, contributionPolicy: contrib with { SkipHarvestableNames = skip });
+            e.Run(10_000_000m);
+            int losses = e.Trades.Count(x => x.Kind == TradeKind.Sell && x.RealizedGain < 0m);
+            var v = WashSaleAudit.Violations(e.Trades);
+            Debug.Assert(losses > 100, $"world must actually harvest (got {losses})");
+            Debug.Assert(v.Count == 0, $"contrib (skip={skip}): {v.Count} §1091 violations of {losses}");
+            Console.WriteLine($"WashSale Test 3 passed: weekday contrib world (skip={skip}): 0 violations in {losses} loss sales");
+        }
+
+        var daily = DailyCalendarWorld();
+        var eng = new SimulationEngine(daily);
+        eng.Run(10_000_000m);
+        int n = eng.Trades.Count(x => x.Kind == TradeKind.Sell && x.RealizedGain < 0m);
+        int bad = WashSaleAudit.Violations(eng.Trades).Count;
+        Debug.Assert(n > 100 && bad == 0, $"daily-calendar world: {bad} violations of {n}");
+        Console.WriteLine($"WashSale Test 4 passed: daily-calendar world: 0 violations in {n} loss sales (reopen at +31)");
+    }
+
+    // A world whose calendar has every day (so trading day = calendar day), with two
+    // drawdowns — the configuration in which a +30-trading-day reopen violated §1091.
+    private static PriceLoader DailyCalendarWorld()
+    {
+        const int N = 30, T = 700;
+        var rng = new Random(20260930);
+        double G() => Math.Sqrt(-2 * Math.Log(1 - rng.NextDouble())) * Math.Cos(2 * Math.PI * rng.NextDouble());
+        var mkt = new double[T];
+        for (int t = 1; t < T; t++)
+            mkt[t] = ((t > 300 && t < 360) ? -0.004 : (t > 520 && t < 560 ? -0.006 : 0.0004)) + 0.012 * G();
+        var d = new Dictionary<string, float[]>();
+        for (int i = 0; i < N; i++)
+        {
+            var r = new float[T]; r[0] = float.NaN;
+            for (int t = 1; t < T; t++) r[t] = (float)((0.6 + 0.02 * i) * mkt[t] + 0.012 * G());
+            d[$"D{i:D2}"] = r;
+        }
+        return PriceLoader.CreateForTesting(d);
+    }
 }
