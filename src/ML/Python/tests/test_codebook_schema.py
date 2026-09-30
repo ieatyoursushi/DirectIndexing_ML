@@ -1,11 +1,11 @@
-"""Guard: the codebook schema must match the real lots.csv header exactly."""
+"""Guards: the codebook schema must match the C# schema and the real lots.csv header."""
+import re
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER
-from scripts.report_helpers import NUMERIC_FEATURES, repo_root
+from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER, NUMERIC_FEATURES, repo_root
 
 
 # Schema v4: 25 columns = 17 numeric features + Sector + Symbol/Timestep metadata
@@ -24,6 +24,24 @@ def test_every_entry_fully_documented():
 
 def test_numeric_features_subset_of_schema():
     assert set(NUMERIC_FEATURES) <= set(EXPECTED_HEADER)
+    assert len(NUMERIC_FEATURES) == 17
+
+
+def test_numeric_features_match_csharp_featurelists():
+    """Cross-language drift check: the Python feature block must equal
+    FeatureLists.NumericFeatures in C#, element for element and in order."""
+    cs = (repo_root(Path(__file__).parent)
+          / "src" / "ML" / "CSharp" / "MLNet" / "Schema" / "FeatureLists.cs").read_text()
+    block = re.search(r"NumericFeatures\s*=\s*\{(.*?)\};", cs, re.S).group(1)
+    assert re.findall(r'"([^"]+)"', block) == NUMERIC_FEATURES
+
+
+def test_header_matches_csharp_exporter():
+    """The exported CSV header (SimulationExporter.Header) must equal the schema."""
+    cs = (repo_root(Path(__file__).parent) / "src" / "Export" / "SimulationExporter.cs").read_text()
+    block = re.search(r"Header\s*=(.*?);", cs, re.S).group(1)
+    header = "".join(re.findall(r'"([^"]*)"', block)).split(",")
+    assert header == EXPECTED_HEADER
 
 
 def test_matches_lots_csv_header():

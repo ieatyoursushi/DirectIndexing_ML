@@ -1,17 +1,13 @@
 [project]
 name = "directindexing-mlnet-renderer"
 version = "0.1.0"
-description = "Thin renderer for the ML.NET pipeline: reads JSON artifacts and emits PNGs + HTML."
+description = "Thin renderer for the ML.NET pipeline: EDA/model plots, the codebook, and the math-sync check."
 requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
     "matplotlib>=3.9",
     "jinja2>=3.1",
-    "nbformat>=5.10",
-    "nbclient>=0.10",
-    "nbconvert>=7.16",
-    "ipykernel>=6.29",
 ]
 
 [dependency-groups]

@@ -6,8 +6,8 @@ is added there, add it here — `scripts.codebook` asserts the CSV header
 matches this list exactly, so drift fails loudly instead of silently.
 
 Each entry: name, dtype, units, role, description, encoding, missing, source.
-Mathematical definitions follow DataMemo/SimulationMath.md and
-DataMemo/PortfolioMath.md.
+Mathematical definitions follow DataMemo/spec/ (SymbolTable.md is the index).
+Schema version: v4 (25 columns, d = 17).
 """
 from __future__ import annotations
 
@@ -392,3 +392,21 @@ COLUMNS: list[dict] = [
 
 #: Header order expected in data/lots.csv (must match SimulationExporter).
 EXPECTED_HEADER: list[str] = [c["name"] for c in COLUMNS]
+
+# The d = 17 numeric feature block, in schema order — derived, never restated.
+# Must equal C# FeatureLists.NumericFeatures (asserted by tests/test_codebook_schema.py).
+NUMERIC_FEATURES: list[str] = [
+    c["name"] for c in COLUMNS
+    if c["role"].startswith("feature") and not c["dtype"].startswith("string")
+]
+
+
+def repo_root(start=None):
+    """Walk up from `start` (default cwd) to the directory holding DirectIndexing.sln —
+    mirrors PythonRunner.LocateRepoRoot on the C# side."""
+    from pathlib import Path
+    d = (Path(start) if start else Path.cwd()).resolve()
+    for candidate in (d, *d.parents):
+        if (candidate / "DirectIndexing.sln").exists():
+            return candidate
+    raise FileNotFoundError(f"no DirectIndexing.sln above {d}")

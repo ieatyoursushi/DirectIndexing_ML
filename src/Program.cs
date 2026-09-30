@@ -77,7 +77,21 @@ if (args.Contains("--contrib"))
 }
 if (mode is ("simulate" or "simulate-mc") && contribCfg.Enabled)
     Console.WriteLine($"[ContributionPolicy] {contribCfg.Describe()}");
-var mlnetArtifacts = $"../data/artifacts-mlnet{SplitPolicy.ArtifactTag}/";
+// ── Dataset + artifact layout ───────────────────────────────────────────────
+// --lots=<path> picks the dataset every mlnet-* / eda / codebook mode reads
+// (default data/lots.csv). The artifact directory is derived from the dataset's
+// arm tag plus the split tag, so arms never clobber each other:
+//   lots.csv + random          → data/artifacts-mlnet/
+//   lots_contrib.csv + temporal → data/artifacts-mlnet_contrib-temporal/
+// --ctrade=<x> tags the simulated dataset (lots_ctrade<x>.csv) the same way.
+var ctradeTag      = ctradeArg is null ? "" : $"_ctrade{oracleCfg.CTrade.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+var lotsPath       = Path.GetFullPath(StringFlag("--lots=", "../data/lots.csv"));
+var datasetTag     = DatasetTagOf(lotsPath);
+var mlnetArtifacts = Path.GetFullPath($"../data/artifacts-mlnet{datasetTag}{SplitPolicy.ArtifactTag}/");
+var edaOut         = Path.GetFullPath("Export/eda-mlnet/");
+var modelsOut      = Path.GetFullPath("Export/models-mlnet/");
+if (mode.StartsWith("mlnet") || mode is "codebook")
+    Console.WriteLine($"[Data] lots={lotsPath}\n[Data] artifacts={mlnetArtifacts}");
 
 switch (mode)
 {
@@ -143,7 +157,7 @@ switch (mode)
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = $"../data/lots{contribCfg.DatasetTag}.csv";
+        var outPath = $"../data/lots{contribCfg.DatasetTag}{ctradeTag}.csv";
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] → {outPath}  " +
@@ -177,32 +191,30 @@ switch (mode)
         var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg).Run(10_000_000m);
         new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            $"../data/lots-mc{contribCfg.DatasetTag}.csv");
+            $"../data/lots-mc{contribCfg.DatasetTag}{ctradeTag}.csv");
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
-    // Each case loads data/lots.csv into List<LotStateVector>, then hands it
+    // Each case loads the --lots dataset into List<LotStateVector>, then hands it
     // straight to LoadFromEnumerable. No CSV inside ML.NET, no [LoadColumn]
     // round-trip — the typed schema flows all the way through.
     case "mlnet-eda":
     {
-        var rc = PythonRunner.Run("scripts.eda",
-            "--in",  "../../../data/lots.csv",
-            "--out", "../../Export/eda-mlnet/");
+        var rc = PythonRunner.Run("scripts.eda", "--in", lotsPath, "--out", edaOut);
         Environment.ExitCode = rc;
     }
     break;
     // ── Individual model cases (full CV + test eval for a single model) ──────
     case "mlnet-gbt":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         MLnetPipeline.RunSupervisedModel("gbt", data, "soft_bt", mlnetArtifacts);
         MLnetPipeline.RunSupervisedModel("gbt", data, "oracle",  mlnetArtifacts);
     }
     break;
     case "mlnet-logistic":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         MLnetPipeline.RunSupervisedModel("logistic", data, "soft_bt", mlnetArtifacts);
         MLnetPipeline.RunSupervisedModel("logistic", data, "oracle",  mlnetArtifacts);
     }
@@ -211,7 +223,7 @@ switch (mode)
     // ── Comparison run: CV GBT + logistic → leaderboard → test eval of both ───
     case "mlnet-compare":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
         MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
     }
@@ -221,13 +233,13 @@ switch (mode)
     // test eval). Used to finish a target after a partial mlnet-all/compare run.
     case "mlnet-soft":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
     }
     break;
     case "mlnet-oracle":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         MLnetPipeline.RunAllSupervised(data, target: "oracle", artifactsDir: mlnetArtifacts);
     }
     break;
@@ -236,7 +248,7 @@ switch (mode)
     // recovering g(ledger, H, L) from raw features.
     case "mlnet-tax":
     {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         DirectIndexing.ML.MLNet.Models.TaxValueRegressionPipeline.Run(
             data, artifactsDir: mlnetArtifacts);
     }
@@ -244,54 +256,33 @@ switch (mode)
 
     case "mlnet-render":
     {
-        var rc = MLnetPipeline.RunRender(
-            lotsCsv:      "../../../data/lots.csv",
-            artifactsDir: "../../../data/artifacts-mlnet/",
-            edaDir:       "../../Export/eda-mlnet/",
-            modelsDir:    "../../Export/models-mlnet/");
+        var rc = MLnetPipeline.RunRender(lotsPath, mlnetArtifacts, edaOut, modelsOut);
         Environment.ExitCode = rc;
     }
     break;
     case "mlnet-all":
     {
         var sw = Stopwatch.StartNew();
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
+        var data = LotStateVectorCsvReader.Read(lotsPath);
         // Comparison run: CV GBT + logistic, leaderboard names the champion, test eval both.
         MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
         MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
-        var rc = MLnetPipeline.RunRender(
-            lotsCsv:      "../../../data/lots.csv",
-            artifactsDir: "../../../data/artifacts-mlnet/",
-            edaDir:       "../../Export/eda-mlnet/",
-            modelsDir:    "../../Export/models-mlnet/");
+        var rc = MLnetPipeline.RunRender(lotsPath, mlnetArtifacts, edaOut, modelsOut);
         sw.Stop();
         Console.WriteLine($"[mlnet-all] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
         Environment.ExitCode = rc;
     }
     break;
 
-    // ── Report layer — final-project report (notebook + HTML + codebook) ─────
-    // Python renders; preflight fails fast (exit 2) if ML artifacts are missing.
-    case "report":
+    // ── Codebook — the column dictionary, with the schema-drift assert ─────────
+    // Renders scripts/codebook_schema.py (the single schema source) against the
+    // --lots CSV header and FAILS if they differ. (The course report/submission
+    // commands were retired; their outputs are frozen in src/Export/report/.)
+    case "codebook":
     {
-        var rc = PythonRunner.Run("scripts.report",
-            "--lots",      "../../../data/lots.csv",
-            "--artifacts", "../../../data/artifacts-mlnet/",
-            "--notebook",  "notebooks/final_report.ipynb",
-            "--out",       "../../Export/report/");
-        Environment.ExitCode = rc;
-    }
-    break;
-    case "report-all":   // mlnet-all training + report, one command
-    {
-        var data = LotStateVectorCsvReader.Read("../data/lots.csv");
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
-        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
-        var rc = PythonRunner.Run("scripts.report",
-            "--lots",      "../../../data/lots.csv",
-            "--artifacts", "../../../data/artifacts-mlnet/",
-            "--notebook",  "notebooks/final_report.ipynb",
-            "--out",       "../../Export/report/");
+        var rc = PythonRunner.Run("scripts.codebook",
+            "--lots", lotsPath,
+            "--out",  Path.GetFullPath("Export/codebook/"));
         Environment.ExitCode = rc;
     }
     break;
@@ -303,15 +294,6 @@ switch (mode)
         var rc = PythonRunner.Run("scripts.dependencies",
             "--src", "../../../src",
             "--out", "../../Export/diagrams/");
-        Environment.ExitCode = rc;
-    }
-    break;
-
-    case "submission":   // package the course submission zip at the repo root
-    {
-        var rc = PythonRunner.Run("scripts.package_submission",
-            "--repo-root", "../../..",
-            "--out",       "../../../submission.zip");
         Environment.ExitCode = rc;
     }
     break;
@@ -409,4 +391,15 @@ double DoubleFlag(string prefix, double fallback)
     return a is not null && double.TryParse(a[prefix.Length..],
         System.Globalization.NumberStyles.Float,
         System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
+}
+
+string StringFlag(string prefix, string fallback) =>
+    args.FirstOrDefault(x => x.StartsWith(prefix))?[prefix.Length..] ?? fallback;
+
+// "lots.csv" → "", "lots_contrib.csv" → "_contrib", "lots-mc.csv" → "-mc",
+// any other file name → "_<stem>" (so a renamed dataset still gets its own dir).
+static string DatasetTagOf(string lotsCsv)
+{
+    var stem = Path.GetFileNameWithoutExtension(lotsCsv);
+    return stem.StartsWith("lots") ? stem["lots".Length..] : "_" + stem;
 }

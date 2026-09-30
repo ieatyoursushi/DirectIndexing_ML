@@ -16,13 +16,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from scripts.codebook_schema import COLUMNS
+from scripts.codebook_schema import NUMERIC_FEATURES as NUMERIC
 
-# The numeric feature block, read from the single schema source (codebook_schema.py)
-# rather than restated here — a hand-kept copy is how the 5×3 grid below silently
-# fell behind when d went 15 → 17.
-NUMERIC = [c["name"] for c in COLUMNS
-           if c["role"].startswith("feature") and not c["dtype"].startswith("string")]
+# The numeric feature block comes from the single schema source (codebook_schema.py)
+# rather than being restated here — a hand-kept copy is how the old fixed 5×3 grid
+# below silently fell behind when d went 15 → 17.
 
 
 def main() -> int:

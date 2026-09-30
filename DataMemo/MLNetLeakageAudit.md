@@ -54,25 +54,20 @@ var testReady  = MedianImputer.Apply(test,  medians, ...);  // uses TRAIN median
 
 `Fit` cannot accept test data because it's the *function that computes medians*; calling it on test would be a name-meaning mismatch, not just a convention violation.
 
-## 3. PCA
+## 3. PCA — retired, and the rule it generalizes to
 
-**The math.** PCA decomposes the covariance matrix of the training features. If the covariance is computed on train+test combined, the principal axes are influenced by test-set variance — which then shapes the dimensionality reduction the model sees.
+The feature-space PCA (`Models/PcaPipeline.cs`) was retired in the pre-v0.3 downsizing
+(`archive/RetiredComponents.md` §4). Its invariant was the `EstimatorChain.Fit(trainView)`
+shape plus a MathNet SVD over the *same* training-fold matrix, so test variance could not tilt
+the principal axes.
 
-**Python (`pca.py`).** Calls `PCA().fit(df[NUMERIC_FEATURES].dropna().values)`. The input is the full filtered dataset; no train/test boundary. The fitted PCA's principal axes are then used downstream as features — meaning anything that uses PCA-projected data has a leak.
-
-(In Python v0.1 the PCA is only run for *analysis* — extracting scree / loadings, not as input to a supervised model. So the leak is dormant. But the *structure* admits the leak if PCA is ever wired into a downstream supervised pipeline.)
-
-**ML.NET (`Models/PcaPipeline.cs`).** The PCA is an `EstimatorChain`:
-
-```csharp
-var chain = ml.Transforms.NormalizeMeanVariance(...)
-    .Append(ml.Transforms.Concatenate("RawFeatures", numeric))
-    .Append(ml.Transforms.ProjectToPrincipalComponents(...));
-
-var model = chain.Fit(trainView);   // ← training fold only
-```
-
-The MathNet SVD that recovers loadings + explained variance runs on the *same* matrix the chain saw — built from the training fold's already-imputed rows. To leak test data into PCA, you'd have to actively swap `trainView` for a `fullView` in the `.Fit(...)` call. The chain's `.Fit` semantics are exactly the invariant — "fit on this data, transform applies separately."
+The rule carries over to its successor, the eigendecomposition of the return covariance
+$\hat\Sigma_t$ (v0.3-4). There it takes the time-series form: **a covariance used on day $t$
+may be estimated only from returns observed before $t$** ($\mathcal F_{t-1}$-measurable). The
+current `TrackingErrorProxy` violates exactly this. It estimates $\hat\Sigma$ once from the
+full price history, so $\sigma_{\mathrm{TE}}$ (a feature) peeks forward (ROADMAP finding F1).
+The split-level leakage control cannot see a leak built into a feature, which is why it is
+recorded here.
 
 ## 4. NormalizeMeanVariance (per-feature standardisation)
 
@@ -96,17 +91,26 @@ The MathNet SVD that recovers loadings + explained variance runs on the *same* m
 |---|---|---|---|
 | Class weights | ✓ accident (sklearn does it inside `.fit()`) | ✓ structural (only `Fit(trainFold)` signature exists) |
 | Median impute | ✗ leak (full dataset before split) | ✓ structural (`Fit` only takes training fold) |
-| PCA | ✗ leak when used as features (`PCA().fit(full)`) | ✓ structural (`EstimatorChain.Fit(trainView)`) |
+| PCA *(retired)* | ✗ leak when used as features (`PCA().fit(full)`) | ✓ structural while it existed; successor rule: point-in-time $\hat\Sigma_t$ (§3) |
 | Standardisation | ✓ accident (inside sklearn pipeline) | ✓ structural (inside EstimatorChain) |
 | One-hot vocabulary | ✓ accident (inside sklearn pipeline) | ✓ structural (inside EstimatorChain) |
 
 The pattern: *accidents become invariants when you have a type-shaped pipeline*. That's the whole architectural argument condensed.
 
-## Regression test
+## Regression tests — what exists, and the recorded gap
 
-`src/Tests/MLNet/LeakageRegressionTests.cs` verifies the PCA + median-impute invariants by:
-1. Fitting on `train`, hashing the resulting parameters.
-2. Refitting on `train + test` and asserting the hash changes (sanity: the test data WOULD influence the fit if we let it).
-3. Calling the production code path (`MedianImputer.Fit(train)` + `PcaPipeline.Run`) and asserting the params match step 1, not step 2.
+What is tested (`src/Tests/MLNetTests.cs`, run by `dotnet run --project src -- test`):
+- `PreprocessingTests.Test_MedianImputerReplacesNaNs`: NaNs are replaced with the
+  **training-fold** median.
+- `PreprocessingTests.Test_ClassWeightsBalanced`: balanced weights are computed from the list
+  passed in.
+- `TemporalSplitTests`: the purge/embargo arithmetic (v0.26).
 
-So if a future refactor accidentally widens the input to `Fit`, the test fails immediately.
+These invariants are enforced **structurally**: the only `Fit` / `AttachBalancedWeights`
+signatures take a single list, which every call site obtains from `DataSplit`'s training
+fold. Tests pin the *behaviour* of those functions.
+
+**Recorded gap.** Earlier revisions of this memo described a
+`src/Tests/MLNet/LeakageRegressionTests.cs` that fits on train, refits on train + test, and
+asserts that the production path matches the train-only parameters. That test never existed
+in the repository's history. It is now a backlog item (ROADMAP §open) rather than a claim.

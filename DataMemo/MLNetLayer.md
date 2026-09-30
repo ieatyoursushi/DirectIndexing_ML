@@ -157,15 +157,15 @@ IDataView  (named, typed columns — no schema loss, no CSV round-trip)
             ├─ NormalizeMeanVariance  (17 numeric features, by name)
             └─ Concatenate("Features", numerics ‖ SectorOneHot)
        │
-       ▼   Trainer  (logistic · elastic net · GBT · RF · linreg demo)
+       ▼   Trainer  (GBT = champion · logistic = linear control)
        │
        ▼   ITransformer   (fitted, inspectable at every stage)
        │
        ▼   BinaryMetrics.Compute  (manual step-function PR-AUC + ROC + F1 sweep)
        │
-       ▼   JSON metrics + ROC/PR/scree/elbow curve points  → data/artifacts-mlnet*/
+       ▼   JSON metrics + ROC/PR curve points  → data/artifacts-mlnet{dataset}{split}/
        │
-       ▼   PythonRunner subprocess  → codebook, notebook execution, HTML
+       ▼   PythonRunner subprocess  → EDA + model plots, codebook (schema-drift assert)
 ```
 
 Every arrow is typed; nothing is positional. `LotStateVector.cs` is the single source of
@@ -184,27 +184,32 @@ name degrades to an index.
 | **Preprocessing** | `ColumnTransformer([...])` | typed `EstimatorChain`, named I/O per stage | `ColumnTransformer` exists because sklearn pipelines drop column names; ML.NET's don't |
 | **Class balancing** | `class_weight='balanced'` (correct, by accident — inside `.fit()`) | `ClassWeights.AttachBalancedWeights(trainFold, …)` — the only signature that exists | makes the training-fold-only requirement *structurally enforced* |
 | **Median impute** | `fillna(median())` on the full frame (subtle leak) | `MedianImputer.Fit(trainFold) → dict; Apply(rows, dict)` | the two-call shape makes "fit on train, apply elsewhere" the natural path |
-| **PCA** | `PCA().fit(full)` (subtle leak) | `EstimatorChain.Fit(trainView)` + MathNet SVD on the same matrix | chain shape forces fit-on-train; ML.NET hides loadings, so MathNet recovers them from the matrix the chain saw |
 | **Plots** | matplotlib inline | C# emits JSON → Python reads JSON → matplotlib | visualization iteration is genuinely better in Python's REPL; the boundary stays |
 
 ## 2.3 Output artifacts
 
-`data/artifacts-mlnet*/` — written by C#. The directory *suffix records how the numbers were
-produced*, so ablation arms never overwrite each other:
+`data/artifacts-mlnet{dataset}{split}/` — written by C#. The directory name *records how the
+numbers were produced*, so arms never overwrite each other. It is derived, not hand-named:
+`{dataset}` is the `--lots` file's arm tag and `{split}` is `SplitPolicy.ArtifactTag`.
 
-| Directory | Produced by |
-|---|---|
-| `artifacts-mlnet/` | canonical — scalarized oracle, random split |
-| `artifacts-mlnet-gated/` | the v0.2 gated-oracle ablation baseline |
-| `artifacts-mlnet-temporal/` | `--split=temporal` (v0.26) |
+| `--lots` | split | Directory |
+|---|---|---|
+| `data/lots.csv` (default) | random | `artifacts-mlnet/` — canonical |
+| `data/lots.csv` | `--split=temporal` | `artifacts-mlnet-temporal/` |
+| `data/lots_contrib.csv` | `--split=temporal` | `artifacts-mlnet_contrib-temporal/` |
+| `data/lots-mc.csv` | random | `artifacts-mlnet-mc/` |
+
+(`simulate` names its datasets the same way: `lots{_contrib}{_ctrade<x>}.csv`. The pre-v0.3
+`artifacts-mlnet-gated/` arm is retired with the gated oracle.)
 
 Contents: `{model}_{target}_metrics.json` (CV scores, test ROC/PR-AUC, F1 at both thresholds,
 ROC + PR curve points, chosen hyperparameters), `{model}_{target}_model.zip`,
-`{model}_{target}_coefficients.csv` for linear models, `{target}_cv_leaderboard.json`,
-`tax_value_regression_metrics.json`, plus the unsupervised set (`pca_scree.json`,
-`pca_loadings.csv`, `kmeans_elbow.json`, `cluster_assignments.{json,csv}`).
+`logistic_{target}_coefficients.csv`, `{target}_cv_leaderboard.json` (names the champion and
+each model's role), and `tax_value_regression_metrics.json`. The retired unsupervised set
+(`pca_*`, `kmeans_*`, `cluster_assignments.*`) is no longer written.
 
-`src/Export/report/`, `src/Export/eda-mlnet/` — written by Python (notebook, HTML, codebook, PNGs).
+`src/Export/eda-mlnet/`, `src/Export/models-mlnet/`, `src/Export/codebook/` — written by Python
+(PNGs, index.html, codebook). `src/Export/report/` is the **frozen** course submission.
 
 ---
 
@@ -225,15 +230,12 @@ sklearn intuitions.
 | F1-optimal threshold | manual sweep | manual sweep | `BinaryMetrics.cs` |
 | PR-AUC | step-function AP | step-function AP (manual) | `BinaryMetrics.cs` |
 | Seed | `random_state=42` | `MLContext(seed:42)` + `Random(42)` | everywhere |
-| PCA loadings | `.components_` | MathNet SVD | `PcaPipeline.cs` |
 | K-fold partition | sklearn internal | round-robin per class | `StratifiedKFold.cs` |
 | **Purged temporal CV** | *(no equivalent)* | `TemporalSplit.PurgedFolds` | `TemporalSplit.cs` |
 | Solver iter cap | `max_iter=100` | `MaximumNumberOfIterations=200` | `LogisticTrainer.cs` |
 | GBT trees / leaves | `n_estimators` / `max_leaf_nodes` | `NumberOfTrees` / `NumberOfLeaves` | `GradientBoostedTreesTrainer.cs` |
-| RF feature fraction | `max_features='sqrt'` | `FeatureFraction ∈ {0.3,0.5,0.7}` (tuned) | `RandomForestTrainer.cs` |
-| Elastic net L1 / L2 | `l1_ratio·(1/C)` / `(1−l1_ratio)/(2C)` | `L1Regularization` / `L2Regularization` (direct) | `ElasticNetTrainer.cs` |
-| Uncalibrated probability | sklearn always calibrates | `Score` used as proxy | `BinaryMetrics.cs` |
-| Champion selection | `best_estimator_` | `RunAllSupervised` CV leaderboard | `MLnetPipeline.cs` |
+| Uncalibrated probability | sklearn always calibrates | `Score` used as proxy (no current trainer needs it) | `BinaryMetrics.cs` |
+| Champion selection | `best_estimator_` | `SelectChampion` = argmax CV; `RunAllSupervised` leaderboard | `MLnetPipeline.cs` |
 
 ## 3.2 `C` ↔ `L2Regularization` — opposite directions
 
@@ -285,17 +287,17 @@ Verified on the `Y_Oracle` sanity baseline where AP ≈ 1.0 if both compute it c
 
 ## 3.7 Calibration and the `Score` fallback
 
-FastTree (GBT) applies Platt calibration internally and emits a `Probability` column.
-FastForest (RF) does **not** — scored output has only `Score`. `BinaryMetrics.Compute` checks
-for `Probability` and falls back to `Score`. This fallback:
+FastTree (GBT) applies Platt calibration internally and emits a `Probability` column, as does
+L-BFGS logistic regression. `BinaryMetrics.Compute` checks for `Probability` and falls back to
+`Score` — a path only the retired FastForest and least-squares trainers exercised, kept for any
+future uncalibrated scorer. The fallback:
 
 - **preserves** valid ROC and PR curves (ranking is calibration-invariant),
 - **preserves** valid AUC metrics (AUC is a ranking statistic),
 - **breaks** probability estimates at a given threshold.
 
-So confusion matrices and F1 at $\tau=0.5$ are meaningful for RF (Score is $[0,1]$-bounded)
-but *not* for the linear-regression demonstrator (Score is unbounded) — which is exactly what
-the `fractionOutsideUnit` field quantifies.
+So confusion matrices and F1 at $\tau=0.5$ are meaningful for a $[0,1]$-bounded `Score` but not
+for an unbounded one.
 
 ## 3.8 Solver
 
@@ -304,41 +306,14 @@ criteria differ (sklearn `tol=1e-4, max_iter=100`; ML.NET `OptimizationTolerance
 unbounded iterations, capped here at 200). This is the most likely source of small numeric
 differences in fitted coefficients.
 
-## 3.9 Elastic net objective map
+## 3.9 Retired reconciliations
 
-sklearn: $\min_w \frac1n\sum_i \ell(y_i, w\cdot x_i) + \frac1C[\rho\lVert w\rVert_1 + \frac{1-\rho}2\lVert w\rVert_2^2]$.
-ML.NET: $\min_w \frac1n\sum_i \ell(y_i, w\cdot x_i) + \lambda_1\lVert w\rVert_1 + \lambda_2\lVert w\rVert_2^2$.
-
-**Reconciliation.** $\lambda_1 = \rho/C$, $\lambda_2 = (1-\rho)/(2C)$. The grid searches
-$(\lambda_1,\lambda_2)$ directly rather than $(\rho, C)$, avoiding the interaction between two
-hyperparameters. $\{0.001,0.01,0.1\}^2$ covers a 100× range in both penalties and
-approximately includes the pure-ridge and pure-lasso corners.
-
-## 3.10 RF feature fraction
-
-sklearn's `max_features='sqrt'` gives $\sqrt{17}/17\approx0.24$ for this schema; FastForest's
-*default* `FeatureFraction = 0.7` is far more aggressive feature sharing (closer to
-LightGBM-style training than to sklearn's conservative default). Since v0.2 this is **tuned**
-over $\{0.3,0.5,0.7\}$ rather than fixed — it is the single most important RF hyperparameter
-(the decorrelation knob) and the chosen value is reported in `rf_{target}_metrics.json`.
-
-## 3.11 Linear regression demonstrator
-
-Binary trainers take `bool Label`; regression trainers require `float`. `MLReadyRow` carries
-both — `Label: bool` for classifiers, `FloatLabel: float` for regression (also used by the
-v0.25 tax-value regression, where it carries a genuinely continuous target rather than 1f/0f).
-The regression `Score` is used as a probability proxy for ROC/PR, and `fractionOutsideUnit`
-makes the abuse explicit. `LinearRegressionTrainer` participates in the CV leaderboard but is
-excluded from champion selection, labelled `"modelType": "regression_demonstration"`.
-
-## 3.12 PCA loadings
-
-`ProjectToPrincipalComponents` returns projected data but exposes neither components nor
-eigenvalues. `PcaPipeline.Run` fits the chain, then separately runs MathNet's SVD on **the
-same standardized matrix the chain saw**, extracting explained-variance ratios from
-$\sigma_i^2/(n-1)$ and loadings from $V$. The training-fold-only invariant holds because the
-SVD matrix is built from the same `trainReady` list `chain.Fit` consumed — there is no second
-fit on the full dataset (`MLNetLeakageAudit.md` §3).
+The elastic-net objective map ($\lambda_1=\rho/C$, $\lambda_2=(1-\rho)/(2C)$), the RF
+`FeatureFraction` vs `max_features='sqrt'` note, the linear-regression-demonstrator plumbing,
+and the PCA-loadings-via-MathNet-SVD recovery went with their trainers in the pre-v0.3
+downsizing — findings in `archive/RetiredComponents.md`, text at tag
+`archive/v0.3-pre-downsize`. `MLReadyRow.FloatLabel` survives: the tax-value regression uses it
+for its genuinely continuous target.
 
 ---
 
