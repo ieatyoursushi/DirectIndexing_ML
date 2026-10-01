@@ -13,7 +13,9 @@ every tax lot on every day with a harvesting rulebook, and trains supervised mod
 > (live spec / frozen decisions / archive); see [`DataMemo/README.md`](DataMemo/README.md).
 > (PSTAT 231 is the intro-ML graduate project course this began in.)
 
-**Status:** v0.1 → v0.26 complete, plus a **pre-v0.3 downsizing**. **v0.3 is in progress.**
+**Status:** v0.1 → v0.26 complete, plus a **pre-v0.3 downsizing**. **v0.3 is implemented** (its
+measurements on the 20-year data run on your machine; see [`ROADMAP.md`](ROADMAP.md)). The v0.4
+policy layer is designed in [`DataMemo/decisions/PolicyLayer_v04.md`](DataMemo/decisions/PolicyLayer_v04.md).
 
 v0.2 was the PSTAT 231 submission. The pipeline was then scaled to a custom range of up to ~20
 years (2006–2026, 1.85M lot-day rows through the 2008, 2020 and 2022 drawdowns), which exposed
@@ -26,17 +28,20 @@ the defects v0.25/v0.26 fixed:
 - **v0.26: validation hardening.** Purged chronological splits (`--split=temporal`). ROC-AUC held
   and the deterministic-oracle control stayed ~1.0, so split-level leakage is ruled out. The
   PR-AUC drop was the cost-basis-aging prevalence crash.
-- **Downsizing (2026-09-30).**
-  - The supervised layer is now **GBT** (champion) + **logistic** (linear control).
-  - The Monte Carlo engine was folded into the one simulator as a second price source.
-  - The gated oracle arm was retired (schema v4), and the course report layer frozen.
-  - The math ↔ code spine now has a typed symbol table, `[math:id]` code anchors, and a
-    `docs-check` command.
-  - The audit also found three correctness bugs, now the front of v0.3. The one-sided
-    wash-sale window is **fixed** (v0.3-1): an independent audit found 24.3% of the
-    contribution arm's harvests were wash sales, and finds 0 now. Still open: the covariance
-    look-ahead in σ_TE, and the trading-vs-calendar day unit error in the long-term rule. See
-    [`ROADMAP.md`](ROADMAP.md) findings F1–F7.
+- **Downsizing (2026-09-30).** GBT (champion) + logistic (linear control); one simulator with
+  several price sources; the gated oracle arm retired; the math ↔ code spine (typed
+  `SymbolTable.md`, `[math:id]` anchors, `docs-check`).
+- **v0.3: the state and the scoreboard.** The ledger now answers *what an opportunity is worth*,
+  and the volatility model answers *how uncertain and how dynamic it is*.
+  - **The book obeys the tax code:** §1091 on both sides (0 audited violations, down from 24%),
+    a calendar §1222 holding period, and a Schedule D ledger by character whose carryforward is
+    actually consumed (F6–F8).
+  - **TE is point-in-time** (Ledoit–Wolf $\hat\Sigma_t$, dollar weights; F1).
+  - **σ̂ is a first-class object** with three separately ablated roles: feature, FHS soft
+    labels, and an FHS training world.
+  - **Evaluation is economic:** after-tax and liquidation wealth per policy rung (`ladder`).
+  - **A finding that shapes v0.4:** a loss-only TLH book is *carryforward-saturated*, so the
+    marginal harvest is worth $\tau_f\delta$ and $\delta$ is the dominant economic parameter.
 
 The surviving headline is stronger than the original: the tree advantage on the **temporal**
 (forward-propensity) target is real and oracle-invariant. See [Results](#results).
@@ -215,25 +220,34 @@ don't normally invoke Python directly. To set it up manually:
 # 0. (first time only) point at your FMP key — skip if data/raw/ already exists
 export FMP_API_KEY=your_key_here
 
-# 1. fetch prices + constituents              → data/raw/, constituents.json
-dotnet run --project src -- download --from 2006-07-01 --to 2026-06-12   # or omit for 2 years
+# 1. fetch prices + constituents                     → data/raw/, constituents.json
+dotnet run --project src -- download --from 2006-07-01 --to 2026-06-12
 
-# 2. simulate the portfolio + label every lot → data/lots.csv (add --contrib → lots_contrib.csv)
-dotnet run --project src -- simulate
+# 2. simulate + label every lot (the state)          → data/lots_contrib_trim.csv
+dotnet run --project src -- simulate --contrib --trim
 
-# 3. CV GBT + logistic, test both, render     → data/artifacts-mlnet/
-dotnet run --project src -- mlnet-all
-dotnet run --project src -- mlnet-all --lots=data/lots_contrib.csv --split=temporal   # an arm
+# 3. how good is σ̂? (QLIKE per estimator × horizon × regime) → data/artifacts-vol/qlike.json
+dotnet run --project src -- vol-eval
 
-# 4. the codebook (fails on schema drift)     → src/Export/codebook/
-dotnet run --project src -- codebook
+# 4. supervised layer, honest split                  → data/artifacts-mlnet_contrib_trim-temporal/
+dotnet run --project src -- mlnet-all --lots=data/lots_contrib_trim.csv --split=temporal
+
+# 5. the scoreboard: never / threshold / oracle       → data/runs/ladder_contrib_trim/
+dotnet run --project src -- ladder --contrib --trim
+
+# 6. schema + math ↔ code checks
+dotnet run --project src -- codebook --lots=data/lots_contrib_trim.csv
+dotnet run --project src -- docs-check
 ```
 
-No market data? The whole pipeline runs on a synthetic world:
+No market data? The whole sequence runs on synthetic worlds. GBM is the control (constant σ);
+FHS has clustered volatility and fat tails, and is the RL training world:
 
 ```bash
-dotnet run --project src -- simulate-mc --mc-standalone=60        # → data/lots-mc.csv
-dotnet run --project src -- mlnet-all --lots=data/lots-mc.csv
+dotnet run --project src -- simulate-mc --world=fhs --mc-standalone=60 --mc-days=1260 --contrib --trim
+dotnet run --project src -- vol-eval --mc-standalone=60 --mc-days=1260
+dotnet run --project src -- mlnet-all --lots=data/lots-mc-fhs_contrib_trim.csv --split=temporal
+dotnet run --project src -- ladder --world=fhs --mc-standalone=40 --mc-days=1008 --seeds=10 --contrib --trim
 ```
 
 Verify everything:
@@ -255,8 +269,10 @@ dotnet run --project src -- docs-check   # SymbolTable ↔ code ↔ tests ↔ li
 |---|---|---|
 | `download [--from D --to D]` | 1 | Fetch constituents + EOD prices → `data/raw/`, `constituents.json` (needs `FMP_API_KEY`) |
 | `simulate` | 2 | Backtest the \$10M book over real prices, label every lot-day → `data/lots{arm}.csv` |
-| `simulate-mc` | 2 | The same engine over a synthetic GBM world (σ per name calibrated from the cache, or `--mc-standalone=<names>` with no data) → `data/lots-mc{arm}.csv` |
-| `mlnet-all` | 3 | CV GBT + logistic × 2 targets, leaderboard, test both, render |
+| `simulate-mc` | 2 | The same engine over a synthetic world: `--world=gbm` (σ per name calibrated from the cache, or `--mc-standalone=<names>`) or `--world=fhs` (filtered historical simulation from the cache, or a GARCH-factor panel when standalone) → `data/lots-mc{-fhs}{arm}.csv` |
+| `vol-eval` | 2 | QLIKE of constant / trailing-21 / EWMA / walk-forward GARCH / range σ̂ forecasts, h ∈ {1,5,21}, by market-vol tercile → `data/artifacts-vol/qlike{-mc}.json` |
+| `mlnet-all` | 3 | CV GBT + logistic per target (`--target=`, default `soft_bt,oracle`), leaderboard, test both with σ̂_m-stratified metrics, render |
+| `ladder` | 4 | Economic scoreboard: rungs never / threshold / oracle on one world (`--seeds=K` for paired mean ± s.e.) → `data/runs/ladder{tags}/` |
 | `codebook` | 4 | Column dictionary from `codebook_schema.py`; exits non-zero if the CSV header drifted |
 
 **Granular and devtools:**
@@ -276,14 +292,21 @@ Retired in the pre-v0.3 downsizing: `mlnet-rf/-elnet/-linreg/-unsupervised/-supe
 
 ### Flags, arms & artifact layout
 
-**Simulation flags** (`simulate` / `simulate-mc`) shape the *label generator*. Each arm writes
-its own dataset, because the acting policy changes which rows exist:
+**Simulation flags** (`simulate` / `simulate-mc` / `ladder`) shape the *label generator*. Each arm
+writes its own dataset, because the acting policy changes which rows exist:
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--contrib` (+ `--contrib-interval=N --contrib-rate=R --contrib-names=M`) | off | Periodic contributions mint fresh lots in the most underweight §1091-eligible names that hold no harvestable lot (the cost-basis-aging fix) → `lots_contrib.csv`. `--contrib-allow-harvestable` drops the skip rule (ablation) |
-| `--ctrade=<dollars>` | `10` | Flat round-trip friction in `U`; tags the dataset `lots_ctrade<x>.csv` |
-| `--mc-days=N --mc-seed=N --mc-standalone=<names> --mc-sigma=S` | 504 / 42 / off / 0.25 | Synthetic-world shape (`simulate-mc` only) |
+| `--contrib` (+ `--contrib-interval=N --contrib-rate=R --contrib-names=M`) | off | Periodic contributions mint fresh lots in the most underweight §1091-eligible names that hold no harvestable lot (the cost-basis-aging fix) → `_contrib`. `--contrib-allow-harvestable` drops the skip rule (ablation) |
+| `--trim` (+ `--trim-interval=N --trim-band=B`) | off | Sell-winner trim: gain lots of names above (1+B)× equal weight, highest basis first, reinvested → `_trim`. Makes realized gains endogenous |
+| `--no-reharvest-guard` | guard on | Drops the stricter-than-§1091 "no second harvest within 30 d of the ticker's own loss sale" term → `_noreharvest` |
+| `--cov=fullsample\|pit\|pit-lw` | `pit-lw` | Σ̂ for σ_TE: legacy full-history (look-ahead arm), point-in-time sample, point-in-time Ledoit–Wolf |
+| `--te-weights=names\|dollars` | `dollars` | Active weights for σ_TE (`names` = legacy equal-per-name) |
+| `--soft-gbm=gbm\|fhs` | `gbm` | Model-based soft label: constant-σ GBM paths or filtered historical simulation → `_softfhs` |
+| `--world=gbm\|fhs` | `gbm` | Synthetic world for `simulate-mc` / `ladder` |
+| `--ctrade=<dollars>` | `10` | Flat round-trip friction in `U` → `_ctrade<x>` |
+| `--mc-days=N --mc-seed=N --mc-standalone=<names> --mc-sigma=S` | 504 / 42 / off / 0.25 | Synthetic-world shape |
+| `--seeds=K` | 1 | `ladder` only: K synthetic worlds, paired differences vs never-harvest |
 
 **Evaluation flags** (any `mlnet-*` mode):
 
@@ -293,8 +316,10 @@ its own dataset, because the acting policy changes which rows exist:
 | `--split=temporal` | stratified-random | Chronological purged split: embargo ≥ the 30-day label horizon, so no training label window reaches the test period |
 | `--embargo=<days>` | `30` | The purge width |
 | `--testfrac=<0..1>` | `0.20` | `0.5` = the decade walk-forward |
+| `--target=a,b` | `soft_bt,oracle` | Binary targets: `soft_bt` (30-day hit), `oracle`, `soft_bt_90` (90-day hit; raises the embargo to 90) |
+| `--features=no-vol` | all | Drops the σ̂ block (`SigmaHat, SigmaMkt, ZBarrier, PBarrier`) — the role-1 ablation (`-novol`); run under `--split=temporal` |
 
-**Artifact directories are derived, never hand-named:** `data/artifacts-mlnet{arm}{split}/`,
+**Artifact directories are derived, never hand-named:** `data/artifacts-mlnet{arm}{split}{-novol}/`,
 e.g. `artifacts-mlnet/` (canonical), `artifacts-mlnet-temporal/`,
 `artifacts-mlnet_contrib-temporal/`, `artifacts-mlnet-mc/`.
 
@@ -406,9 +431,9 @@ gates and findings are in **[`ROADMAP.md`](ROADMAP.md)**. In brief:
 |---|---|---|
 | v0.1 – v0.26 | supervised baseline → champions → 20y scale-up → oracle redesign → purged temporal validation | ✅ |
 | pre-v0.3 | downsizing (GBT + logistic; one engine, two price sources; schema v4) + the math ↔ code spine | ✅ |
-| **v0.3** | §1091 two-sided wash window · §1222 calendar holding period · P0 close-out · point-in-time Σ̂ (Ledoit–Wolf) · per-name σ̂ (EWMA/GARCH, gated) · policy seam + economic metric ladder · sell-winner trim | ⏭ in progress |
-| v0.4a | constrained-optimizer execution baseline (the RL go/no-go) | planned |
-| v0.4b | RL policy layer: low-dimensional actions, reward pinned in running-cost form | planned |
+| **v0.3** | §1091 both sides · §1222 calendar · Schedule D ledger (character pools, consumed carryforward) · sell-winner trim · point-in-time Ledoit–Wolf Σ̂ + dollar TE · σ̂ estimators + QLIKE · σ̂ as feature / FHS labels / FHS world · #17 labels · policy seam + `ladder` | ✅ implemented; 20-year measurements pending (ROADMAP v0.3-5) |
+| v0.4a | constrained-optimizer execution baseline (the RL go/no-go) | designed |
+| v0.4b | RL policy layer: low-dimensional actions $(\vartheta,m,b,g)$, running TE cost + tax-position potential, CEM → fitted-Q → PPO only if needed ([design](DataMemo/decisions/PolicyLayer_v04.md)) | designed |
 | v0.45 | universe & replacement: core+reserve via PCA on Σ̂ (issue #6), `SubScore` | planned (after RL) |
 | v0.5 → v1.0 | end-to-end evaluation, distillation → RIA-style deployment | planned |
 

@@ -140,7 +140,7 @@ configs per target.
 
 ---
 
-## ⏭ v0.3 — Simulator correctness + volatility sub-model + metric ladder (in progress)
+## ✅ v0.3 — Simulator correctness + volatility sub-model + metric ladder (implemented; 20-year measurements pending)
 
 **Goal:**
 - the book obeys the tax code it models (F6, F7) and its features are 𝓕_t-measurable (F1);
@@ -182,25 +182,57 @@ somewhat.
 | ✅ **v0.3-9** role 2: σ̂ in labels | `FhsSimulator`: first-passage over FHS paths (the name's own standardized residuals ≤ t, centered and rescaled to unit variance; EWMA σ path inside the window); `--soft-gbm=gbm\|fhs` (tag `_softfhs`) | **done:** test: FHS ≈ GBM on a constant-σ world (0.558 vs 0.569 at equal σ̂, both ≤ the continuous bound), causal. **Finding (estimand):** `Y_Soft_BT` is an occupation fraction, the model labels are first-passage probabilities, so the right comparator is the hit indicator 1[`Y_Soft_BT`>0] (the binarized `soft_bt` target). Against it, on the 60-name FHS world, both labels are near-calibrated (realized P(hit) ≈ 0.19); bias tilts with σ̂ (−3.4 pp low → +1.4 pp high tercile, the same on GBM ⇒ σ̂ noise); FHS cuts Brier 0.0869 → 0.0859 and the high-vol bias +0.014 → +0.011. Modest at a 30-day horizon, as expected |
 | ✅ **v0.3-10** role 3: σ̂ in the environment | `PriceLoader.FromFhs(source, days, seed)`: date-block bootstrap of GARCH-standardized cross-sectional residuals, rescaled along per-name GARCH(1,1) paths; `simulate-mc --world=fhs` (source = the real cache, or `GarchFactorPanel` with `--mc-standalone`) | **done:** test: \|r\| ACF(1–5) 0.149 vs −0.023 for GBM, excess kurtosis 0.79, mean pairwise correlation 0.583 → 0.527, deterministic in the seed. The RL training world (PolicyLayer_v04 §6) |
 | ✅ **v0.3-11** label families (#17) + policy seam + ladder | labels `Y_Soft_BT_90`, `Y_TaxWeighted` (+ derived `Y_Persist`); `--target=soft_bt,oracle,soft_bt_90` (a 90-day target raises the embargo to 90). `IHarvestPolicy` (Never / Threshold / Oracle, default byte-identical); `TaxLedger.TaxPosition` $W_{\mathrm{tax}}$; `RunMetrics` (holdings + reopen cash + cash, $W_{\mathrm{tax}}$, after-tax and **liquidation** value, used/banked/gain-tax, ex-ante vs realized TE, turnover, §1091 audit); `ladder --seeds=K` (paired differences vs never, mean ± s.e.) | **done:** tests: oracle policy = default; identities $W_T=\sum\Delta W_{\text{trades}}+\sum\Delta W_{\text{roll}}$ and $\sum\Delta W=$ used + banked − gain tax; **wealth conservation** (caught and fixed: harvest proceeds whose reopen fell past the last day were dropped). 10-seed GBM ladder (40 names, 4 y, $10M): Δ W_tax **+$244k ± 6k**, Δ pre-tax +$128k ± 113k (≈ 0, as zero drift requires), Δ after-tax +$372k ± 113k, Δ liquidation +$120k ± 97k (part of TLH is a deferral). Threshold ≈ oracle there (U > 0 rarely binds without contributions) |
-| **v0.3-12** exit: RL readiness | SymbolTable §I finalized (state incl. σ̂ summaries, ledger pools, factor exposures; the pinned reward with TE from $\hat\Sigma_t$); `decisions/PolicyLayer_v04.md` | the v0.3 gate |
+| ✅ **v0.3-12** exit: RL readiness | SymbolTable §I finalized (state with ledger pools + $\mathrm{cap}_t$, σ̂ summaries, Σ̂ factor exposures; action $(\vartheta,m,b,g)$; reward = running TE cost + $\Delta W_{\mathrm{tax}}$ incl. the roll true-up); design record [`decisions/PolicyLayer_v04.md`](DataMemo/decisions/PolicyLayer_v04.md); README runtime sequence | the v0.3 gate, below |
 
-**v0.3 gate:**
-- zero §1091 violations; holding periods on the calendar; Schedule D tests green;
-- $\hat\Sigma_t$ is 𝓕_t-measurable, with its effect recorded; σ̂ QLIKE beats trailing-21;
-- all three σ̂ roles measured as separate ablations;
-- the trim exercises carryforward; ladder rungs 1–3 run;
-- `docs-check` is green.
+**v0.3 gate** (✅ = met in the container on synthetic worlds; ⏳ = needs the 20-year data):
+- ✅ zero §1091 violations (independent audit, with and without the re-harvest guard); ✅ holding
+  periods on the calendar; ✅ Schedule D tests green;
+- ✅ $\hat\Sigma_t$ 𝓕_t-measurable (tested); ⏳ its effect on real history (`--cov=fullsample` arm);
+- ✅ σ̂ estimators causal, GBM control ranks as pre-registered; ⏳ σ̂ QLIKE beats trailing-21 on real returns;
+- ✅ all three σ̂ roles built and measured on synthetic worlds; ⏳ on real history;
+- ✅ the trim exercises carryforward; ✅ ladder rungs 1–3 run, with conservation and accounting identities tested;
+- ✅ `docs-check` green.
+
+**Law note (Q1, recorded).** Re-harvesting a security is legal, and every loss is reportable. The
+only limits are §1091 (no substantially identical *acquisition* within ±30 days of a loss sale,
+including a lot bought and sold inside the window) and §1211(b)/§1212 netting ($3k of ordinary
+offset per year, the rest carried forward by character). The simulator's "no second harvest
+within 30 days of the ticker's own loss sale" rule is stricter than the law. It stays the default
+guard, with `--no-reharvest-guard` as the ablation; the P0 re-run decides the default.
 
 ### Commands for the steps that need the real 20-year data (run on your machine)
 
 ```bash
 # the cache: data/raw/ from `download --from 2006-07-01 --to 2026-06-12`
-dotnet run --project src -- simulate                   # baseline arm   → data/lots.csv
-dotnet run --project src -- simulate --contrib         # P0 arm         → data/lots_contrib.csv
-# v0.3-1/2 effect sizes: rerun the two lines above after each fix and diff prevalence
+# A5 / v0.3-5 — the P0 close-out after v0.3-1…4 (baseline, contrib, contrib+trim, guard ablation)
+dotnet run --project src -- simulate
+dotnet run --project src -- simulate --contrib
+dotnet run --project src -- simulate --contrib --trim
+dotnet run --project src -- simulate --contrib --no-reharvest-guard
 dotnet run --project src -- mlnet-all --lots=data/lots_contrib.csv --split=temporal
-#   → data/artifacts-mlnet_contrib-temporal/  (cite ROC-AUC, PR-AUC, test prevalence)
-dotnet run --project src -- codebook --lots=data/lots_contrib.csv   # schema-drift assert
+dotnet run --project src -- mlnet-all --lots=data/lots_contrib_trim.csv --split=temporal
+#   cite ROC-AUC, PR-AUC, test prevalence vs the v0.26 baseline (0.9970 / 0.4585 / 0.221%)
+
+# v0.3-6 — the F1 look-ahead on real history (the one that matters)
+dotnet run --project src -- simulate --contrib --cov=fullsample      # → lots_contrib_cov-fullsample.csv
+#   diff Sigma_TE, Y_Oracle, Y_Utility vs lots_contrib.csv; compare ladder rows below
+
+# v0.3-7 — σ̂ forecast quality on real returns (pre-registered: EWMA/GARCH < trailing-21, most in the high tercile)
+dotnet run --project src -- vol-eval                                   # → data/artifacts-vol/qlike.json
+
+# v0.3-8 — role 1 on real history (temporal only); also try --features=no-vol
+dotnet run --project src -- mlnet-all --lots=data/lots_contrib.csv --split=temporal --features=no-vol
+#   compare StrataBySigmaMkt in *_metrics.json between the two artifact dirs
+
+# v0.3-9 / v0.3-10 — FHS labels on real history; an FHS world built from the real cache
+dotnet run --project src -- simulate --contrib --soft-gbm=fhs
+dotnet run --project src -- simulate-mc --world=fhs --mc-days=2520 --contrib --trim
+
+# v0.3-11 — the scoreboard on real history, and over FHS worlds from the real cache
+dotnet run --project src -- ladder --contrib --trim
+dotnet run --project src -- ladder --world=fhs --mc-days=2520 --seeds=10 --contrib --trim
+
+dotnet run --project src -- codebook --lots=data/lots_contrib.csv   # schema-drift assert (v6)
 dotnet run --project src -- docs-check && dotnet run --project src -- test
 ```
 
