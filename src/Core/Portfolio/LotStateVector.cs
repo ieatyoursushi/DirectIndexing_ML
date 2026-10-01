@@ -103,6 +103,12 @@ public record LotStateVector
     /// <summary>(P_t − MA_200) / MA_200  — deviation from 200-day moving average</summary>
     public float DeltaMA200  { get; init; }
 
+    /// <summary>σ̂_i,t — annualized EWMA(0.94) σ forecast of this name, 𝓕_t (v0.3-8, schema v6)</summary>
+    public float SigmaHat    { get; init; }
+
+    /// <summary>σ̂_m,t — annualized EWMA σ forecast of the equal-weight market; shared by every lot on a day</summary>
+    public float SigmaMkt    { get; init; }
+
     // ── Derived / composite features ─────────────────────────────────────────
 
     /// <summary>
@@ -115,6 +121,12 @@ public record LotStateVector
 
     /// <summary>Calendar days remaining in the tax year (resets Jan 1)</summary>
     public int   DaysToYE    { get; init; }
+
+    /// <summary>z = d/√V_{t,h} — log-distance to the loss trigger in forecast σ over the label horizon (v0.3-8)</summary>
+    public float ZBarrier    { get; init; }
+
+    /// <summary>2Φ(−z) — driftless-GBM probability of touching the loss trigger within the horizon (a coordinate)</summary>
+    public float PBarrier    { get; init; }
 
     // ── Labels ───────────────────────────────────────────────────────────────
 
@@ -150,6 +162,12 @@ public record LotStateVector
     /// boundary. Computed under the run's OracleConfig.
     /// </summary>
     public float Y_Utility   { get; init; }
+
+    /// <summary>Occupation fraction over the next 90 real days (#17 horizon variant, v0.3-11); NaN near the end.</summary>
+    public float Y_Soft_BT_90  { get; init; }
+
+    /// <summary>TaxValue at the first firing step within 30 real days, 0 if none (#17 dollar-weighted propensity).</summary>
+    public float Y_TaxWeighted { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 

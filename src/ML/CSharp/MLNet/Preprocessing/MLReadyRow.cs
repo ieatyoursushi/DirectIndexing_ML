@@ -32,6 +32,10 @@ public record MLReadyRow
     public float SigmaRange { get; init; }
     public float DeltaMA50 { get; init; }
     public float DeltaMA200 { get; init; }
+    public float SigmaHat { get; init; }
+    public float SigmaMkt { get; init; }
+    public float ZBarrier { get; init; }
+    public float PBarrier { get; init; }
     public float TaxValue { get; init; }
     public float DaysToYE { get; init; }
 

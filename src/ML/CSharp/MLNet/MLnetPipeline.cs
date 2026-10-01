@@ -34,7 +34,8 @@ public static class MLnetPipeline
         Confusion ConfusionAt05,
         Confusion ConfusionAtBest,
         CurvePointDto[] RocCurve,
-        CurvePointDto[] PrCurve);
+        CurvePointDto[] PrCurve,
+        IReadOnlyList<StratumMetrics> StrataBySigmaMkt);
 
     private static BaseMetrics ToBase(
         BinaryMetricsResult m, string target, int train, int test, double[] cvFolds) =>
@@ -44,7 +45,8 @@ public static class MLnetPipeline
             new(m.Tp05, m.Fp05, m.Tn05, m.Fn05),
             new(m.TpBest, m.FpBest, m.TnBest, m.FnBest),
             m.RocCurve.Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray(),
-            m.PrCurve .Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray());
+            m.PrCurve .Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray(),
+            m.Strata);
 
     // ── Per-model public entry points (full CV + test eval) ──────────────────
 
@@ -149,7 +151,7 @@ public static class MLnetPipeline
             AllConfigs = r.AllConfigs.Select(c => new { C = c.C, MeanCvPrAuc = c.MeanScore }),
             b.CvBestMeanPrAuc, b.CvPerFold,
             b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
+            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve, b.StrataBySigmaMkt,
         }, Path.Combine(dir, $"{name}_metrics.json"));
 
         WriteCoefficients(r.Coefficients, dir, name);
@@ -174,7 +176,7 @@ public static class MLnetPipeline
             }),
             b.CvBestMeanPrAuc, b.CvPerFold,
             b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
+            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve, b.StrataBySigmaMkt,
             Note = "NormalizeMeanVariance applied for schema consistency; scale-invariant for trees",
         }, Path.Combine(dir, $"{name}_metrics.json"));
 

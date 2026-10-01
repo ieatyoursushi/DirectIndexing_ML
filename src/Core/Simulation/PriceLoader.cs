@@ -205,6 +205,144 @@ public sealed class PriceLoader
     // ── Synthetic GBM world (the second price source) ─────────────────────────
 
     /// <summary>
+    /// Synthetic FHS world (v0.3-10, the σ̂ environment role R3 of
+    /// DataMemo/decisions/VolatilityModel_v03.md §8) — the RL episode generator with volatility
+    /// clustering. From a SOURCE history (the real cache, or any world):
+    ///   1. per name, GARCH(1,1) by QMLE on the source's full history (allowed here: this is an
+    ///      environment, not a feature — nothing downstream is evaluated on the source), falling
+    ///      back to (α, β) = (0.08, 0.90) and the sample variance below 500 returns;
+    ///   2. standardized residuals ε_{i,s} = r_{i,s}/σ_{i,s} through that filter, centered per name;
+    ///   3. each simulated day draws ONE historical date τ and uses the whole cross-sectional
+    ///      vector ε_{·,τ} (a name missing on τ draws from its own pool) — this preserves the
+    ///      contemporaneous correlation without estimating Σ̂;
+    ///   4. each name's σ evolves by its GARCH recursion driven by its own simulated return, and
+    ///      the log-price steps σε − σ²/2.
+    /// Deterministic in <paramref name="seed"/>. RangeVol is the current σ·√(4/π) (no intraday path).
+    /// </summary>
+    // [math:fhs_world] — DataMemo/spec/SymbolTable.md
+    public static PriceLoader FromFhs(PriceLoader source, int days, int seed, DateOnly? start = null)
+    {
+        if (days <= WarmupDays)
+            throw new ArgumentException($"days must exceed the {WarmupDays}-day warmup.", nameof(days));
+
+        var symbols = source.Symbols.OrderBy(s => s).ToList();
+        int N = symbols.Count, T = source.DayCount;
+        var omega = new double[N]; var alpha = new double[N]; var beta = new double[N]; var h0 = new double[N];
+        var eps = new double[N][];
+        var pools = new List<double>[N];
+        for (int i = 0; i < N; i++)
+        {
+            var r = source.GetReturnArray(symbols[i]);
+            var valid = r.Where(x => !float.IsNaN(x)).Select(x => (double)x).ToList();
+            double s2 = valid.Count > 1 ? valid.Average(x => x * x) : 1e-4;
+            double a = 0.08, b = 0.90;
+            if (valid.Count >= Volatility.Garch11Vol.MinObs)
+            {
+                var (p, _) = Volatility.Garch11Vol.Fit(r, 0, T - 1, origin: T - 1);
+                a = p.Alpha; b = p.Beta; s2 = p.LongRun;
+            }
+            omega[i] = s2 * (1 - a - b); alpha[i] = a; beta[i] = b; h0[i] = s2;
+
+            eps[i] = new double[T];
+            pools[i] = new List<double>();
+            double h = s2;
+            for (int s = 0; s < T; s++)
+            {
+                float x = r[s];
+                if (float.IsNaN(x)) { eps[i][s] = double.NaN; continue; }
+                eps[i][s] = x / Math.Sqrt(h);
+                pools[i].Add(eps[i][s]);
+                h = omega[i] + a * (double)x * x + b * h;
+            }
+            double m = pools[i].Count > 0 ? pools[i].Average() : 0;
+            for (int s = 0; s < T; s++) if (!double.IsNaN(eps[i][s])) eps[i][s] -= m;
+            for (int k = 0; k < pools[i].Count; k++) pools[i][k] -= m;
+        }
+        // candidate dates: at least half the names observed
+        var dates = Enumerable.Range(0, T)
+            .Where(s => Enumerable.Range(0, N).Count(i => !double.IsNaN(eps[i][s])) * 2 >= N).ToArray();
+        if (dates.Length == 0) throw new InvalidOperationException("FHS source has no usable dates");
+
+        var loader = new PriceLoader();
+        var date = start ?? new DateOnly(2000, 1, 3);
+        while (loader._calendar.Count < days)
+        {
+            if (date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            {
+                loader._dateToIndex[date] = loader._calendar.Count;
+                loader._calendar.Add(date);
+            }
+            date = date.AddDays(1);
+        }
+
+        const float RangeScale = 1.1284f;   // √(4/π)
+        var rng = new Random(seed);
+        var close = new float[N][]; var ret = new float[N][]; var rv = new float[N][];
+        var hNow = (double[])h0.Clone();
+        for (int i = 0; i < N; i++)
+        {
+            close[i] = new float[days]; ret[i] = new float[days]; rv[i] = new float[days];
+            close[i][0] = 100f; ret[i][0] = rv[i][0] = float.NaN;
+        }
+        for (int t = 1; t < days; t++)
+        {
+            int tau = dates[rng.Next(dates.Length)];
+            for (int i = 0; i < N; i++)
+            {
+                double e = eps[i][tau];
+                if (double.IsNaN(e)) e = pools[i].Count > 0 ? pools[i][rng.Next(pools[i].Count)] : GbmSimulator.NextGaussian(rng);
+                double sig = Math.Sqrt(hNow[i]), rStar = sig * e;
+                close[i][t] = (float)(close[i][t - 1] * Math.Exp(rStar - 0.5 * hNow[i]));
+                ret[i][t]   = (close[i][t] - close[i][t - 1]) / close[i][t - 1];
+                rv[i][t]    = (float)sig * RangeScale;
+                hNow[i]     = omega[i] + alpha[i] * rStar * rStar + beta[i] * hNow[i];
+            }
+        }
+        for (int i = 0; i < N; i++)
+        {
+            var sym = symbols[i];
+            loader._close[sym]    = close[i];
+            loader._high[sym]     = (float[])close[i].Clone();
+            loader._low[sym]      = (float[])close[i].Clone();
+            loader._return[sym]   = ret[i];
+            loader._rangeVol[sym] = rv[i];
+            loader._ma50[sym]     = ComputeMA(close[i], 50);
+            loader._ma200[sym]    = ComputeMA(close[i], 200);
+            loader._sector[sym]   = source.GetSector(sym);
+        }
+        Console.WriteLine($"[PriceLoader] synthetic FHS world: {N} names, {days} trading days, " +
+                          $"{dates.Length} source dates, seed={seed}.");
+        return loader;
+    }
+
+    /// <summary>
+    /// A data-free CLUSTERED source for <see cref="FromFhs"/> (smoke tests, standalone runs): a common
+    /// GARCH(1,1) market factor (ω = 2e-6, α = 0.10, β = 0.88) loading 0.9 on every name, plus
+    /// idiosyncratic Gaussian noise (σ = 0.8%/day). Deterministic in the seed. Not a world to train
+    /// on — a stand-in for the real cache when it is absent.
+    /// </summary>
+    public static PriceLoader GarchFactorPanel(int names, int days, int seed)
+    {
+        var rng = new Random(seed);
+        var f = new double[days];
+        double h = 1e-4;
+        for (int t = 1; t < days; t++)
+        {
+            f[t] = Math.Sqrt(h) * GbmSimulator.NextGaussian(rng);
+            h = 2e-6 + 0.10 * f[t] * f[t] + 0.88 * h;
+        }
+        var d = new Dictionary<string, float[]>();
+        for (int i = 0; i < names; i++)
+        {
+            var r = new float[days]; r[0] = float.NaN;
+            for (int t = 1; t < days; t++) r[t] = (float)(0.9 * f[t] + 0.008 * GbmSimulator.NextGaussian(rng));
+            d[$"F{i:D3}"] = r;
+        }
+        return CreateForTesting(d);
+    }
+
+
+    /// <summary>
     /// Builds a fully synthetic price world: each name follows an independent GBM
     /// S_{t+1} = S_t · exp((μ − σ²/2)Δ + σ√Δ Z), Δ = 1/252, S_0 = 100, on a weekday
     /// calendar. The result is an ordinary <see cref="PriceLoader"/>, so the one

@@ -178,10 +178,10 @@ somewhat.
 | **v0.3-5** P0 close-out (your machine) | re-simulate baseline/contrib after v0.3-1…4; retrain GBT + logistic under `--split=temporal`; decide the `--contrib` and re-harvest-guard defaults | ROC + PR + test prevalence vs the v0.26 baseline (0.9970 / 0.4585 / 0.221%) |
 | ✅ **v0.3-6** point-in-time $\hat\Sigma_t$ (F1) + dollar δw (Q2) | memo [`decisions/VolatilityModel_v03.md`](DataMemo/decisions/VolatilityModel_v03.md) written **first**. `ICovarianceEstimator`: `FullSampleCovariance` (legacy look-ahead arm), `PointInTimeCovariance` (window 252, refit 21 d) raw or Ledoit–Wolf (constant-correlation target, closed form). TE on **dollar** active weights. `RiskModel` default = `pit-lw` + dollars; `--cov=fullsample\|pit\|pit-lw`, `--te-weights=names\|dollars` (the legacy pair is byte-identical to pre-v0.3-6) | **done:** tests cover S singular → LW PD; ρ* → 1 for a true target, falling with T for a misspecified one; Σ̂_t unchanged by $r_{>t}$; dollar δw sees position size. 60-name `--contrib` GBM world, 2×2 arms: look-ahead alone ≈ 0 (median TE 0.0074 → 0.0073, stationary world); **dollar δw dominates**: median TE 2.5× (→ 0.018), U>0 among ℓ≤−2% rows 99% → 78%, oracle+ 0.703% → 0.619%. **Pending on your machine:** the F1 arm on 20-year data, where it should matter |
 | ✅ **v0.3-7** σ̂ estimators + forecast evaluation | `IVolEstimator` → `VolPath` ($\mathcal F_t$ forecast + term structure): `Trailing21Vol` (legacy, byte-identical to the soft-label seam), `EwmaVol` (0.94), `Garch11Vol` (QMLE with variance targeting, walk-forward refit every 63 d; `Fit` throws on look-ahead). `vol-eval` → `data/artifacts-vol/qlike{-mc}.json`: QLIKE per estimator × h ∈ {1,5,21} × market-vol tercile, on one common (name, day) set | **done:** tests: EWMA recursion exact; QLIKE floor ≈ γ+ln2; all estimators causal; QMLE recovers (0.08, 0.90) → (0.078, 0.903); on GARCH data garch < ewma < trailing21 < constant. **GBM control** (60 names, 1260 d): constant 1.268 ≈ floor < garch 1.279 < ewma 1.298 < trailing21 1.333 at h=1 (constant σ ⇒ the constant estimator must win), gaps widen at h=21. **Pending on your machine:** `vol-eval` on the 20-year cache (pre-registered: EWMA/GARCH beat trailing-21, most in the high-vol tercile) |
-| **v0.3-8** role 1: σ̂ as a feature (schema v6) | `SigmaHat`, `SigmaMkt`, `ZBarrier` $=d/(\hat\sigma\sqrt h)$, `PBarrier` $=2\Phi(-z)$ | ablations under `--split=temporal` only: with/without; logistic-closes-the-gap test; metrics stratified by $\hat\sigma_m$ tercile |
-| **v0.3-9** role 2: σ̂ in labels | `Y_Soft_GBM` by filtered historical simulation (`--soft-gbm=gbm\|fhs`) | label shift; bias vs `Y_Soft_BT` within vol buckets |
-| **v0.3-10** role 3: σ̂ in the environment | `PriceLoader.FromFhs` — date-block residual bootstrap along simulated σ paths (`simulate-mc --world=gbm\|fhs`) | clustering (ACF of \|r\| > 0), excess kurtosis, cross-correlation preserved, seed-deterministic |
-| **v0.3-11** label families (#17) + policy seam + ladder | `Y_Soft_BT_90/180`, `Y_Persist`, `Y_TaxWeighted` (`--target=`); `IHarvestPolicy` (Oracle default, `NeverHarvest`, `ThresholdHarvest`), `RunMetrics` from the ledger + trade log, `ladder` command | rungs 1–3 run from one command; the RL seam |
+| ✅ **v0.3-8** role 1: σ̂ as a feature (schema v6) | `SigmaHat`, `SigmaMkt` (EWMA, annualized), `ZBarrier` $=d/\sqrt{V_{t,30}}$, `PBarrier` $=2\Phi(-z)$ (`LossBarrier`, `VolState`); `--features=no-vol` ablation (artifacts `-novol`); every `*_metrics.json` gains `StrataBySigmaMkt` (PR/ROC per σ̂_m tercile) | **done:** test: 2Φ(−1) = 0.3173 vs Monte Carlo 0.3141. Ablations (temporal split, one seed each): **GBM control** null as it must be (soft_bt PR GBT 0.645→0.639, logistic 0.648→0.654, flat strata). **FHS world**: GBT soft_bt PR **falls** 0.472 → 0.432 with the σ̂ block, logistic flat (0.478 vs 0.477), and logistic ≥ GBT on this target — consistent with hazard 3 (σ̂_m as a date fingerprint whose train-period regimes do not recur in the test block). **Open:** multi-seed, ablate `SigmaMkt` alone, the 20-year data |
+| ✅ **v0.3-9** role 2: σ̂ in labels | `FhsSimulator`: first-passage over FHS paths (the name's own standardized residuals ≤ t, centered and rescaled to unit variance; EWMA σ path inside the window); `--soft-gbm=gbm\|fhs` (tag `_softfhs`) | **done:** test: FHS ≈ GBM on a constant-σ world (0.558 vs 0.569 at equal σ̂, both ≤ the continuous bound), causal. **Finding (estimand):** `Y_Soft_BT` is an occupation fraction, the model labels are first-passage probabilities, so the right comparator is the hit indicator 1[`Y_Soft_BT`>0] (the binarized `soft_bt` target). Against it, on the 60-name FHS world, both labels are near-calibrated (realized P(hit) ≈ 0.19); bias tilts with σ̂ (−3.4 pp low → +1.4 pp high tercile, the same on GBM ⇒ σ̂ noise); FHS cuts Brier 0.0869 → 0.0859 and the high-vol bias +0.014 → +0.011. Modest at a 30-day horizon, as expected |
+| ✅ **v0.3-10** role 3: σ̂ in the environment | `PriceLoader.FromFhs(source, days, seed)`: date-block bootstrap of GARCH-standardized cross-sectional residuals, rescaled along per-name GARCH(1,1) paths; `simulate-mc --world=fhs` (source = the real cache, or `GarchFactorPanel` with `--mc-standalone`) | **done:** test: \|r\| ACF(1–5) 0.149 vs −0.023 for GBM, excess kurtosis 0.79, mean pairwise correlation 0.583 → 0.527, deterministic in the seed. The RL training world (PolicyLayer_v04 §6) |
+| ✅ **v0.3-11** label families (#17) + policy seam + ladder | labels `Y_Soft_BT_90`, `Y_TaxWeighted` (+ derived `Y_Persist`); `--target=soft_bt,oracle,soft_bt_90` (a 90-day target raises the embargo to 90). `IHarvestPolicy` (Never / Threshold / Oracle, default byte-identical); `TaxLedger.TaxPosition` $W_{\mathrm{tax}}$; `RunMetrics` (holdings + reopen cash + cash, $W_{\mathrm{tax}}$, after-tax and **liquidation** value, used/banked/gain-tax, ex-ante vs realized TE, turnover, §1091 audit); `ladder --seeds=K` (paired differences vs never, mean ± s.e.) | **done:** tests: oracle policy = default; identities $W_T=\sum\Delta W_{\text{trades}}+\sum\Delta W_{\text{roll}}$ and $\sum\Delta W=$ used + banked − gain tax; **wealth conservation** (caught and fixed: harvest proceeds whose reopen fell past the last day were dropped). 10-seed GBM ladder (40 names, 4 y, $10M): Δ W_tax **+$244k ± 6k**, Δ pre-tax +$128k ± 113k (≈ 0, as zero drift requires), Δ after-tax +$372k ± 113k, Δ liquidation +$120k ± 97k (part of TLH is a deferral). Threshold ≈ oracle there (U > 0 rarely binds without contributions) |
 | **v0.3-12** exit: RL readiness | SymbolTable §I finalized (state incl. σ̂ summaries, ledger pools, factor exposures; the pinned reward with TE from $\hat\Sigma_t$); `decisions/PolicyLayer_v04.md` | the v0.3 gate |
 
 **v0.3 gate:**
@@ -206,6 +206,8 @@ dotnet run --project src -- docs-check && dotnet run --project src -- test
 
 ## v0.4a — Constrained execution baseline (no RL)
 
+Design record (both stages): [`DataMemo/decisions/PolicyLayer_v04.md`](DataMemo/decisions/PolicyLayer_v04.md).
+
 Daily loop:
 1. walk-forward GBT scores rank the gate-passing held lots;
 2. a deterministic subset optimizer picks the feasible set under shared TE/turnover/capacity
@@ -221,18 +223,20 @@ value a one-step optimizer can't see) is RL's earnable surplus, now quantified.
 
 ## v0.4b — RL policy layer (#15)
 
+Design record: [`DataMemo/decisions/PolicyLayer_v04.md`](DataMemo/decisions/PolicyLayer_v04.md): state §2, action/executor §3, the generalized tax reward $\Delta W_{\mathrm{tax}}$ §4, CEM → fitted-Q → PPO §5, protocol §6, runtime criteria §7, deltas vs the architecture thread §9.
+
 The MDP is fully typed in [`SymbolTable.md` §I](DataMemo/spec/SymbolTable.md).
 - **State:** a flat record of the ledger, $\hat\sigma_{\mathrm{TE}}$, $V_t$, wash and candidate-score
   summaries, and factor exposures $\Phi_k^\top\delta w$ (PCA on $\hat\Sigma_t$), plus $\hat\sigma$
   summaries, re-tested here regardless of the v0.3-7 outcome.
-- **Action:** low-dimensional $(\vartheta,m,b)$ driving a deterministic executor. The oracle is a
+- **Action:** low-dimensional $(\vartheta,m,b,g)$ (threshold, count, TE budget, trim budget) driving a deterministic executor. The oracle is a
   fixed action, so rung 3 lies inside the policy class.
 - **Transition:** `ProcessDay`.
 - **Reward:** the pinned running-cost form
   $r_t=B_t-\tfrac{\kappa_r}{2}\tfrac{V_t}{252}\hat\sigma^2_{\mathrm{TE}}(s_{t+1})-c_{\mathrm{trade}}\lvert A_t\rvert$
   (the increment form is rejected: it telescopes).
 - **Warm starts:** the GBT $\hat\eta$ and the $\hat g_{\mathrm{tax}}$ regression.
-- **Episodes:** from `PriceLoader.FromGbm` before real-history fine-tuning.
+- **Episodes:** `PriceLoader.FromFhs` worlds (clustered σ) for training; real history walk-forward for evaluation, never the same years.
 - **Runtime:** C#-native vs Python (gymnasium/SB3) is decided at the start of v0.4b; the v0.3-11
   records are serializable for either.
 

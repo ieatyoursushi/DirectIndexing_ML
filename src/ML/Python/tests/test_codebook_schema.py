@@ -8,12 +8,12 @@ import pytest
 from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER, NUMERIC_FEATURES, repo_root
 
 
-# Schema v5: 27 columns = 19 numeric features + Sector + Symbol/Timestep metadata
+# Schema v6: 33 columns = 23 numeric features + Sector + Symbol/Timestep metadata
 # + 5 labels (Y_Oracle, Y_Soft_GBM, Y_Soft_BT, Y_TaxValue, Y_Utility). v4 dropped
 # the retired Y_Oracle_GatedSpec spectator (pre-v0.3 downsizing).
-def test_schema_has_27_unique_columns():
-    assert len(EXPECTED_HEADER) == 27
-    assert len(set(EXPECTED_HEADER)) == 27
+def test_schema_has_33_unique_columns():
+    assert len(EXPECTED_HEADER) == 33
+    assert len(set(EXPECTED_HEADER)) == 33
 
 
 def test_every_entry_fully_documented():
@@ -24,7 +24,7 @@ def test_every_entry_fully_documented():
 
 def test_numeric_features_subset_of_schema():
     assert set(NUMERIC_FEATURES) <= set(EXPECTED_HEADER)
-    assert len(NUMERIC_FEATURES) == 19
+    assert len(NUMERIC_FEATURES) == 23
 
 
 def test_numeric_features_match_csharp_featurelists():

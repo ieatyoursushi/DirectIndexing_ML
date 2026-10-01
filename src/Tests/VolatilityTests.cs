@@ -99,4 +99,32 @@ public class VolatilityTests
         Debug.Assert(g < e && e < tr && tr < k, $"QLIKE ranking on GARCH data: garch {g:F4} ewma {e:F4} trailing {tr:F4} constant {k:F4}");
         Console.WriteLine($"Volatility Test 3 passed: α={p.Alpha:F3} β={p.Beta:F3}; QLIKE garch {g:F4} < ewma {e:F4} < trailing21 {tr:F4} < constant {k:F4}");
     }
+
+    // The barrier coordinate: erfc accuracy, and 2Φ(−z) equals the touch frequency of a finely
+    // monitored driftless Brownian path (reflection principle), z = d/(σ√h).
+    public void Test_Barrier_MatchesMonteCarlo()
+    {
+        Debug.Assert(Math.Abs(LossBarrier.Erfc(0) - 1) < 1e-7 && Math.Abs(LossBarrier.Erfc(1) - 0.157299207) < 1e-7,
+            "erfc accuracy");
+        Debug.Assert(LossBarrier.TouchProbability(0) > 0.9999999, "a lot past the trigger has P = 1");
+        Debug.Assert(LossBarrier.Distance(98, 100, 0.02) == 0 && LossBarrier.Distance(100, 100, 0.02) > 0,
+            "d = 0 exactly at/below the trigger (1 − θ₁)p_k");
+
+        const double sigma = 0.02, h = 30, z = 1.0;
+        double d = z * sigma * Math.Sqrt(h);
+        var rng = new Random(13);
+        double G() => Math.Sqrt(-2 * Math.Log(1 - rng.NextDouble())) * Math.Cos(2 * Math.PI * rng.NextDouble());
+        const int paths = 20_000, steps = 1_000;
+        double dt = h / steps, sd = sigma * Math.Sqrt(dt);
+        int hit = 0;
+        for (int p = 0; p < paths; p++)
+        {
+            double x = 0;
+            for (int k = 0; k < steps; k++) { x += sd * G(); if (x <= -d) { hit++; break; } }
+        }
+        double mc = (double)hit / paths, closed = LossBarrier.TouchProbability(LossBarrier.Z(d, sigma * sigma * h));
+        // discrete monitoring misses a few crossings (bias ≈ +0.58·σ√dt shift of the barrier), hence the one-sided slack
+        Debug.Assert(mc <= closed + 0.01 && mc >= closed - 0.03, $"MC touch {mc:F4} vs 2Φ(−z) = {closed:F4}");
+        Console.WriteLine($"Volatility Test 4 passed: 2Φ(−1) = {closed:F4}, Monte Carlo touch frequency {mc:F4}");
+    }
 }

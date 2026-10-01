@@ -30,9 +30,9 @@ public static class LotStateVectorCsvReader
         {
             "L","H","S","B","W","K",
             "NetST","NetLT","CarryST","CarryLT","OrdinaryOffsetBudget","Sigma_TE","WashClock",
-            "R_t","SigmaRange","DeltaMA50","DeltaMA200",
-            "TaxValue","DaysToYE",
-            "Y_Oracle","Y_Soft_GBM","Y_Soft_BT","Y_TaxValue","Y_Utility",
+            "R_t","SigmaRange","DeltaMA50","DeltaMA200","SigmaHat","SigmaMkt",
+            "TaxValue","DaysToYE","ZBarrier","PBarrier",
+            "Y_Oracle","Y_Soft_GBM","Y_Soft_BT","Y_TaxValue","Y_Utility","Y_Soft_BT_90","Y_TaxWeighted",
             "Symbol","Sector","Timestep",
         };
         foreach (var c in required)
@@ -65,6 +65,10 @@ public static class LotStateVectorCsvReader
                 SigmaRange = ParseFloat(f[idx["SigmaRange"]]),
                 DeltaMA50  = ParseFloat(f[idx["DeltaMA50"]]),
                 DeltaMA200 = ParseFloat(f[idx["DeltaMA200"]]),
+                SigmaHat   = ParseFloat(f[idx["SigmaHat"]]),
+                SigmaMkt   = ParseFloat(f[idx["SigmaMkt"]]),
+                ZBarrier   = ParseFloat(f[idx["ZBarrier"]]),
+                PBarrier   = ParseFloat(f[idx["PBarrier"]]),
                 TaxValue   = ParseFloat(f[idx["TaxValue"]]),
                 DaysToYE   = ParseInt(f[idx["DaysToYE"]]),
                 Y_Oracle   = ParseInt(f[idx["Y_Oracle"]]),
@@ -72,6 +76,8 @@ public static class LotStateVectorCsvReader
                 Y_Soft_BT  = ParseFloat(f[idx["Y_Soft_BT"]]),
                 Y_TaxValue = ParseFloat(f[idx["Y_TaxValue"]]),
                 Y_Utility  = ParseFloat(f[idx["Y_Utility"]]),
+                Y_Soft_BT_90  = ParseFloat(f[idx["Y_Soft_BT_90"]]),
+                Y_TaxWeighted = ParseFloat(f[idx["Y_TaxWeighted"]]),
                 Symbol     = Unquote(f[idx["Symbol"]]),
                 Sector     = Unquote(f[idx["Sector"]]),
                 Timestep   = ParseInt(f[idx["Timestep"]]),

@@ -10,7 +10,7 @@
 > label family it generates, and (3) each supervised and unsupervised model implemented in
 > the ML.NET pillar.
 >
-> **Schema version: v5 (d = 19; ledger by §1222 character since v0.3-3), oracle: scalarized (the only mode since the pre-v0.3
+> **Schema version: v6 (d = 23; σ̂ features since v0.3-8, ledger by §1222 character since v0.3-3), oracle: scalarized (the only mode since the pre-v0.3
 > downsizing), validation: purged temporal splits available (v0.26), models: GBT + logistic.**
 > Retired objects (the v0.2 gated oracle, RF, elastic net, the linreg demonstrator,
 > feature-space PCA/K-means) keep their findings in `archive/RetiredComponents.md`.
@@ -46,7 +46,7 @@ The whole system is one chain:
 ```text
 Portfolio state (lots, tax ledger, tracking error)
       ↓   feature extraction
- Lot features X  — one row = one lot, on one day (19 numbers)
+ Lot features X  — one row = one lot, on one day (23 numbers)
       ↓   the oracle rule f*
  Hard label Y_Oracle ∈ {0,1}  — "harvest this lot today?"
       ↓   run the rule forward 30 days
@@ -55,14 +55,14 @@ Portfolio state (lots, tax ledger, tracking error)
  Predicted harvest propensity  η̂(x) ∈ [0,1]
 ```
 
-**One row is one lot on one day.** It carries 19 numeric features in four groups:
+**One row is one lot on one day.** It carries 23 numeric features in four groups:
 
 | Group | Features | What they describe |
 |---|---|---|
 | **Lot** (6) | unrealized return, holding days, long-term flag, cost basis, portfolio weight, lot count | the position itself |
 | **Portfolio** (7) | net short-/long-term realized P&L YTD, short-/long-term loss carryforward, ordinary-offset budget, tracking error, wash-sale clock | shared state — same for every lot that day |
-| **Asset** (4) | daily return, intraday range, MA50 deviation, MA200 deviation | what the stock is doing |
-| **Derived** (2) | tax value, days to year-end | composites of the above |
+| **Asset** (6) | daily return, intraday range, MA50 deviation, MA200 deviation, EWMA σ̂ of the name, EWMA σ̂ of the market | what the stock (and the market) is doing |
+| **Derived** (4) | tax value, days to year-end, barrier coordinate $z$, touch probability $2\Phi(-z)$ | composites of the above |
 
 **The oracle** is the hand-written harvesting rule — it plays the role of "ground truth." Since
 v0.25 it is a *cost-benefit test behind three hard gates*, not a four-way AND:
@@ -114,19 +114,21 @@ $x_{k,t}\in\mathcal X$ is exactly one `LotStateVector` (minus its labels and met
 Projecting onto a single lot,
 
 $$
-\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{19}.
+\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{23}.
 $$
 
 > **Schema note (v0.25).** $d$ moved $15\to17$: the single portfolio coordinate
 > $G^{\mathrm{YTD}}$ became the three-field **TaxLedger** block, and the derived coordinate
 > $\alpha_{\mathrm{tax}}$ was replaced by the capacity-aware $\mathrm{TaxValue}$.
+> **Schema note (v0.3-8, v6).** $d$ moved $19\to23$: the σ̂ feature role
+> ($\hat\sigma_{i,t}$, $\hat\sigma_{m,t}$, $z$, $2\Phi(-z)$; `decisions/VolatilityModel_v03.md` §6).
 > **Schema note (v0.3-3, v5).** $d$ moved $17\to19$: the blended
 > $(G^{\mathrm{net}},C^{\mathrm{fwd}})$ split by §1222 character into
 > $(G^{\mathrm{ST}},G^{\mathrm{LT}},C^{\mathrm{ST}},C^{\mathrm{LT}})$ (ROADMAP F8).
 
 ## 1.2 Coordinates with explicit types
 
-The 19 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are the following
+The 23 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are the following
 maps. For lot $k$ with shares $q_k\in\mathbb Z_{>0}$, cost basis $p_k\in\mathbb R_{>0}$,
 purchase day $s_k\in\mathbb Z_{\ge0}$, current price $P_t\in\mathbb R_{>0}$, portfolio value
 $V_t\in\mathbb R_{>0}$:
@@ -162,11 +164,15 @@ R_t &= \frac{P_t-P_{t-1}}{P_{t-1}}\in\mathbb R
 \Delta\mathrm{MA}_{50} &= \frac{P_t-\mathrm{MA}_{50}}{\mathrm{MA}_{50}}\in\mathbb R
    &&\text{50-day MA deviation}\\
 \Delta\mathrm{MA}_{200} &= \frac{P_t-\mathrm{MA}_{200}}{\mathrm{MA}_{200}}\in\mathbb R
-   &&\text{200-day MA deviation}\\[4pt]
+   &&\text{200-day MA deviation}\\
+\hat\sigma_{i,t},\ \hat\sigma_{m,t} &\in\mathbb R_{>0}
+   &&\text{SigmaHat, SigmaMkt — annualized EWMA σ̂ of the name / the market}\\[4pt]
 \mathrm{TaxValue} &= g_{\mathrm{tax}}(\mathrm{ledger}_t,h_k,\ell_k)\in\mathbb R_{\ge0}
    &&\text{capacity-aware harvest value (§1.3)}\\
 \mathrm{DaysToYE} &\in\mathbb Z_{\ge0}
-   &&\text{days to year-end}
+   &&\text{days to year-end}\\
+z_{k,t},\ 2\Phi(-z_{k,t}) &\in\mathbb R_{\ge0},\ [0,1]
+   &&\text{ZBarrier, PBarrier — loss-trigger distance in forecast σ (VolatilityModel §6)}
 \end{aligned}
 $$
 
@@ -240,15 +246,15 @@ The coordinates partition by *origin of state* into four blocks:
 $$
 \mathcal X \;=\; \underbrace{\mathcal X_{\mathrm{lot}}}_{\mathbb R^6}\ \oplus\
 \underbrace{\mathcal X_{\mathrm{port}}}_{\mathbb R^7}\ \oplus\
-\underbrace{\mathcal X_{\mathrm{asset}}}_{\mathbb R^4}\ \oplus\
-\underbrace{\mathcal X_{\mathrm{derived}}}_{\mathbb R^2},
-\qquad \dim\mathcal X = 6+7+4+2 = 19.
+\underbrace{\mathcal X_{\mathrm{asset}}}_{\mathbb R^6}\ \oplus\
+\underbrace{\mathcal X_{\mathrm{derived}}}_{\mathbb R^4},
+\qquad \dim\mathcal X = 6+7+6+4 = 23.
 $$
 
 - $\mathcal X_{\mathrm{lot}}=(L,H,S,B,W,K)$ — intrinsic to the lot.
 - $\mathcal X_{\mathrm{port}}=(G^{\mathrm{ST}}_t,G^{\mathrm{LT}}_t,C^{\mathrm{ST}}_t,C^{\mathrm{LT}}_t,O_t,\sigma_{\mathrm{TE}},\mathcal W_{k,t})$ — shared state $\mathcal S_t$, identical across every lot on day $t$.
-- $\mathcal X_{\mathrm{asset}}=(R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA}_{50},\Delta\mathrm{MA}_{200})$ — from the price series.
-- $\mathcal X_{\mathrm{derived}}=(\mathrm{TaxValue},\mathrm{DaysToYE})$ — composites.
+- $\mathcal X_{\mathrm{asset}}=(R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA}_{50},\Delta\mathrm{MA}_{200},\hat\sigma_{i,t},\hat\sigma_{m,t})$ — from the price series ($\hat\sigma_m$ is shared by every lot on a day).
+- $\mathcal X_{\mathrm{derived}}=(\mathrm{TaxValue},\mathrm{DaysToYE},z,2\Phi(-z))$ — composites.
 
 The categorical field $z=\texttt{Sector}\in\mathcal Z$ is appended separately (§3.3). One
 in-memory field, $q_k$ (`Shares`), is carried on the snapshot but **never exported** — the
@@ -506,7 +512,7 @@ PR-AUC, *and* test-period positive rate together.
 `PreprocessingPipeline.Build` realizes
 
 $$
-\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{19}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=19+m,
+\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{23}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=23+m,
 $$
 
 where $\mathrm{Norm}(x)_j=(x_j-\mu_j)/\sigma_j$ with $(\mu_j,\sigma_j)$ estimated on the
@@ -703,13 +709,13 @@ point of use. It restates §0–§3 for a reader who wants no inference.*
 The feature space is
 
 $$
-\mathcal X\subset\mathbb R^{19}.
+\mathcal X\subset\mathbb R^{23}.
 $$
 
 A feature vector is
 
 $$
-x\in\mathcal X,\qquad x=\langle x_1,\dots,x_{19}\rangle.
+x\in\mathcal X,\qquad x=\langle x_1,\dots,x_{23}\rangle.
 $$
 
 A lot-indexed observation at lot $k$ and day $t$ is
@@ -774,7 +780,7 @@ $$
 The preprocessing map is
 
 $$
-\phi:\ \mathcal X\times\mathcal Z\ \to\ \mathbb R^{d},\qquad d=19+m .
+\phi:\ \mathcal X\times\mathcal Z\ \to\ \mathbb R^{d},\qquad d=23+m .
 $$
 
 The backtest soft label is
@@ -823,7 +829,7 @@ constants drift.)
 - `ValidationHardening_v026.md` — purged temporal splits and the leakage-vs-prevalence diagnosis.
 - `MLNetLayer.md` — implementation architecture + ML.NET ↔ sklearn parameter map.
 - `MLNetLeakageAudit.md` — training-fold-only invariants.
-- `src/Core/Portfolio/LotStateVector.cs` — canonical d=19 schema · `TaxLedger.cs` — $g_{\mathrm{tax}}$.
+- `src/Core/Portfolio/LotStateVector.cs` — canonical d=23 schema · `TaxLedger.cs` — $g_{\mathrm{tax}}$.
 - `src/Core/Oracle/OracleBoundary.cs`, `OracleConfig.cs` — $f^*$, $U$, constants.
 - `src/Core/Simulation/SoftLabelBuilder.cs`, `GbmSimulator.cs` — $\tilde y_{\mathrm{BT}}$, $\tilde y_{\mathrm{GBM}}$.
 - `src/ML/CSharp/MLNet/Splits/` — `DataSplit`, `SplitPolicy`, `TemporalSplit`.

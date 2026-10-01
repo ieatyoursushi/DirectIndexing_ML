@@ -21,15 +21,8 @@ public static class VolEval
         var symbols = prices.Symbols.OrderBy(s => s).ToList();
         int T = prices.DayCount;
 
-        // market return r_m = mean of available r_i, and its EWMA → tercile cutoffs (reporting only)
-        var rm = new float[T];
-        for (int t = 0; t < T; t++)
-        {
-            double s = 0; int n = 0;
-            foreach (var sym in symbols) { float x = prices.DailyReturn(sym, t); if (!float.IsNaN(x)) { s += x; n++; } }
-            rm[t] = n > 0 ? (float)(s / n) : float.NaN;
-        }
-        var mkt = new EwmaVol().Path(rm).Var1;
+        // market EWMA → tercile cutoffs (reporting only)
+        var mkt = new EwmaVol().Path(MarketReturns(prices)).Var1;
         var valid = mkt.Where(x => !double.IsNaN(x)).OrderBy(x => x).ToArray();
         double q1 = valid.Length > 0 ? valid[valid.Length / 3] : 0, q2 = valid.Length > 0 ? valid[2 * valid.Length / 3] : 0;
         int Regime(int t) => double.IsNaN(mkt[t]) ? -1 : mkt[t] <= q1 ? 0 : mkt[t] <= q2 ? 1 : 2;
@@ -92,6 +85,20 @@ public static class VolEval
                 double n = a[1] + a[3] + a[5];
                 return new Cell((a[0] + a[2] + a[4]) / n, a[0] / Math.Max(a[1], 1), a[2] / Math.Max(a[3], 1), a[4] / Math.Max(a[5], 1), (long)n);
             }));
+    }
+
+    /// <summary>r_m,t = mean of the available r_i,t — the equal-weight benchmark's daily return.</summary>
+    public static float[] MarketReturns(PriceLoader prices)
+    {
+        var symbols = prices.Symbols.OrderBy(s => s).ToList();
+        var rm = new float[prices.DayCount];
+        for (int t = 0; t < rm.Length; t++)
+        {
+            double s = 0; int n = 0;
+            foreach (var sym in symbols) { float x = prices.DailyReturn(sym, t); if (!float.IsNaN(x)) { s += x; n++; } }
+            rm[t] = n > 0 ? (float)(s / n) : float.NaN;
+        }
+        return rm;
     }
 
     public static void Write(Dictionary<int, Dictionary<string, Cell>> result, string path, string world)

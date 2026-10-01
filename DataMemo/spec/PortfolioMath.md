@@ -192,8 +192,9 @@ LotSnapshot ∈ ℝ^d × 𝒴
 │   ├── L, H, S, B, W, K              ← 𝒳_lot     ⊂ ℝ^6   (lot-level)
 │   ├── NetST, NetLT, CarryST, CarryLT, OrdinaryOffsetBudget,
 │   │   Sigma_TE, WashClock           ← 𝒳_portfolio ⊂ ℝ^7  (portfolio-level: ledger + risk)
-│   ├── R_t, SigmaRange, DeltaMA50, DeltaMA200  ← 𝒳_asset ⊂ ℝ^4  (asset-level)
-│   └── TaxValue, DaysToYE            ← 𝒳_derived  ⊂ ℝ^2  (composite)
+│   ├── R_t, SigmaRange, DeltaMA50, DeltaMA200,
+│   │   SigmaHat, SigmaMkt            ← 𝒳_asset ⊂ ℝ^6  (asset-level + market σ̂)
+│   └── TaxValue, DaysToYE, ZBarrier, PBarrier  ← 𝒳_derived ⊂ ℝ^4  (composite)
 │
 └── y ∈ 𝒴  (labels — model targets, never inputs)
     ├── Y_Oracle ∈ {0,1}              ← hard label  f*(x)
@@ -203,7 +204,7 @@ LotSnapshot ∈ ℝ^d × 𝒴
     └── Y_Utility ∈ ℝ                 ← raw U(x)  (per-lot diagnostic; see MLDerivations §2.5)
 ```
 
-So $d = 19$ before one-hot encoding of `Sector` (schema v5, v0.3-3: the ledger split by character; 17 in v3/v4, 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
+So $d = 23$ before one-hot encoding of `Sector` (schema v6, v0.3-8: + the σ̂ feature role; 19 in v5, 17 in v3/v4, 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
 
 **Schema-first timing:** `LotSnapshot` is defined now as the **interface contract** before the simulation exists. Every downstream component — `PriceLoader`, `OracleGate`, `SoftLabelBuilder`, `SimulationExporter` — is built against this schema. Defining it late would mean those components implicitly define the schema through whatever they happen to produce, which is riskier in a typed system.
 

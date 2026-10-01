@@ -285,11 +285,21 @@ The GBM path is kept as an arm: `--soft-gbm=gbm|fhs`.
 
 **Measured:**
 - the label shift;
-- the bias $E[\tilde y_{\mathrm{model}}-\tilde y_{\mathrm{BT}}\mid\text{vol bucket}]$.
+- the bias $E[\tilde y_{\mathrm{model}}-\mathbf 1[\tilde y_{\mathrm{BT}}>0]\mid\text{vol bucket}]$.
 
-$\tilde y_{\mathrm{BT}}$ is a single realized path: noisy but unbiased for the true conditional
-firing frequency. The model-based labels are low-variance, and FHS's bias in the high-vol bucket
-should be smaller than GBM's. That bias reduction is the result to report.
+> **Correction made during implementation.** An earlier draft compared the model labels with
+> $\tilde y_{\mathrm{BT}}$ itself. That is a different functional: $\tilde y_{\mathrm{BT}}$ is
+> an **occupation fraction**, and $\tilde y_{\mathrm{GBM}}$, $\tilde y_{\mathrm{FHS}}$ are
+> **first-passage** probabilities. Pathwise, occupation $\le$ the hit indicator, so the naive
+> "bias" was +0.09…+0.13 everywhere, an estimand mismatch rather than a model error.
+>
+> The unbiased comparator is the realized hit indicator $\mathbf 1[\tilde y_{\mathrm{BT}}>0]$:
+> one path, noisy, but $E[\cdot]$ equals the first-passage probability. It is also exactly the
+> binarized `soft_bt` training target.
+
+The model-based labels are low-variance. FHS's bias in the high-vol bucket should be smaller
+than GBM's, and that bias reduction (plus Brier score against the hit indicator) is the result to
+report.
 
 ---
 

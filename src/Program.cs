@@ -58,6 +58,33 @@ if (testfracArg is not null && double.TryParse(testfracArg["--testfrac=".Length.
 if (mode.StartsWith("mlnet"))
     Console.WriteLine($"[SplitPolicy] {SplitPolicy.Describe()}");
 
+// --target=a,b,… selects the binary targets mlnet-all trains (default soft_bt,oracle; v0.3-11 adds
+// soft_bt_90 = the realized 90-day hit). A label horizon h needs an embargo ≥ h (standing rule 5),
+// so a 90-day target raises the temporal embargo to 90 automatically.
+var targetArg = args.FirstOrDefault(a => a.StartsWith("--target="));
+var mlTargets = targetArg is null ? new[] { "soft_bt", "oracle" }
+                                  : targetArg["--target=".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries);
+foreach (var tgt in mlTargets)
+    if (tgt is not ("soft_bt" or "oracle" or "soft_bt_90"))
+        throw new ArgumentException($"--target entries must be soft_bt|oracle|soft_bt_90, got '{tgt}'");
+if (mlTargets.Contains("soft_bt_90") && SplitPolicy.EmbargoDays < DirectIndexing.Core.Simulation.SoftLabelBuilder.WindowLong)
+{
+    SplitPolicy.EmbargoDays = DirectIndexing.Core.Simulation.SoftLabelBuilder.WindowLong;
+    if (mode.StartsWith("mlnet")) Console.WriteLine($"[SplitPolicy] embargo raised to {SplitPolicy.EmbargoDays}d for the 90-day target");
+}
+
+// --features=no-vol drops the σ̂ feature block (SigmaHat, SigmaMkt, ZBarrier, PBarrier) from
+// every trainer — the v0.3-8 role-1 ablation arm (artifacts tagged -novol). Run it under
+// --split=temporal: σ̂_m is a near-injective function of the date (VolatilityModel_v03 §5).
+var featuresArg = args.FirstOrDefault(a => a.StartsWith("--features="));
+if (featuresArg is not null)
+    DirectIndexing.ML.MLNet.Schema.FeatureLists.ExcludeVolFeatures = featuresArg["--features=".Length..] switch
+    {
+        "no-vol" => true,
+        "all"    => false,
+        var x    => throw new ArgumentException($"--features must be all|no-vol, got '{x}'"),
+    };
+
 // ── Contribution policy (v0.3 P0 — the cost-basis-aging fix) ────────────────
 // --contrib enables periodic cash inflows that mint fresh lots at current prices,
 // restoring the harvestable supply that the open-once book loses to aging.
@@ -101,6 +128,18 @@ if (teArg is not null)
         var x     => throw new ArgumentException($"--te-weights must be names|dollars, got '{x}'"),
     } };
 
+// ── σ̂ label role (v0.3-9) ───────────────────────────────────────────────────
+// --soft-gbm=fhs fills Y_Soft_GBM by filtered historical simulation (empirical residuals,
+// EWMA σ path) instead of constant-σ GBM paths. Dataset tag _softfhs.
+var softGbmArg = args.FirstOrDefault(a => a.StartsWith("--soft-gbm="));
+var softGbm = softGbmArg?["--soft-gbm=".Length..] switch
+{
+    null or "gbm" => DirectIndexing.Core.Simulation.SoftGbmMode.Gbm,
+    "fhs"         => DirectIndexing.Core.Simulation.SoftGbmMode.Fhs,
+    var x         => throw new ArgumentException($"--soft-gbm must be gbm|fhs, got '{x}'"),
+};
+var softTag = softGbm == DirectIndexing.Core.Simulation.SoftGbmMode.Fhs ? "_softfhs" : "";
+
 // ── Sell-winner trim (v0.3-4) ────────────────────────────────────────────────
 // --trim sells gain lots of names above (1 + band) × equal weight back toward target
 // and reinvests the proceeds, making realized gains endogenous so the Schedule D
@@ -141,7 +180,7 @@ var lotsArg        = args.FirstOrDefault(a => a.StartsWith("--lots="));
 var lotsPath       = lotsArg is null ? Path.Combine(dataDir, "lots.csv")
                                      : Path.GetFullPath(lotsArg["--lots=".Length..]);
 var datasetTag     = DatasetTagOf(lotsPath);
-var mlnetArtifacts = Path.Combine(dataDir, $"artifacts-mlnet{datasetTag}{SplitPolicy.ArtifactTag}") + Path.DirectorySeparatorChar;
+var mlnetArtifacts = Path.Combine(dataDir, $"artifacts-mlnet{datasetTag}{SplitPolicy.ArtifactTag}{DirectIndexing.ML.MLNet.Schema.FeatureLists.ArtifactTag}") + Path.DirectorySeparatorChar;
 var edaOut         = Path.Combine(exportDir, "eda-mlnet");
 var modelsOut      = Path.Combine(exportDir, "models-mlnet");
 if (mode.StartsWith("mlnet") || mode is "codebook")
@@ -208,10 +247,10 @@ switch (mode)
         var engine    = new SimulationEngine(loader, oracleCfg, contribCfg, trimCfg, riskCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
-        var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
+        var softLabeller = new SoftLabelBuilder(loader, oracleCfg, softGbm);
         softLabeller.Label(snapshots);
 
-        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}.csv");
+        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{softTag}{ctradeTag}.csv");
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] → {outPath}  " +
@@ -241,11 +280,30 @@ switch (mode)
             universe = PriceLoader.CalibrateGbmUniverse(real);
         }
 
-        var synthetic = PriceLoader.FromGbm(universe, mcDays, mcSeed);
+        // --world=fhs (v0.3-10): a filtered-historical-simulation world — clustered σ, fat tails,
+        // the source's cross-sectional correlation. Source = the real cache, or (standalone) a
+        // GARCH-factor panel. Otherwise the GBM world.
+        string worldArg = args.FirstOrDefault(a => a.StartsWith("--world="))?["--world=".Length..] ?? "gbm";
+        PriceLoader synthetic;
+        string worldTag;
+        if (worldArg == "fhs")
+        {
+            PriceLoader source;
+            if (mcNames > 0) source = PriceLoader.GarchFactorPanel(mcNames, 3000, mcSeed + 1);
+            else
+            {
+                source = new PriceLoader();
+                source.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
+            }
+            synthetic = PriceLoader.FromFhs(source, mcDays, mcSeed);
+            worldTag  = "-fhs";
+        }
+        else if (worldArg == "gbm") { synthetic = PriceLoader.FromGbm(universe, mcDays, mcSeed); worldTag = ""; }
+        else throw new ArgumentException($"--world must be gbm|fhs, got '{worldArg}'");
         var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg, trimCfg, riskCfg).Run(10_000_000m);
-        new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
+        new SoftLabelBuilder(synthetic, oracleCfg, softGbm).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}.csv"));
+            Path.Combine(dataDir, $"lots-mc{worldTag}{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{softTag}{ctradeTag}.csv"));
     }
     break;
     // σ̂ forecast evaluation (v0.3-7): QLIKE per estimator × horizon × market-vol tercile.
@@ -278,6 +336,76 @@ switch (mode)
                 .Select(c => $"{c.Key}={c.Value.Mean:F4} (L {c.Value.Low:F3} M {c.Value.Mid:F3} H {c.Value.High:F3})")));
         }
         Console.WriteLine($"[vol-eval] → {outPath}");
+    }
+    break;
+    // The economic ladder (v0.3-11): the same world under rung 1 (never harvest), rung 2 (naive
+    // loss threshold) and rung 3 (the oracle) — engine only, no soft labels. World flags as in
+    // simulate-mc (--mc-standalone/--mc-days/--mc-seed, --world=fhs) or the real cache by default;
+    // every simulation flag (--contrib, --trim, --cov, …) applies to all rungs.
+    // → data/runs/ladder{tags}/<policy>.json and a printed table.
+    // [math:ladder] — DataMemo/spec/SymbolTable.md
+    case "ladder":
+    {
+        int mcNames = IntFlag("--mc-standalone=", 0);
+        int mcDays  = IntFlag("--mc-days=", 1260);
+        int mcSeed  = IntFlag("--mc-seed=", 42);
+        int seeds   = Math.Max(1, IntFlag("--seeds=", 1));
+        bool fhsWorld = args.Contains("--world=fhs");
+        PriceLoader? real = null;
+        if (mcNames == 0)
+        {
+            real = new PriceLoader();
+            real.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
+            if (!fhsWorld) seeds = 1;   // one real history
+        }
+        string worldTag = (mcNames > 0 ? "-mc" : "") + (fhsWorld ? "-fhs" : "");
+        string runDir = Path.Combine(dataDir, "runs",
+            $"ladder{worldTag}{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}");
+        var rungs = new DirectIndexing.Core.Policy.IHarvestPolicy[]
+        {
+            new DirectIndexing.Core.Policy.NeverHarvestPolicy(),
+            new DirectIndexing.Core.Policy.ThresholdHarvestPolicy(),
+            new DirectIndexing.Core.Policy.OraclePolicy(),
+        };
+        // results[rung][seed]
+        var results = rungs.Select(_ => new List<DirectIndexing.Core.Policy.RunMetrics>()).ToArray();
+        for (int k = 0; k < seeds; k++)
+        {
+            int seed = mcSeed + k;
+            PriceLoader world = mcNames > 0
+                ? (fhsWorld ? PriceLoader.FromFhs(PriceLoader.GarchFactorPanel(mcNames, 3000, seed + 1000), mcDays, seed)
+                            : PriceLoader.FromGbm(PriceLoader.UniformGbmUniverse(mcNames, (float)DoubleFlag("--mc-sigma=", 0.25)), mcDays, seed))
+                : (fhsWorld ? PriceLoader.FromFhs(real!, mcDays, seed) : real!);
+            for (int r = 0; r < rungs.Length; r++)
+            {
+                var engine = new SimulationEngine(world, oracleCfg, contribCfg, trimCfg, riskCfg, rungs[r]);
+                engine.Run(10_000_000m);
+                var m = engine.Metrics();
+                m.Write(Path.Combine(runDir, $"seed{seed}", $"{rungs[r].Name}.json"));
+                results[r].Add(m);
+            }
+        }
+        // per-seed paired differences vs rung 1 — the paths are shared within a seed, so the
+        // pairing removes the market path's common noise; s.e. across seeds
+        static (double Mean, double Se) Stat(IReadOnlyList<double> x)
+        {
+            double m = x.Average();
+            double se = x.Count > 1 ? Math.Sqrt(x.Sum(v => (v - m) * (v - m)) / (x.Count - 1) / x.Count) : double.NaN;
+            return (m, se);
+        }
+        Console.WriteLine();
+        Console.WriteLine($"[ladder] {seeds} seed(s); differences vs rung 1 (never), mean ± s.e. across seeds");
+        Console.WriteLine($"{"rung",-10} {"Δ after-tax",22} {"Δ liquidation",22} {"Δ pre-tax wealth",22} {"Δ W_tax",20} {"loss sales",11} {"TE realized",12} {"turnover",9} {"wash",5}");
+        for (int r = 0; r < rungs.Length; r++)
+        {
+            var at  = Stat(results[r].Select((m, k) => (double)(m.AfterTaxWealth - results[0][k].AfterTaxWealth)).ToList());
+            var liq = Stat(results[r].Select((m, k) => (double)(m.LiquidationValue - results[0][k].LiquidationValue)).ToList());
+            var pre = Stat(results[r].Select((m, k) => (double)((m.TerminalHoldings + m.PendingReopenCash + m.Cash) - (results[0][k].TerminalHoldings + results[0][k].PendingReopenCash + results[0][k].Cash))).ToList());
+            var wt  = Stat(results[r].Select((m, k) => (double)(m.TaxPosition - results[0][k].TaxPosition)).ToList());
+            Console.WriteLine($"{rungs[r].Name,-10} {at.Mean,11:N0} ± {at.Se,8:N0} {liq.Mean,11:N0} ± {liq.Se,8:N0} {pre.Mean,11:N0} ± {pre.Se,8:N0} {wt.Mean,10:N0} ± {wt.Se,7:N0} " +
+                              $"{results[r].Average(m => m.LossSales),11:N0} {results[r].Average(m => m.RealizedTe),12:P2} {results[r].Average(m => m.AnnualTurnover),9:P1} {results[r].Sum(m => m.WashViolations),5}");
+        }
+        Console.WriteLine($"[ladder] → {runDir}");
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -351,8 +479,8 @@ switch (mode)
         var sw = Stopwatch.StartNew();
         var data = LotStateVectorCsvReader.Read(lotsPath);
         // Comparison run: CV GBT + logistic, leaderboard names the champion, test eval both.
-        MLnetPipeline.RunAllSupervised(data, target: "soft_bt", artifactsDir: mlnetArtifacts);
-        MLnetPipeline.RunAllSupervised(data, target: "oracle",  artifactsDir: mlnetArtifacts);
+        foreach (var target in mlTargets)
+            MLnetPipeline.RunAllSupervised(data, target: target, artifactsDir: mlnetArtifacts);
         var rc = MLnetPipeline.RunRender(lotsPath, mlnetArtifacts, edaOut, modelsOut);
         sw.Stop();
         Console.WriteLine($"[mlnet-all] Completed in {sw.Elapsed.TotalMinutes:F2} minutes ({sw.Elapsed.TotalSeconds:F0}s)");
@@ -463,6 +591,16 @@ switch (mode)
         volTests.Test_Ewma_Recursion_And_QLike_Floor();
         volTests.Test_Estimators_AreCausal_FitRejectsLookAhead();
         volTests.Test_Garch_RecoversParams_AndWinsOnClusteredData();
+        volTests.Test_Barrier_MatchesMonteCarlo();
+
+        var fhsTests = new FhsTests();
+        fhsTests.Test_FhsWorld_Clusters_FatTails_Correlation_Deterministic();
+        fhsTests.Test_FhsLabels_Causal_And_AgreeWithGbmOnGbm();
+
+        var policyTests = new PolicyTests();
+        policyTests.Test_OraclePolicy_IsDefault_NeverHarvest_NeverSells();
+        policyTests.Test_RunMetrics_Identities();
+        policyTests.Test_Wealth_IsConserved_WhenReopenRunsPastTheEnd();
 
         var trimTests = new TrimTests();
         trimTests.Test_Trim_SellsOnlyGains_ConsumesCarryforward();

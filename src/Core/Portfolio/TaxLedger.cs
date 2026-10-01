@@ -75,6 +75,28 @@ public sealed class TaxLedger
     /// <summary>C^LT — long-term capital-loss carryforward from prior years (≥ 0).</summary>
     public decimal CarryLongTerm { get; private set; }
 
+    /// <summary>Σ of closed years' tax T (negative years = a net ordinary-income deduction).</summary>
+    public decimal TaxPaid { get; private set; }
+
+    /// <summary>
+    /// W_tax = −Paid − T(open year) + τ_fut·δ·ΣC' — the tax-position potential
+    /// (DataMemo/decisions/PolicyLayer_v04.md §4). Changes at trades AND at <see cref="RollYearEnd"/>:
+    /// after the roll the new year's netting applies up to $3k of carried loss to ordinary income at
+    /// once, so W jumps by (τ_ord − τ_fut·δ)·min(O_max, C) (with no gains) — the yearly conversion of
+    /// banked carryforward into the full-rate ordinary deduction. ΔW over one loss harvest is
+    /// exactly that harvest's <see cref="ComputeTaxValue(decimal,bool)"/>; over a gain sale it is
+    /// the (negative) value of the tax the gain creates.
+    /// </summary>
+    // [math:tax_position] — DataMemo/spec/SymbolTable.md
+    public decimal TaxPosition
+    {
+        get
+        {
+            var y = State.Close();
+            return -TaxPaid - y.Tax + TauFuture * CarryforwardDiscount * (y.CarryShortTerm + y.CarryLongTerm);
+        }
+    }
+
     /// <summary>The ledger's four numbers as a value — what a frozen-state valuation needs.</summary>
     public LedgerState State => new(NetShortTerm, NetLongTerm, CarryShortTerm, CarryLongTerm);
 
@@ -123,6 +145,7 @@ public sealed class TaxLedger
     public void RollYearEnd()
     {
         var y = State.Close();
+        TaxPaid       += y.Tax;
         CarryShortTerm = y.CarryShortTerm;
         CarryLongTerm  = y.CarryLongTerm;
         NetShortTerm   = 0m;

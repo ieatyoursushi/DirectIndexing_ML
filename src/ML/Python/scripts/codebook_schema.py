@@ -7,7 +7,8 @@ matches this list exactly, so drift fails loudly instead of silently.
 
 Each entry: name, dtype, units, role, description, encoding, missing, source.
 Mathematical definitions follow DataMemo/spec/ (SymbolTable.md is the index).
-Schema version: v5 (27 columns, d = 19) — v0.3-3 split the ledger by §1222 character.
+Schema version: v6 (33 columns, d = 23) — v0.3-8 added the σ̂ feature role
+(SigmaHat, SigmaMkt, ZBarrier, PBarrier), v0.3-11 the #17 labels (Y_Soft_BT_90, Y_TaxWeighted); v5 (v0.3-3) split the ledger by §1222 character.
 """
 from __future__ import annotations
 
@@ -250,6 +251,35 @@ COLUMNS: list[dict] = [
         "source": "computed in SimulationEngine",
     },
     {
+        "name": "SigmaHat",
+        "dtype": "float",
+        "units": "annualized volatility",
+        "role": "feature (asset-level, σ̂)",
+        "description": (
+            "σ̂_i,t — the EWMA(λ = 0.94) forecast of this name's next-day return "
+            "volatility, annualized (√252). F_t-measurable: built from returns up to "
+            "and including day t; no fitted parameters (VolatilityModel_v03 §3)."
+        ),
+        "encoding": "Positive continuous.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "VolState.SigmaHat (EwmaVol.Path)",
+    },
+    {
+        "name": "SigmaMkt",
+        "dtype": "float",
+        "units": "annualized volatility",
+        "role": "feature (asset-level, σ̂, shared)",
+        "description": (
+            "σ̂_m,t — the EWMA forecast of the equal-weight market's volatility. "
+            "Identical for every lot on a day, so it is a near-injective function of "
+            "the date: evaluate its effect under --split=temporal only "
+            "(VolatilityModel_v03 §5, hazard 3)."
+        ),
+        "encoding": "Positive continuous; constant within a Timestep.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "VolState.SigmaMkt",
+    },
+    {
         "name": "TaxValue",
         "dtype": "float",
         "units": "US dollars",
@@ -283,6 +313,34 @@ COLUMNS: list[dict] = [
         "encoding": "Integer in [0, 365].",
         "missing": "None.",
         "source": "calendar arithmetic in SimulationEngine",
+    },
+    {
+        "name": "ZBarrier",
+        "dtype": "float",
+        "units": "forecast standard deviations",
+        "role": "feature (derived, lot × σ̂)",
+        "description": (
+            "z = d / sqrt(V_{t,h}): the log-distance to the loss trigger, "
+            "d = max(0, ln(P_t / ((1 − θ₁)·p_k))), in units of the forecast σ over "
+            "the label horizon h = 30 trading days. 0 once the lot is past the trigger."
+        ),
+        "encoding": "Non-negative continuous.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "LossBarrier.Z (SimulationEngine.ExtractSnapshot)",
+    },
+    {
+        "name": "PBarrier",
+        "dtype": "float",
+        "units": "probability",
+        "role": "feature (derived, lot × σ̂)",
+        "description": (
+            "2Φ(−z): the reflection-principle probability that a driftless log-price "
+            "touches the loss trigger within the horizon. A coordinate (loss gate "
+            "only — wash, TE and U gates ignored), not a label."
+        ),
+        "encoding": "Continuous in [0, 1]; 1 when z = 0.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "LossBarrier.TouchProbability",
     },
     {
         "name": "Y_Oracle",
@@ -375,6 +433,37 @@ COLUMNS: list[dict] = [
         "source": "OracleBoundary.Utility(TaxValue, Sigma_TE, config)",
     },
     {
+        "name": "Y_Soft_BT_90",
+        "dtype": "float",
+        "units": "fraction of days",
+        "role": "label (soft, realized, #17 horizon variant)",
+        "description": (
+            "Occupation fraction of the next 90 real trading days on which the frozen-state "
+            "oracle fires (the 90-day sibling of Y_Soft_BT). Its hit indicator "
+            "1[Y_Soft_BT_90 > 0] is the soft_bt_90 training target; a 90-day label needs a "
+            "≥ 90-day embargo, which --target=soft_bt_90 enforces. Labels may peek forward; "
+            "features never."
+        ),
+        "encoding": "Continuous in [0, 1].",
+        "missing": "NaN when fewer than 90 trading days remain.",
+        "source": "SoftLabelBuilder.ComputeBT",
+    },
+    {
+        "name": "Y_TaxWeighted",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "label (realized, #17 dollar-weighted)",
+        "description": (
+            "TaxValue at the FIRST step within the next 30 real days on which the oracle "
+            "fires, 0 if it never fires: the dollar-weighted harvest propensity — a "
+            "warm-start target for the v0.4 value function. Y_Persist (occupation given "
+            "a hit) is derived, not exported: Y_Soft_BT / 1[Y_Soft_BT > 0]."
+        ),
+        "encoding": "Non-negative continuous; 0 when the oracle never fires.",
+        "missing": "NaN when fewer than 30 trading days remain.",
+        "source": "SoftLabelBuilder.ComputeBT",
+    },
+    {
         "name": "Symbol",
         "dtype": "string",
         "units": "—",
@@ -421,7 +510,7 @@ COLUMNS: list[dict] = [
 #: Header order expected in data/lots.csv (must match SimulationExporter).
 EXPECTED_HEADER: list[str] = [c["name"] for c in COLUMNS]
 
-# The d = 19 numeric feature block, in schema order — derived, never restated.
+# The d = 23 numeric feature block, in schema order — derived, never restated.
 # Must equal C# FeatureLists.NumericFeatures (asserted by tests/test_codebook_schema.py).
 NUMERIC_FEATURES: list[str] = [
     c["name"] for c in COLUMNS

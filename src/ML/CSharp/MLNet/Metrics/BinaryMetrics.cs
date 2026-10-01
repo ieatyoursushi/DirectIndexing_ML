@@ -28,7 +28,14 @@ public class BinaryMetricsResult
     public int    TpBest, FpBest, TnBest, FnBest;
     public CurvePoint[] RocCurve { get; init; } = Array.Empty<CurvePoint>();
     public CurvePoint[] PrCurve  { get; init; } = Array.Empty<CurvePoint>();
+
+    /// <summary>Test metrics by σ̂_m tercile (v0.3-8); empty when the dataset has no SigmaMkt.</summary>
+    public IReadOnlyList<StratumMetrics> Strata { get; set; } = Array.Empty<StratumMetrics>();
 }
+
+/// <summary>One regime stratum: rows, positives, prevalence, and ROC/PR-AUC (null if a class is absent).</summary>
+public record StratumMetrics(string Stratum, double Lo, double Hi, int Rows, int Positives,
+                             double Prevalence, double? RocAuc, double? PrAuc);
 
 /// <summary>
 /// Compute the full evaluation bundle:
@@ -55,6 +62,41 @@ public static class BinaryMetrics
                 rows[i].Probability = rows[i].Score;
         }
         return Compute(rows);
+    }
+
+    /// <summary>
+    /// Test-set ROC/PR-AUC stratified by terciles of <paramref name="key"/> (σ̂_m: the market-vol
+    /// regime). <paramref name="key"/> is aligned with the scored rows (Transform preserves order).
+    /// Cutoffs are the TEST set's own terciles — a reporting stratification, not a feature.
+    /// Answers "is a gain concentrated in one regime?" (VolatilityModel_v03 §5–§6).
+    /// </summary>
+    // [math:strata] — DataMemo/spec/SymbolTable.md
+    public static IReadOnlyList<StratumMetrics> ByTercile(MLContext ml, IDataView scored, IReadOnlyList<float> key)
+    {
+        bool hasProb = scored.Schema.GetColumnOrNull("Probability") is not null;
+        var rows = ml.Data.CreateEnumerable<ScoredRow>(scored, reuseRowObject: false, ignoreMissingColumns: true).ToArray();
+        if (!hasProb) foreach (var r in rows) r.Probability = r.Score;
+        if (rows.Length != key.Count) throw new InvalidOperationException("strata key misaligned with scored rows");
+
+        var valid = key.Where(k => !float.IsNaN(k)).OrderBy(k => k).ToArray();
+        if (valid.Length < 30) return Array.Empty<StratumMetrics>();
+        double q1 = valid[valid.Length / 3], q2 = valid[2 * valid.Length / 3];
+        var bands = new (string Name, double Lo, double Hi)[]
+        {
+            ("low", valid[0], q1), ("mid", q1, q2), ("high", q2, valid[^1]),
+        };
+        var result = new List<StratumMetrics>();
+        for (int b = 0; b < 3; b++)
+        {
+            var sel = rows.Where((_, i) => !float.IsNaN(key[i]) &&
+                (b == 0 ? key[i] <= q1 : b == 1 ? key[i] > q1 && key[i] <= q2 : key[i] > q2)).ToList();
+            int pos = sel.Count(r => r.Label);
+            double? roc = null, pr = null;
+            if (pos > 0 && pos < sel.Count) { var m = Compute(sel); roc = m.RocAuc; pr = m.PrAuc; }
+            result.Add(new StratumMetrics(bands[b].Name, bands[b].Lo, bands[b].Hi, sel.Count, pos,
+                                          sel.Count > 0 ? (double)pos / sel.Count : 0, roc, pr));
+        }
+        return result;
     }
 
     // [math:pr_auc] [math:roc_auc] [math:f1] — DataMemo/spec/SymbolTable.md

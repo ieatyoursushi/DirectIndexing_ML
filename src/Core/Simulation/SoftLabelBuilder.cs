@@ -1,7 +1,12 @@
 using DirectIndexing.Core.Oracle;
 using DirectIndexing.Core.Portfolio;
 
+using DirectIndexing.Core.Simulation.Volatility;
+
 namespace DirectIndexing.Core.Simulation;
+
+/// <summary>Which model-based soft label fills Y_Soft_GBM (v0.3-9): constant-σ GBM paths or FHS paths.</summary>
+public enum SoftGbmMode { Gbm, Fhs }
 
 /// <summary>
 /// Second-pass labeller — fills Y_Soft_GBM and Y_Soft_BT on each LotStateVector
@@ -28,7 +33,7 @@ public sealed class SoftLabelBuilder
     private readonly PriceLoader  _prices;
     private readonly OracleConfig _oracle;
 
-    private const int Window    = 30;   // forward simulation window (trading days)
+    public  const int Window    = 30;   // forward simulation window (trading days) — T_fwd
     private const int VolWindow = 21;   // trailing days for σ estimate
 
     // Shared GbmSimulator instance — same Paths/Horizon as the old inline constants.
@@ -36,10 +41,16 @@ public sealed class SoftLabelBuilder
     // while each supplies its own thread-local Random instance.
     private static readonly GbmSimulator _gbm = new(paths: 200, horizon: Window);
 
-    public SoftLabelBuilder(PriceLoader prices, OracleConfig? oracleConfig = null)
+    private readonly FhsSimulator? _fhs;
+
+    /// <param name="softGbm">Gbm (default, byte-identical) or Fhs — filtered historical simulation
+    /// (DataMemo/decisions/VolatilityModel_v03.md §7); FHS falls back to GBM for a snapshot whose
+    /// name has no σ̂ forecast or fewer than 20 residuals yet.</param>
+    public SoftLabelBuilder(PriceLoader prices, OracleConfig? oracleConfig = null, SoftGbmMode softGbm = SoftGbmMode.Gbm)
     {
         _prices = prices;
         _oracle = oracleConfig ?? OracleConfig.Default;
+        if (softGbm == SoftGbmMode.Fhs) _fhs = new FhsSimulator(prices, paths: 200, horizon: Window);
     }
 
     // ── Public entry point ───────────────────────────────────────────────────
@@ -56,10 +67,13 @@ public sealed class SoftLabelBuilder
         Parallel.For(0, snapshots.Count, i =>
         {
             var snap = snapshots[i];
+            var (bt30, bt90, taxWeighted) = ComputeBT(snap);
             snapshots[i] = snap with
             {
-                Y_Soft_GBM = ComputeGBM(snap),
-                Y_Soft_BT  = ComputeBT(snap)
+                Y_Soft_GBM    = ComputeGBM(snap),
+                Y_Soft_BT     = bt30,
+                Y_Soft_BT_90  = bt90,
+                Y_TaxWeighted = taxWeighted,
             };
         });
 
@@ -78,14 +92,22 @@ public sealed class SoftLabelBuilder
     private int StepLabel(
         float price, int s, int calendarAhead,
         float costBasis, float shares, DateOnly purchaseDate, DateOnly stepDate, int initClock,
-        float sigmaTE, LedgerState frozenLedger)
+        float sigmaTE, LedgerState frozenLedger) =>
+        StepLabel(price, s, calendarAhead, costBasis, shares, purchaseDate, stepDate, initClock,
+                  sigmaTE, frozenLedger, out _);
+
+    /// <summary>The step label, also returning the step's TaxValue (for Y_TaxWeighted).</summary>
+    private int StepLabel(
+        float price, int s, int calendarAhead,
+        float costBasis, float shares, DateOnly purchaseDate, DateOnly stepDate, int initClock,
+        float sigmaTE, LedgerState frozenLedger, out decimal taxValue)
     {
         float ell = costBasis > 0f ? (price - costBasis) / costBasis : 0f;
 
         decimal lossDollars = ell < 0f
             ? (decimal)(costBasis - price) * (decimal)shares
             : 0m;
-        decimal taxValue = TaxLedger.ComputeTaxValue(
+        taxValue = TaxLedger.ComputeTaxValue(
             lossDollars, TaxLedger.IsLongTerm(purchaseDate, stepDate), frozenLedger);
 
         return OracleBoundary.Label(
@@ -127,26 +149,47 @@ public sealed class SoftLabelBuilder
         foreach (char c in snap.Symbol) seed = unchecked(seed * 31 + c);
         var rng = new Random(seed);
 
+        bool Fires(float price, int s) =>
+            StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, purchase,
+                      t0Date.AddDays(CalendarDaysAhead(snap.Timestep, s)), initClock,
+                      sigmaTE, frozenLedger) == 1;
+
+        if (_fhs is not null)
+        {
+            float f = _fhs.FractionFiring(snap.Symbol, snap.Timestep, currentClose, Fires, rng);
+            if (!float.IsNaN(f)) return f;
+            rng = new Random(seed);   // fallback path: same draws as the GBM arm
+        }
+
         return _gbm.FractionFiring(
             startPrice:  currentClose,
             annualSigma: annualSigma,
-            firesOnStep: (price, s) =>
-                StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, purchase,
-                          t0Date.AddDays(CalendarDaysAhead(snap.Timestep, s)), initClock,
-                          sigmaTE, frozenLedger) == 1,
+            firesOnStep: Fires,
             rng: rng);
     }
 
     // ── Backtesting soft label ────────────────────────────────────────────────
 
+    /// <summary>Long-horizon variant of the backtest label (#17): 90 trading days.</summary>
+    public const int WindowLong = 90;
+
+    /// <summary>
+    /// The realized-path label family, one walk forward on the actual prices:
+    ///   Y_Soft_BT     — occupation fraction of the next 30 days (NaN if t+30 ≥ T);
+    ///   Y_Soft_BT_90  — the same over 90 days (NaN if t+90 ≥ T); 1[·&gt;0] is the 90-day hit;
+    ///   Y_TaxWeighted — TaxValue at the FIRST firing step within 30 days, 0 if none (NaN if t+30 ≥ T):
+    ///                   the dollar-weighted propensity, a warm start for the v0.4 value function.
+    /// Y_Persist (occupation given a hit) is derived, not exported: Y_Soft_BT / 1[Y_Soft_BT &gt; 0].
+    /// </summary>
     // [math:y_soft_bt] — DataMemo/spec/SymbolTable.md
-    private float ComputeBT(LotStateVector snap)
+    private (float Bt30, float Bt90, float TaxWeighted) ComputeBT(LotStateVector snap)
     {
         int t0   = snap.Timestep;
         int tMax = _prices.DayCount;
 
-        // Not enough forward data — return NaN (will be excluded from training)
-        if (t0 + Window >= tMax) return float.NaN;
+        // Not enough forward data — NaN (excluded from training)
+        if (t0 + Window >= tMax) return (float.NaN, float.NaN, float.NaN);
+        bool long90 = t0 + WindowLong < tMax;
 
         float   sigmaTE   = snap.Sigma_TE;
         int     initClock = snap.WashClock;
@@ -156,9 +199,12 @@ public sealed class SoftLabelBuilder
         var     t0Date    = _prices.GetDate(snap.Timestep);
         var frozenLedger = snap.Ledger;
 
-        int oracleDays = 0;
+        int days30 = 0, days90 = 0;
+        float taxWeighted = 0f;
+        bool fired = false;
+        int horizon = long90 ? WindowLong : Window;
 
-        for (int s = 1; s <= Window; s++)
+        for (int s = 1; s <= horizon; s++)
         {
             int t = t0 + s;
             if (!_prices.HasData(snap.Symbol, t)) continue;
@@ -167,11 +213,18 @@ public sealed class SoftLabelBuilder
 
             if (StepLabel(price, s, CalendarDaysAhead(t0, s), costBasis, shares, purchase,
                           t0Date.AddDays(CalendarDaysAhead(t0, s)), initClock,
-                          sigmaTE, frozenLedger) == 1)
-                oracleDays++;
+                          sigmaTE, frozenLedger, out decimal tv) == 1)
+            {
+                days90++;
+                if (s <= Window)
+                {
+                    days30++;
+                    if (!fired) { fired = true; taxWeighted = (float)tv; }
+                }
+            }
         }
 
-        return (float)oracleDays / Window;
+        return ((float)days30 / Window, long90 ? (float)days90 / WindowLong : float.NaN, taxWeighted);
     }
 
     /// <summary>

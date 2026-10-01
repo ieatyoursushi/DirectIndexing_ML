@@ -7,18 +7,31 @@ namespace DirectIndexing.ML.MLNet.Schema;
 /// </summary>
 public static class FeatureLists
 {
-    // Schema v5 (v0.3-3): d = 19 numeric features. The ledger is exported by character
-    // (NetST, NetLT, CarryST, CarryLT) + the derived OrdinaryOffsetBudget, replacing
-    // v4's blended RealizedGainsYTD / LossCarryforward. v4 had dropped the retired
-    // Y_Oracle_GatedSpec label; v3 (v0.25) had moved G_YTD → TaxLedger, TaxAlpha → TaxValue.
-    public static readonly string[] NumericFeatures =
+    // Schema v6 (v0.3-8): d = 23 — + SigmaHat, SigmaMkt (asset block) and ZBarrier, PBarrier
+    // (derived block), the σ̂ feature role of DataMemo/decisions/VolatilityModel_v03.md §6.
+    // Schema v5 (v0.3-3): the ledger by character (NetST, NetLT, CarryST, CarryLT,
+    // OrdinaryOffsetBudget). v4 dropped Y_Oracle_GatedSpec; v3 (v0.25) G_YTD → TaxLedger.
+    public static readonly string[] AllNumericFeatures =
     {
         "L", "H", "S", "B", "W", "K",
         "NetST", "NetLT", "CarryST", "CarryLT", "OrdinaryOffsetBudget",
         "Sigma_TE", "WashClock",
-        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
-        "TaxValue", "DaysToYE",
+        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200", "SigmaHat", "SigmaMkt",
+        "TaxValue", "DaysToYE", "ZBarrier", "PBarrier",
     };
+
+    /// <summary>The σ̂ feature role (v0.3-8) — dropped as a block by <c>--features=no-vol</c>.</summary>
+    public static readonly string[] VolFeatures = { "SigmaHat", "SigmaMkt", "ZBarrier", "PBarrier" };
+
+    /// <summary>Process-wide ablation switch, set once by Program.cs (like SplitPolicy).</summary>
+    public static bool ExcludeVolFeatures { get; set; } = false;
+
+    /// <summary>Artifact-directory suffix for the ablation arm.</summary>
+    public static string ArtifactTag => ExcludeVolFeatures ? "-novol" : "";
+
+    /// <summary>The numeric features the trainers use: the schema, minus any ablated block.</summary>
+    public static string[] NumericFeatures =>
+        ExcludeVolFeatures ? AllNumericFeatures.Except(VolFeatures).ToArray() : AllNumericFeatures;
 
     public static readonly string[] CategoricalFeatures = { "Sector" };
 
@@ -43,6 +56,6 @@ public static class FeatureLists
     public const string TargetUtility = "Y_Utility";
 
     /// <summary>Feature set for the Y_TaxValue regression: everything except TaxValue.</summary>
-    public static readonly string[] NumericFeaturesTaxValueRegression =
+    public static string[] NumericFeaturesTaxValueRegression =>
         NumericFeatures.Where(f => f != "TaxValue").ToArray();
 }

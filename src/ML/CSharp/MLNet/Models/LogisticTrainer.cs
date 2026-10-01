@@ -107,6 +107,7 @@ public static class LogisticTrainer
         var scored = model.Transform(testView);
 
         var metrics = BinaryMetrics.Compute(ml, scored);
+        metrics.Strata = BinaryMetrics.ByTercile(ml, scored, test.Select(r => r.SigmaMkt).ToList());
 
         // Extract per-feature coefficients from the trained LR predictor.
         var coefficients = ExtractCoefficients(model);
@@ -156,6 +157,10 @@ public static class LogisticTrainer
             "soft_bt" => (
                 data.Where(r => !float.IsNaN(r.Y_Soft_BT)).ToList(),
                 r => r.Y_Soft_BT > 0f),
+
+            "soft_bt_90" => (
+                data.Where(r => !float.IsNaN(r.Y_Soft_BT_90)).ToList(),
+                r => r.Y_Soft_BT_90 > 0f),
 
             _ => throw new ArgumentException($"unknown target '{target}'"),
         };

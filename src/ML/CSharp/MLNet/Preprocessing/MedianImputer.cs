@@ -25,7 +25,7 @@ public static class MedianImputer
     {
         "L", "B", "W",
         "NetST", "NetLT", "CarryST", "CarryLT", "OrdinaryOffsetBudget", "Sigma_TE",
-        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
+        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200", "SigmaHat", "SigmaMkt", "ZBarrier", "PBarrier",
         "TaxValue",
     };
 
@@ -86,6 +86,10 @@ public static class MedianImputer
                 SigmaRange = ImputeFloat(r.SigmaRange, medians["SigmaRange"]),
                 DeltaMA50  = ImputeFloat(r.DeltaMA50,  medians["DeltaMA50"]),
                 DeltaMA200 = ImputeFloat(r.DeltaMA200, medians["DeltaMA200"]),
+                SigmaHat   = ImputeFloat(r.SigmaHat,   medians["SigmaHat"]),
+                SigmaMkt   = ImputeFloat(r.SigmaMkt,   medians["SigmaMkt"]),
+                ZBarrier   = ImputeFloat(r.ZBarrier,   medians["ZBarrier"]),
+                PBarrier   = ImputeFloat(r.PBarrier,   medians["PBarrier"]),
                 TaxValue   = ImputeFloat(r.TaxValue,   medians["TaxValue"]),
 
                 H          = r.H,
@@ -121,6 +125,10 @@ public static class MedianImputer
         "SigmaRange" => r.SigmaRange,
         "DeltaMA50"  => r.DeltaMA50,
         "DeltaMA200" => r.DeltaMA200,
+        "SigmaHat"   => r.SigmaHat,
+        "SigmaMkt"   => r.SigmaMkt,
+        "ZBarrier"   => r.ZBarrier,
+        "PBarrier"   => r.PBarrier,
         "TaxValue"   => r.TaxValue,
         _ => throw new ArgumentException($"unknown float feature '{col}'"),
     };

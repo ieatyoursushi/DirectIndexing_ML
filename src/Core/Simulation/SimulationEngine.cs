@@ -1,3 +1,5 @@
+using DirectIndexing.Core.Policy;
+using DirectIndexing.Core.Simulation.Volatility;
 using DirectIndexing.Core.Simulation.Covariance;
 using DirectIndexing.Core.Oracle;
 using DirectIndexing.Core.Portfolio;
@@ -26,6 +28,17 @@ public sealed class SimulationEngine
     private readonly OracleConfig        _oracle;
     private readonly ContributionPolicy  _contrib;
     private readonly TrimPolicy          _trim;
+    private readonly VolState            _vol;
+    private readonly IHarvestPolicy      _policy;
+
+    // ── RunMetrics accumulators (v0.3-11) ─────────────────────────────────────
+    private decimal _benefitUsedNow, _benefitBanked, _gainTaxCost, _sumTradeW;
+    private decimal _tradedDollars, _rollTrueUp;
+    private decimal _cash;   // uninvested proceeds (share rounding, unpriced reopen days, unspent trim proceeds)
+    private int     _lossSales, _gainSales, _days;
+    private double  _sumTeExAnte;
+    private readonly List<double> _activeReturns = new();
+    private Dictionary<string, decimal>? _prevCloses;
 
     // ── Initial book value — the base for the exogenous contribution schedule ──
     private decimal _initialValue;
@@ -57,7 +70,8 @@ public sealed class SimulationEngine
         OracleConfig? oracleConfig = null,
         ContributionPolicy? contributionPolicy = null,
         TrimPolicy? trimPolicy = null,
-        RiskModel? riskModel = null)
+        RiskModel? riskModel = null,
+        IHarvestPolicy? policy = null)
     {
         _prices  = prices;
         var risk = riskModel ?? RiskModel.Default;
@@ -66,6 +80,8 @@ public sealed class SimulationEngine
         _state   = new PortfolioState { ReharvestGuard = _oracle.ReharvestGuard };
         _contrib = contributionPolicy ?? ContributionPolicy.Off;
         _trim    = trimPolicy ?? TrimPolicy.Off;
+        _vol     = new VolState(prices);   // EWMA σ̂ paths, 𝓕_t (v0.3-8)
+        _policy  = policy ?? new OraclePolicy();
     }
     // ── Public entry point ───────────────────────────────────────────────────
 
@@ -114,6 +130,7 @@ public sealed class SimulationEngine
         // σ_TE = √(252 δwᵀ Σ̂_t δw) — Σ̂_t point-in-time by default (v0.3-6, F1); the quadratic form
         // avoids the structural jumps a return-based estimate shows at harvest/reopen events
         float sigmaTE = _te.Update(t, _state.OpenLots, closes);
+        AccumulateRisk(t, closes, sigmaTE);
 
         // Extract snapshot + oracle for every open lot (iterate over copy; harvests mutate list)
         foreach (var lot in _state.OpenLots.ToList())
@@ -123,7 +140,8 @@ public sealed class SimulationEngine
             var snap = ExtractSnapshot(lot, t, close, portValue, sigmaTE);
             _snapshots.Add(snap);
 
-            if (snap.Y_Oracle == 1)
+            // labels describe the oracle f*; the POLICY decides the action (v0.3-11 seam)
+            if (_policy.ShouldHarvest(snap))
                 Harvest(lot, close, t, portValue);
         }
 
@@ -133,7 +151,7 @@ public sealed class SimulationEngine
         {
             foreach (var (sym, sector, dollars) in toReopen)
             {
-                if (!closes.TryGetValue(sym, out decimal price) || price <= 0m) continue;
+                if (!closes.TryGetValue(sym, out decimal price) || price <= 0m) { _cash += dollars; continue; }
 
                 // §1091 after-side re-check (v0.3-1): the ticker may have been loss-sold
                 // AGAIN while this reopen was pending — including earlier today, since the
@@ -142,16 +160,14 @@ public sealed class SimulationEngine
                 if (!_state.CanBuy(sym))
                 {
                     int retry = _prices.FirstIndexOnOrAfter(_state.EarliestBuyDate(sym));
-                    if (retry < _prices.DayCount)
-                    {
-                        if (!_reopenQueue.TryGetValue(retry, out var deferred))
-                            _reopenQueue[retry] = deferred = new();
-                        deferred.Add((sym, sector, dollars));
-                    }
+                    if (!_reopenQueue.TryGetValue(retry, out var deferred))
+                        _reopenQueue[retry] = deferred = new();
+                    deferred.Add((sym, sector, dollars));
                     continue;
                 }
 
                 int shares = (int)(dollars / price);
+                _cash += dollars - shares * price;       // whole shares only; the remainder stays cash
                 if (shares == 0) continue;
                 var lot = new Lot(sym, sector, price, shares, t, today);
                 _state.OpenLot(lot);
@@ -170,7 +186,9 @@ public sealed class SimulationEngine
         var tomorrow = t + 1 < _prices.DayCount ? _prices.GetDate(t + 1) : today.AddDays(1);
         if (tomorrow.Year != today.Year)
         {
+            decimal wBeforeRoll = _state.Ledger.TaxPosition;
             _state.ResetForNewYear();
+            _rollTrueUp += _state.Ledger.TaxPosition - wBeforeRoll;   // banked carry → next year's $3k line
             Console.WriteLine($"  [Engine] Year-end reset — carryforward = {_state.Ledger.LossCarryforward:C0}");
         }
     }
@@ -192,6 +210,10 @@ public sealed class SimulationEngine
         decimal lossDollars = unrealized < 0m ? (lot.CostBasis - close) * lot.Shares : 0m;
         bool    longTerm    = lot.IsLongTerm(date);
         decimal taxValue    = _state.Ledger.ComputeTaxValue(lossDollars, longTerm);
+
+        // barrier coordinate (v0.3-8): log-distance to the loss trigger in forecast σ over T_fwd
+        double z = LossBarrier.Z(LossBarrier.Distance((double)close, (double)lot.CostBasis, (double)_oracle.LossThreshold),
+                             _vol.HorizonVariance(lot.Symbol, t, SoftLabelBuilder.Window));
 
         var snap = new LotStateVector
         {
@@ -219,10 +241,14 @@ public sealed class SimulationEngine
             SigmaRange = _prices.RangeVol(lot.Symbol, t),
             DeltaMA50  = _prices.DeviationFromMA(lot.Symbol, t, 50),
             DeltaMA200 = _prices.DeviationFromMA(lot.Symbol, t, 200),
+            SigmaHat   = _vol.SigmaHat(lot.Symbol, t),
+            SigmaMkt   = _vol.SigmaMkt(t),
 
             // Derived
             TaxValue   = (float)taxValue,
             DaysToYE   = daysToYE,
+            ZBarrier   = (float)z,
+            PBarrier   = (float)LossBarrier.TouchProbability(z),
 
             // Labels (soft labels filled in second pass by SoftLabelBuilder)
             Y_Oracle   = 0,
@@ -252,7 +278,7 @@ public sealed class SimulationEngine
 
         _trades.Add(new TradeEvent(_prices.GetDate(t), t, lot.Symbol, TradeKind.Sell, lot, close,
                                    (close - lot.CostBasis) * lot.Shares));
-        _state.HarvestLot(lot, close);
+        RealizeWithAccounting(lot, close);
 
         _lotCount[lot.Symbol] = Math.Max(0, lotsBefore - 1);
 
@@ -260,12 +286,11 @@ public sealed class SimulationEngine
         // days after the sale (§1091's window is inclusive: day +30 is still inside it).
         int reopenDay = _prices.FirstIndexOnOrAfter(
             _prices.GetDate(t).AddDays(PortfolioState.WashWindowDays + 1));
-        if (reopenDay < _prices.DayCount)
-        {
-            if (!_reopenQueue.TryGetValue(reopenDay, out var list))
-                _reopenQueue[reopenDay] = list = new();
-            list.Add((lot.Symbol, lot.Sector, dollars));
-        }
+        // queued even past the last day: the proceeds are still the client's cash
+        // (RunMetrics counts them as PendingReopenCash) — never silently dropped
+        if (!_reopenQueue.TryGetValue(reopenDay, out var list))
+            _reopenQueue[reopenDay] = list = new();
+        list.Add((lot.Symbol, lot.Sector, dollars));
     }
 
     // ── Private: contributions (v0.3 P0 — the cost-basis-aging fix) ───────────
@@ -387,7 +412,7 @@ public sealed class SimulationEngine
                 if (value > excess) continue;          // whole lots only; never overshoot the target
                 decimal gain = (close - lot.CostBasis) * lot.Shares;
                 _trades.Add(new TradeEvent(date, t, symbol, TradeKind.Sell, lot, close, gain));
-                _state.HarvestLot(lot, close);         // realizes into the ledger; a gain opens no window
+                RealizeWithAccounting(lot, close);     // realizes into the ledger; a gain opens no window
                 _lotCount[symbol] = Math.Max(0, _lotCount.GetValueOrDefault(symbol, 1) - 1);
                 excess        -= value;
                 proceeds      += value;
@@ -399,8 +424,106 @@ public sealed class SimulationEngine
         if (proceeds <= 0m) return;
 
         int minted = 0;
-        BuyUnderweight(t, closes, portValue, proceeds, _trim.NamesPerTrim,
-                       skipHarvestable: true, exclude: trimmed, ref minted);
+        _cash += proceeds - BuyUnderweight(t, closes, portValue, proceeds, _trim.NamesPerTrim,
+                                           skipHarvestable: true, exclude: trimmed, ref minted);
+    }
+
+    /// <summary>
+    /// Every sale goes through here: realize into the ledger and book ΔW_tax, split for losses
+    /// into this-year tax saved (−ΔT) and newly banked carryforward value (τ_f·δ·ΔΣC').
+    /// </summary>
+    private void RealizeWithAccounting(Lot lot, decimal close)
+    {
+        decimal gain = (close - lot.CostBasis) * lot.Shares;
+        var before = _state.Ledger.State.Close();
+        decimal w0 = _state.Ledger.TaxPosition;
+        _state.HarvestLot(lot, close);
+        var after = _state.Ledger.State.Close();
+        decimal dW = _state.Ledger.TaxPosition - w0;
+        _sumTradeW     += dW;
+        _tradedDollars += lot.Shares * close;
+        if (gain < 0m)
+        {
+            _lossSales++;
+            _benefitUsedNow += before.Tax - after.Tax;
+            _benefitBanked  += TaxLedger.TauFuture * TaxLedger.CarryforwardDiscount *
+                               ((after.CarryShortTerm + after.CarryLongTerm) - (before.CarryShortTerm + before.CarryLongTerm));
+        }
+        else
+        {
+            _gainSales++;
+            _gainTaxCost -= dW;
+        }
+    }
+
+    /// <summary>
+    /// Ex-ante σ_TE (sum) and the realized active return of the book held INTO today (lots open
+    /// at both closes, before today's trades) vs the equal-weight priced universe.
+    /// </summary>
+    private void AccumulateRisk(int t, Dictionary<string, decimal> closes, float sigmaTE)
+    {
+        _days++;
+        _sumTeExAnte += sigmaTE;
+        if (_prevCloses is not null)
+        {
+            decimal v0 = 0m, v1 = 0m;
+            foreach (var lot in _state.OpenLots)
+                if (_prevCloses.TryGetValue(lot.Symbol, out var p0) && closes.TryGetValue(lot.Symbol, out var p1))
+                { v0 += lot.Shares * p0; v1 += lot.Shares * p1; }
+            double sum = 0; int n = 0;
+            foreach (var sym in closes.Keys)
+            {
+                float r = _prices.DailyReturn(sym, t);
+                if (!float.IsNaN(r)) { sum += r; n++; }
+            }
+            if (v0 > 0m && n > 0) _activeReturns.Add((double)(v1 / v0 - 1m) - sum / n);
+        }
+        _prevCloses = closes;
+    }
+
+    /// <summary>
+    /// The scoreboard of one run (v0.3-11; DataMemo/decisions/PolicyLayer_v04.md §6). Call after
+    /// <see cref="Run"/>. Wealth is holdings + cash awaiting its §1091 reopen; after-tax wealth adds
+    /// the tax-position potential W_tax; liquidation value additionally closes every open lot
+    /// through Schedule D (TLH defers tax — this is the honest terminal number).
+    /// </summary>
+    // [math:run_metrics] — DataMemo/spec/SymbolTable.md
+    public RunMetrics Metrics()
+    {
+        int tEnd = _prices.DayCount - 1;
+        var closes = _prices.GetClosesDecimal(tEnd);
+        decimal holdings = 0m;
+        var liquidation = _state.Ledger.State;
+        var date = _prices.GetDate(tEnd);
+        foreach (var lot in _state.OpenLots)
+            if (closes.TryGetValue(lot.Symbol, out var px))
+            {
+                holdings += lot.Shares * px;
+                liquidation = liquidation.With((px - lot.CostBasis) * lot.Shares, lot.IsLongTerm(date));
+            }
+        decimal pending = _reopenQueue.Where(kv => kv.Key > tEnd).Sum(kv => kv.Value.Sum(x => x.Dollars));
+        decimal w = _state.Ledger.TaxPosition;
+        var lc = liquidation.Close();
+        decimal wLiq = -_state.Ledger.TaxPaid - lc.Tax
+                     + TaxLedger.TauFuture * TaxLedger.CarryforwardDiscount * (lc.CarryShortTerm + lc.CarryLongTerm);
+        double years = Math.Max(_days, 1) / 252.0;
+        double mean  = _activeReturns.Count > 0 ? _activeReturns.Average() : 0;
+        double te    = _activeReturns.Count > 1
+            ? Math.Sqrt(_activeReturns.Sum(x => (x - mean) * (x - mean)) / (_activeReturns.Count - 1) * 252) : 0;
+        int violations = WashSaleAudit.Violations(_trades).Count;
+        return new RunMetrics(
+            Policy: _policy.Name, Days: _days,
+            InitialValue: _initialValue, Contributions: _contributedTotal,
+            TerminalHoldings: holdings, PendingReopenCash: pending, Cash: _cash,
+            TaxPosition: w, AfterTaxWealth: holdings + pending + _cash + w,
+            LiquidationValue: holdings + pending + _cash + wLiq,
+            LossSales: _lossSales, GainSales: _gainSales,
+            BenefitUsedNow: _benefitUsedNow, BenefitBanked: _benefitBanked, GainTaxCost: _gainTaxCost,
+            SumTradeDeltaW: _sumTradeW, RollTrueUp: _rollTrueUp,
+            ExAnteTeMean: _days > 0 ? _sumTeExAnte / _days : 0, RealizedTe: te,
+            AnnualTurnover: _initialValue > 0 ? (double)(_tradedDollars / _initialValue) / years : 0,
+            TradingCosts: _oracle.CTrade * _lossSales,
+            WashViolations: violations);
     }
 
     private bool HasHarvestableLot(string symbol, decimal close) =>
