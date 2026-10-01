@@ -80,17 +80,17 @@ public class TaxLedgerTests
         ledger.RecordExternalGains(10_000m);         // capacity = 10k + 3k = 13k
 
         // Small short-term loss, fully within capacity: τ_short · loss
-        decimal small = ledger.ComputeTaxValue(lossDollars: 1_000m, holdingDays: 100);
+        decimal small = ledger.ComputeTaxValue(lossDollars: 1_000m, isLongTerm: false);
         Debug.Assert(small == 0.37m * 1_000m,
             $"Expected 370, got {small}");
 
         // Same loss held long-term: τ_long · loss
-        decimal smallLT = ledger.ComputeTaxValue(lossDollars: 1_000m, holdingDays: 400);
+        decimal smallLT = ledger.ComputeTaxValue(lossDollars: 1_000m, isLongTerm: true);
         Debug.Assert(smallLT == 0.20m * 1_000m,
             $"Expected 200, got {smallLT}");
 
         // Loss exceeding capacity: full rate on 13k, discounted future rate on the rest
-        decimal big      = ledger.ComputeTaxValue(lossDollars: 20_000m, holdingDays: 100);
+        decimal big      = ledger.ComputeTaxValue(lossDollars: 20_000m, isLongTerm: false);
         decimal expected = 0.37m * 13_000m
                          + TaxLedger.TauFuture * 7_000m * TaxLedger.CarryforwardDiscount;
         Debug.Assert(big == expected,
@@ -101,8 +101,8 @@ public class TaxLedgerTests
             "Discounted future rate must be below the long-term rate");
 
         // A lot not at a loss has no harvestable tax value
-        Debug.Assert(ledger.ComputeTaxValue(0m, 100) == 0m, "No loss → taxValue 0");
-        Debug.Assert(ledger.ComputeTaxValue(-5m, 100) == 0m, "Negative input → taxValue 0");
+        Debug.Assert(ledger.ComputeTaxValue(0m, false) == 0m, "No loss → taxValue 0");
+        Debug.Assert(ledger.ComputeTaxValue(-5m, false) == 0m, "Negative input → taxValue 0");
 
         Console.WriteLine("TaxLedger Test 4 passed: taxValue splits at capacity with correct rates");
     }
@@ -127,5 +127,21 @@ public class TaxLedgerTests
             "Net-positive year must not create carryforward");
 
         Console.WriteLine("TaxLedger Test 5 passed: PortfolioState routes P&L through the ledger");
+    }
+
+    // Test 6: §1222 holding period on the CALENDAR — "more than one year", counted from the
+    // day after acquisition: a sale on the anniversary is short-term, the next day long-term.
+    // A Feb-29 purchase's anniversary is Feb 28 (Rev. Rul. 66-7 month counting), so LT from Mar 1.
+    public void Test_IsLongTerm_CalendarEdges()
+    {
+        var buy = new DateOnly(2024, 1, 15);
+        Debug.Assert(!TaxLedger.IsLongTerm(buy, new DateOnly(2025, 1, 15)), "anniversary is still short-term");
+        Debug.Assert( TaxLedger.IsLongTerm(buy, new DateOnly(2025, 1, 16)), "day after anniversary is long-term");
+        var leap = new DateOnly(2024, 2, 29);
+        Debug.Assert(!TaxLedger.IsLongTerm(leap, new DateOnly(2025, 2, 28)), "Feb-29 lot: Feb 28 is the anniversary");
+        Debug.Assert( TaxLedger.IsLongTerm(leap, new DateOnly(2025, 3, 1)),  "Feb-29 lot: long-term from Mar 1");
+        // the v0.2 bug: 365 TRADING days ≈ 1.45 calendar years — a lot ~13 months old is long-term now
+        Debug.Assert( TaxLedger.IsLongTerm(buy, buy.AddDays(400)), "400 calendar days is long-term");
+        Console.WriteLine("TaxLedger Test 6 passed: §1222 calendar edges (anniversary, leap day)");
     }
 }

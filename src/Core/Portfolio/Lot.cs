@@ -37,13 +37,13 @@ public class Lot
     public decimal UnrealizedReturn(decimal currentPrice) =>
         (currentPrice - CostBasis) / CostBasis;
 
-    // h = t − s_k  ∈ ℤ_{≥0}
+    // h = t − s_k  ∈ ℤ_{≥0}  in TRADING days (a feature/age coordinate — NOT the §1222
+    // holding period, which is calendar-based: IsLongTerm below)
     // [math:holding_period] — DataMemo/spec/SymbolTable.md
     public int HoldingPeriod(int currentDay) =>
         currentDay - PurchaseDayIndex;
 
-    // s = 𝟙[h ≥ 365]  ∈ {0, 1}
-    // [math:lt_flag] — DataMemo/spec/SymbolTable.md
-    public bool IsLongTerm(int currentDay) =>
-        HoldingPeriod(currentDay) >= 365;
+    // s = 𝟙[date > purchase date + 1 calendar year]  ∈ {0, 1}  (§1222, see TaxLedger.IsLongTerm)
+    public bool IsLongTerm(DateOnly today) =>
+        TaxLedger.IsLongTerm(PurchaseDate, today);
 }

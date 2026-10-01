@@ -337,6 +337,7 @@ switch (mode)
         ledgerTests.Test_OffsetBudget_And_Capacity_DrawDown();
         ledgerTests.Test_ComputeTaxValue_CapacitySplit_And_Rates();
         ledgerTests.Test_PortfolioState_RoutesThroughLedger();
+        ledgerTests.Test_IsLongTerm_CalendarEdges();
 
         var scalarizedTests = new OracleScalarizedTests();
         scalarizedTests.Test_Fires_WithoutRealizedGains();

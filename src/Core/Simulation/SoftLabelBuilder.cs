@@ -11,7 +11,8 @@ namespace DirectIndexing.Core.Simulation;
 ///   - The TaxLedger scalars (RealizedGainsYTD and the derived offsetCapacity)
 ///     and Sigma_TE are held constant (from the snapshot fields).
 ///   - The wash-sale clock advances by the number of days into the window.
-///   - The holding period advances with it (τ(h) can flip short→long mid-window).
+///   - The §1222 holding period is evaluated on the step's CALENDAR date, so τ can
+///     flip short→long mid-window (TaxLedger.IsLongTerm).
 ///   - The cost basis p_k and share count q_k are held constant, so the loss is
 ///     re-dollarized at each forward price for the scalarized taxValue term.
 ///
@@ -76,7 +77,7 @@ public sealed class SoftLabelBuilder
     // [math:soft_step] — DataMemo/spec/SymbolTable.md
     private int StepLabel(
         float price, int s, int calendarAhead,
-        float costBasis, float shares, int holdingDays0, int initClock,
+        float costBasis, float shares, DateOnly purchaseDate, DateOnly stepDate, int initClock,
         float sigmaTE, decimal frozenCapacity)
     {
         float ell = costBasis > 0f ? (price - costBasis) / costBasis : 0f;
@@ -85,7 +86,7 @@ public sealed class SoftLabelBuilder
             ? (decimal)(costBasis - price) * (decimal)shares
             : 0m;
         decimal taxValue = TaxLedger.ComputeTaxValue(
-            lossDollars, holdingDays0 + s, frozenCapacity);
+            lossDollars, TaxLedger.IsLongTerm(purchaseDate, stepDate), frozenCapacity);
 
         return OracleBoundary.Label(
             unrealizedReturn: (decimal)ell,
@@ -114,7 +115,8 @@ public sealed class SoftLabelBuilder
         int     initClock = snap.WashClock;
         float   costBasis = snap.B;
         float   shares    = snap.Shares;
-        int     h0        = snap.H;
+        var     purchase  = DateOnly.FromDayNumber(snap.PurchaseDayNumber);
+        var     t0Date    = _prices.GetDate(snap.Timestep);
         decimal frozenCap = (decimal)Math.Max(snap.RealizedGainsYTD, 0f)
                           + (decimal)snap.OrdinaryOffsetBudget;
 
@@ -130,7 +132,8 @@ public sealed class SoftLabelBuilder
             startPrice:  currentClose,
             annualSigma: annualSigma,
             firesOnStep: (price, s) =>
-                StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, h0, initClock,
+                StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, purchase,
+                          t0Date.AddDays(CalendarDaysAhead(snap.Timestep, s)), initClock,
                           sigmaTE, frozenCap) == 1,
             rng: rng);
     }
@@ -150,7 +153,8 @@ public sealed class SoftLabelBuilder
         int     initClock = snap.WashClock;
         float   costBasis = snap.B;
         float   shares    = snap.Shares;
-        int     h0        = snap.H;
+        var     purchase  = DateOnly.FromDayNumber(snap.PurchaseDayNumber);
+        var     t0Date    = _prices.GetDate(snap.Timestep);
         decimal frozenCap = (decimal)Math.Max(snap.RealizedGainsYTD, 0f)
                           + (decimal)snap.OrdinaryOffsetBudget;
 
@@ -163,7 +167,8 @@ public sealed class SoftLabelBuilder
 
             float price = _prices.GetClose(snap.Symbol, t);
 
-            if (StepLabel(price, s, CalendarDaysAhead(t0, s), costBasis, shares, h0, initClock,
+            if (StepLabel(price, s, CalendarDaysAhead(t0, s), costBasis, shares, purchase,
+                          t0Date.AddDays(CalendarDaysAhead(t0, s)), initClock,
                           sigmaTE, frozenCap) == 1)
                 oracleDays++;
         }

@@ -32,8 +32,8 @@ Derivation links point into the spec docs. [MLD] = [`MLDerivations.md`](MLDeriva
 - *Units* are part of the type: `$` (US dollars), `d_trd` (trading days), `d_cal` (calendar days), `ann.` (annualized). A value is dimensionless unless a unit is stated.
 
 Known bugs are **type errors in exactly this sense**. F7 (the one-sided, trading-day wash
-window) was fixed in v0.3-1. F6 (the trading-day holding period vs a calendar threshold) is
-flagged in its row and fixed in v0.3-2.
+window) was fixed in v0.3-1; F6 (the trading-day holding period vs a calendar threshold)
+was fixed in v0.3-2.
 
 ---
 
@@ -42,8 +42,8 @@ flagged in its row and fixed in v0.3-2.
 | id | symbol | type | definition | code | test | derivation | since |
 |---|---|---|---|---|---|---|---|
 | `lot` | $\mathrm{Lot}_k \equiv q_k\,\delta_{(p_k,s_k)}$ | atom of a measure on $\mathbb R_{>0}\times\mathbb Z_{\ge0}$: shares $q_k\in\mathbb Z_{>0}$, basis $p_k\in\mathbb R_{>0}$ ($/sh), purchase day $s_k\in\mathbb Z_{\ge0}$ (d_trd) and purchase **date** $\mathrm{date}(s_k)$ (the unit §1091/§1222 are measured in) | one tax lot as a Dirac atom of the per-asset lot measure $\mu_t^{A_i}$ | `Lot.UnrealizedReturn; Lot.PurchaseDate` | `PortfolioStateTests.Test_HarvestLoss_DecreasesRealizedGains` | [PM] §1 | v0.3-1 |
-| `holding_period` | $h_k=t-s_k$ | $\mathbb Z_{\ge0}$, **d_trd** | days the lot has been held, counted on the trading calendar | `Lot.HoldingPeriod` | — | [MLD] §1.2 | v0.1 |
-| `lt_flag` | $\mathbf 1_{\mathrm{LT}}(h)$ | $\{0,1\}$ | long-term flag, currently $\mathbf 1[h_k\ge365]$. ⚠ **F6 type error:** $h_k$ is in d_trd but 365 is a d_cal threshold, so this is ≈1.45 calendar years. The law (§1222) is `date(t) > date(s_k)+1yr`; fixed in v0.3-2 | `Lot.IsLongTerm` | — | [MLD] §1.2 | v0.1 |
+| `holding_period` | $h_k=t-s_k$ | $\mathbb Z_{\ge0}$, **d_trd** | lot age counted on the trading calendar — a feature coordinate only; the tax character uses `lt_flag` (calendar) | `Lot.HoldingPeriod` | — | [MLD] §1.2 | v0.1 |
+| `lt_flag` | $\mathbf 1_{\mathrm{LT}}(t,k)=\mathbf 1[\mathrm{date}(t)>\mathrm{date}(s_k)+1\,\mathrm{yr}]$ | $\{0,1\}$ | §1222 "held more than one year" on the **calendar** (holding period starts the day after acquisition, so the anniversary is still short-term; a Feb-29 lot's anniversary is Feb 28). v0.3-2 fixed F6 (was $\mathbf 1[h_k\ge365]$ with $h_k$ in d_trd ≈ 1.45 yr) | `TaxLedger.IsLongTerm`, `Lot.IsLongTerm` | `TaxLedgerTests.Test_IsLongTerm_CalendarEdges` | [MLD] §1.2 | v0.1 (calendar v0.3-2) |
 | `state` | $\mathcal S_t=(\mu_t,\ \mathrm{ledger}_t,\ \mathcal W_t)$ | product of the lot measure, the ledger ($\mathbb R\times\mathbb R_{\ge0}$), and the clock map $\mathcal W_t:\mathcal A\to\mathbb Z_{\ge0}\cup\{999\}$ | the portfolio state triple; mutable, owned by the engine | `PortfolioState.OpenLots` | `TaxLedgerTests.Test_PortfolioState_RoutesThroughLedger` | [PM] §2.1 | v0.25 |
 | `ledger` | $\mathrm{ledger}_t=(G^{\mathrm{net}}_t,\ C^{\mathrm{fwd}}_t)$ | $\mathbb R\times\mathbb R_{\ge0}$, $ | signed net realized P&L year-to-date, and banked loss carryforward (survives year-end) | `TaxLedger.RecordRealized` | `TaxLedgerTests.Test_LedgerNet_AccumulatesSignedRealized` | [PM] §2.3 | v0.25 |
 | `offset_budget` | $O_t=\max\{0,\ O_{\max}-\max(0,-G^{\mathrm{net}}_t)\}$ | $[0,3000]$, $ | remaining §1211(b) ordinary-income offset this tax year | `TaxLedger.OrdinaryOffsetBudget` | `TaxLedgerTests.Test_OffsetBudget_And_Capacity_DrawDown` | [MLD] §1.3 | v0.25 |
@@ -70,7 +70,7 @@ $\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\mapsto x_{k,t}$ is realiz
 |---|---|---|---|---|---|---|---|
 | `x.L` | $\ell_k$ | $(-1,\infty)$ | $(P_t-p_k)/p_k$ | `Lot.UnrealizedReturn` | — | [MLD] §1.2 | v0.1 |
 | `x.H` | $h_k$ | $\mathbb Z_{\ge0}$, d_trd | see `holding_period` | `Lot.HoldingPeriod` | — | [MLD] §1.2 | v0.1 |
-| `x.S` | $\mathbf 1_{\mathrm{LT}}$ | $\{0,1\}$ | see `lt_flag` (⚠ F6) | `Lot.IsLongTerm` | — | [MLD] §1.2 | v0.1 |
+| `x.S` | $\mathbf 1_{\mathrm{LT}}$ | $\{0,1\}$ | see `lt_flag` (calendar since v0.3-2) | `Lot.IsLongTerm` | — | [MLD] §1.2 | v0.1 |
 | `x.B` | $p_k$ | $\mathbb R_{>0}$, $/sh | cost basis | `Lot.CostBasis` | — | [MLD] §1.2 | v0.1 |
 | `x.W` | $w_k=q_kP_t/V_t$ | $(0,1)$ | lot weight | `SimulationEngine.ExtractSnapshot` | — | [MLD] §1.2 | v0.1 |
 | `x.K` | $K^{A_i}_t$ | $\mathbb Z_{>0}$ | open lots in the same ticker | `SimulationEngine.ExtractSnapshot` | — | [MLD] §1.2 | v0.1 |
@@ -93,7 +93,7 @@ rides the in-memory snapshot for soft-label re-dollarization and is **never** ex
 
 | id | symbol | type | definition | code | test | derivation | since |
 |---|---|---|---|---|---|---|---|
-| `g_tax` | $g_{\mathrm{tax}}(\mathrm{ledger},h,D)=\tau(h)\min(D,\mathrm{cap})+\tau_{\mathrm{fut}}\max(D-\mathrm{cap},0)\,\delta_{\mathrm{cf}}$ | $\mathcal L\times\mathbb Z_{\ge0}\times\mathbb R_{\ge0}\to\mathbb R_{\ge0}$, $ | capacity-aware value of harvesting a loss of $D_k=\max(0,(p_k-P_t)q_k)$ dollars now: usable-this-year dollars at full rate, banked dollars discounted. $\tau(h)=\tau_{\mathrm{ST}}$ if $\neg\mathbf 1_{\mathrm{LT}}(h)$ else $\tau_{\mathrm{LT}}$ (⚠ F6) | `TaxLedger.ComputeTaxValue` | `TaxLedgerTests.Test_ComputeTaxValue_CapacitySplit_And_Rates` | [MLD] §1.3 | v0.25 |
+| `g_tax` | $g_{\mathrm{tax}}(\mathrm{ledger},h,D)=\tau(h)\min(D,\mathrm{cap})+\tau_{\mathrm{fut}}\max(D-\mathrm{cap},0)\,\delta_{\mathrm{cf}}$ | $\mathcal L\times\mathbb Z_{\ge0}\times\mathbb R_{\ge0}\to\mathbb R_{\ge0}$, $ | capacity-aware value of harvesting a loss of $D_k=\max(0,(p_k-P_t)q_k)$ dollars now: usable-this-year dollars at full rate, banked dollars discounted. $\tau=\tau_{\mathrm{ST}}$ if $\neg\mathbf 1_{\mathrm{LT}}$ else $\tau_{\mathrm{LT}}$ (calendar `lt_flag`) | `TaxLedger.ComputeTaxValue` | `TaxLedgerTests.Test_ComputeTaxValue_CapacitySplit_And_Rates` | [MLD] §1.3 | v0.25 |
 | `cov_hat` | $\hat\Sigma$ | $\mathbb R^{N\times N}$, symmetric PSD, daily units | pairwise available-case sample covariance of daily returns. ⚠ **F1:** estimated once from the **full** history, so it is not $\mathcal F_t$-measurable; replaced by `cov_hat_pit` in v0.3-4 | `TrackingErrorProxy.ComputeCovariance` | `TrackingErrorProxyTests.Test_SigmaTE_Positive_ForAntiCorrelatedUniverse` | [SIM] §5.2 | v0.2 |
 | `sigma_te` | $\hat\sigma_{\mathrm{TE},t}=\sqrt{252\,\delta w_t^\top\hat\Sigma\,\delta w_t}$, $\delta w_{t,i}=\mathbf 1[i\in\mathcal H_t]/\lvert\mathcal H_t\rvert-1/N$ | $\mathbb R_{\ge0}$, ann. | ex-ante tracking error of the **equal-weight held set** $\mathcal H_t$ vs an equal-weight benchmark. It depends on *which tickers* are held, not on dollar weights. Computed once per day, **before** that day's harvests | `TrackingErrorProxy.Update` | `TrackingErrorProxyTests.Test_SigmaTE_StaysBounded_AfterStructuralLotRemoval` | [SIM] §5.1 | v0.2 |
 | `U` | $U(x)=g_{\mathrm{tax}}-\lambda_{\mathrm{TE}}\hat\sigma_{\mathrm{TE}}^2-c_{\mathrm{trade}}$ | $\mathcal X\to\mathbb R$, $ | the per-lot, one-step net-benefit score. **Not** a sequential reward: summing it over a day's harvests charges the shared $\hat\sigma_{\mathrm{TE}}$ once per lot (F3, §I) | `OracleBoundary.Utility` | `OracleScalarizedTests.Test_Utility_Arithmetic_And_CTrade` | [MLD] §2.1 | v0.25 |
@@ -104,7 +104,7 @@ rides the in-memory snapshot for soft-label re-dollarization and is **never** ex
 | id | symbol | type | definition | code | test | derivation | since |
 |---|---|---|---|---|---|---|---|
 | `y_oracle` | $Y_{\mathrm{Oracle}}=f^*(x)$ | $\{0,1\}$ | hard label from the **acting** oracle; the leakage control (deterministic in the current features) | `SimulationEngine.ExtractSnapshot` | `OracleScalarizedTests.Test_SnapshotOverload_MatchesScalarForm` | [MLD] §2.2 | v0.1 |
-| `soft_step` | $\varphi(P,s)$ | $\mathbb R_{>0}\times\{1..T_{\mathrm{fwd}}\}\to\{0,1\}$ | $f^*$ at forward step $s$ under **frozen** portfolio state ($\mathrm{cap}_t$, $\hat\sigma_{\mathrm{TE},t}$ fixed); only $P$, $h_k+s$ (d_trd) and $\mathcal W+\Delta_{\mathrm{cal}}(t,t{+}s)$ (d_cal, real calendar; 7/5 extrapolation past its end) move | `SoftLabelBuilder.StepLabel` | — | [SIM] §4 | v0.25 |
+| `soft_step` | $\varphi(P,s)$ | $\mathbb R_{>0}\times\{1..T_{\mathrm{fwd}}\}\to\{0,1\}$ | $f^*$ at forward step $s$ under **frozen** portfolio state ($\mathrm{cap}_t$, $\hat\sigma_{\mathrm{TE},t}$ fixed); only $P$, $\mathbf 1_{\mathrm{LT}}$ at $\mathrm{date}(t)+\Delta_{\mathrm{cal}}(t,t{+}s)$ and $\mathcal W+\Delta_{\mathrm{cal}}(t,t{+}s)$ (d_cal, real calendar; 7/5 extrapolation past its end) move | `SoftLabelBuilder.StepLabel` | — | [SIM] §4 | v0.25 |
 | `y_soft_bt` | $\tilde y_{\mathrm{BT}}=\frac1{T_{\mathrm{fwd}}}\sum_{s=1}^{T_{\mathrm{fwd}}}\varphi(P_{t+s},s)$ | $[0,1]\cup\{\mathrm{NaN}\}$ | **occupation fraction** of the next 30 days on the one realized path (NaN if $t+T_{\mathrm{fwd}}\ge T$). Labels may peek forward; features never | `SoftLabelBuilder.ComputeBT` | `SyntheticWorldTests.Test_CanonicalEngine_RunsOnSyntheticWorld` | [MLD] §2.3 | v0.1 |
 | `y_soft_gbm` | $\tilde y_{\mathrm{GBM}}=\frac1M\sum_{m=1}^{M}\mathbf 1[\exists s\le T_{\mathrm{fwd}}:\varphi(P^{(m)}_s,s)=1]$ | $[0,1]$ | **first-passage** probability over $M=200$ simulated GBM paths started at $P_t$ with $\hat\sigma=$ `sigma_hat_trailing`. A different functional from $\tilde y_{\mathrm{BT}}$ | `SoftLabelBuilder.ComputeGBM; GbmSimulator.FractionFiring` | `GbmSimulatorTests.Test_FractionFiring_InRange_ForRealisticPredicate` | [MLD] §2.6 | v0.1 |
 | `sigma_hat_trailing` | $\hat\sigma^{(i)}_t=\sqrt{252}\cdot\mathrm{sd}(r^{(i)}_{t-21..t-1})$, fallback 0.20 | $\mathbb R_{>0}$, ann., $\mathcal F_{t-1}$-measurable | the only volatility estimate in the pipeline today; its seam is where v0.3-5's `IVolEstimator` plugs in | `SoftLabelBuilder.EstimateVol` | — | [SIM] §4.1 | v0.1 |
@@ -155,7 +155,6 @@ Five distinct objects, which the course-level word "model" blurs together:
 
 | id | symbol | type | definition | code | test | derivation | since |
 |---|---|---|---|---|---|---|---|
-| `lt_flag_cal` | $\mathbf 1_{\mathrm{LT}}=\mathbf 1[\mathrm{date}(t)>\mathrm{date}(s_k)+1\,\mathrm{yr}]$ | $\{0,1\}$ | §1222 "held more than one year" on the calendar. Fixes F6 | — (v0.3-2) | — | ROADMAP v0.3-2 | planned |
 | `cov_hat_pit` | $\hat\Sigma_t=(1-\rho_{\mathrm{LW}})\,S_t+\rho_{\mathrm{LW}}\,F_t$, with $S_t$ the sample covariance of $r_{t-L..t-1}$ | $\mathbb R^{N\times N}$ PSD, $\mathcal F_{t-1}$-measurable | point-in-time Ledoit–Wolf shrinkage toward a constant-correlation target $F_t$, closed-form $\rho_{\mathrm{LW}}$. **Required, not optional:** $\mathrm{rank}(S_t)\le L-1<N$ when $L\le N$ ($L=252$, $N\approx409$). Optional MP clipping at $\lambda_+=\bar\sigma^2(1+\sqrt{\varrho})^2$, $\varrho=N/L$. Fixes F1 | — (v0.3-4) | — | [archive part II §C.2.3](../archive/data_memo_theory_part2.md) | planned |
 | `sigma_hat_ewma` | $\hat\sigma^2_t=\lambda_{\mathrm{EW}}\hat\sigma^2_{t-1}+(1-\lambda_{\mathrm{EW}})r^2_{t-1}$ | $\mathbb R_{>0}$, $\mathcal F_{t-1}$-measurable | RiskMetrics EWMA, $\lambda_{\mathrm{EW}}=0.94$ (IGARCH special case) | — (v0.3-5) | — | [archive part II §C.2.1](../archive/data_memo_theory_part2.md) | planned |
 | `sigma_hat_garch` | $\hat\sigma^2_t=\omega+\alpha r^2_{t-1}+\beta\hat\sigma^2_{t-1}$, $\alpha+\beta<1$ | $\mathbb R_{>0}$, $\mathcal F_{t-1}$-measurable | per-name GARCH(1,1), Gaussian MLE fit only on data $\le t-1$ | — (v0.3-5) | — | [archive part II §C.2.2](../archive/data_memo_theory_part2.md) | planned |
@@ -247,7 +246,7 @@ notation.
 | `contrib_interval` | $\Delta_c$ | 63 | d_trd | `ContributionPolicy.IntervalDays` | quarterly |
 | `contrib_rate` | $r_c$ | 0.10 | fraction of $V_0$ / yr | `ContributionPolicy.AnnualRate` | |
 | `contrib_names` | $n_c$ | 20 | names | `ContributionPolicy.NamesPerContribution` | most-underweight names bought |
-| `h_lt` | — | 365 | ⚠ compared against d_trd | — (unnamed literal in `Lot.IsLongTerm` and `TaxLedger.ComputeTaxValue`; named and made calendar-based in v0.3-2) | F6 |
+| `h_lt` | — | 1 | calendar yr | — (`AddYears(1)` inside `TaxLedger.IsLongTerm`; no day-count literal since v0.3-2) | §1222 |
 
 ## Known drift, recorded rather than silently resolved
 

@@ -83,7 +83,7 @@ For each trading day $t$:
    - Compute $\ell_k = (P_t^{(A_k)} - p_k) / p_k$, loss dollars
      $D_k = \max(0,\ (p_k - P_t) q_k)$, and the ledger valuation
      $\text{taxValue}_k = \tau(h_k)\min(D_k, \text{capacity}) + \tau_f \max(D_k - \text{capacity}, 0)\,\delta$
-     with $\tau(h) = 0.37/0.20$ (short/long at $h = 365$), $\tau_f = 0.20$, $\delta = 0.5$.
+     with $\tau(h) = 0.37/0.20$ (short/long at the calendar anniversary, §1222), $\tau_f = 0.20$, $\delta = 0.5$.
    - Evaluate the oracle (`OracleBoundary.Label(snapshot, config)`):
        $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}_{k} > 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
        where $U = \text{taxValue}_k - \lambda \hat\sigma_{\text{TE}}^2 - c_{\text{trade}}$

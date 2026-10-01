@@ -28,10 +28,10 @@ public record LotStateVector
     /// <summary>ℓ = (P_t − p_k)/p_k ∈ (−1, ∞)  — normalised unrealised return</summary>
     public float L           { get; init; }
 
-    /// <summary>h = t − s_k ∈ ℤ_{≥0}  — holding period in days</summary>
+    /// <summary>h = t − s_k ∈ ℤ_{≥0}  — lot age in TRADING days (feature coordinate; §1222 uses S)</summary>
     public int   H           { get; init; }
 
-    /// <summary>s = 𝟙[h ≥ 365] ∈ {0,1}  — short/long-term flag</summary>
+    /// <summary>s = 𝟙[date(t) &gt; date(s_k) + 1 calendar year] ∈ {0,1}  — §1222 long-term flag</summary>
     public int   S           { get; init; }
 
     /// <summary>p_k — cost basis per share (dollars)</summary>
@@ -51,6 +51,13 @@ public record LotStateVector
     /// V_t is not carried on the snapshot.
     /// </summary>
     public float Shares      { get; init; }
+
+    /// <summary>
+    /// Calendar day number of the lot's purchase date. IN-MEMORY PLUMBING ONLY (never
+    /// exported): the soft-label builders re-evaluate the §1222 character along forward
+    /// steps, which needs the purchase date, not the trading-day count H.
+    /// </summary>
+    public int   PurchaseDayNumber { get; init; }
 
     // ── Portfolio-level features (shared state 𝒮_t) — TaxLedger + risk state ─
 

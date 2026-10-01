@@ -133,9 +133,9 @@ $$
 L=\ell_k &= \frac{P_t-p_k}{p_k}\in(-1,\infty)
    &&\text{normalized unrealized return}\\
 H=h_k &= t-s_k\in\mathbb Z_{\ge0}
-   &&\text{holding period (days)}\\
-S &= \mathbf 1[h_k\ge365]\in\{0,1\}
-   &&\text{long-term flag}\\
+   &&\text{lot age (trading days; a feature only)}\\
+S &= \mathbf 1[\mathrm{date}(t)>\mathrm{date}(s_k)+1\,\mathrm{yr}]\in\{0,1\}
+   &&\text{§1222 long-term flag (calendar)}\\
 B &= p_k\in\mathbb R_{>0}
    &&\text{cost basis}\\
 W=w_k &= \frac{q_kP_t}{V_t}\in(0,1)
@@ -167,14 +167,14 @@ R_t &= \frac{P_t-P_{t-1}}{P_{t-1}}\in\mathbb R
 \end{aligned}
 $$
 
-> ⚠ **Known unit error (ROADMAP finding F6, fixed in v0.3-2).** $h_k=t-s_k$ counts
-> **trading** days, but the long-term threshold 365 is a **calendar** quantity, so
-> $\mathbf 1[h\ge365]$ means ≈1.45 calendar years. §1222's "more than one year" is
-> $\mathrm{date}(t)>\mathrm{date}(s_k)+1\,\mathrm{yr}$ (`SymbolTable.md` `lt_flag_cal`).
+> **Units (F6, fixed in v0.3-2).** $h_k=t-s_k$ counts **trading** days and is only a
+> feature. Up to v0.3-1 the flag was $\mathbf 1[h_k\ge365]$, which compares a trading-day
+> count with a calendar threshold (≈1.45 calendar years). §1222's "more than one year" is
+> evaluated on dates (`SymbolTable.md` `lt_flag`).
 
 where $H_t,L_t$ are the day-$t$ high/low and
-$\tau:\mathbb Z_{\ge0}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
-$\tau(h)=\tau_{\mathrm{ST}}\mathbf 1[h<365]+\tau_{\mathrm{LT}}\mathbf 1[h\ge365]$, with
+$\tau:\{0,1\}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
+$\tau(S)=\tau_{\mathrm{ST}}(1-S)+\tau_{\mathrm{LT}}S$ (written $\tau(h)$ elsewhere for brevity), with
 $\tau_{\mathrm{ST}}=0.37>\tau_{\mathrm{LT}}=0.20$.
 
 ## 1.3 The tax-value map $g_{\mathrm{tax}}$ (the v0.25 object)
@@ -562,7 +562,7 @@ RMSE/MAE/$R^2$ the artifact reports RMSE on the $\{Y^{\mathrm{TaxValue}}>0\}$ su
 the structure lives.
 
 **Why it is a clean experiment.** $g_{\mathrm{tax}}$ (§1.3) is a $\min$/$\max$-kinked function
-with a discrete rate jump at $h=365$ — exactly what a hyperplane cannot represent and
+with a discrete rate jump at the one-year anniversary — exactly what a hyperplane cannot represent and
 axis-aligned splits can. Measured: $R^2\approx0.10$ (linear) vs $\approx0.92$ (trees). This is
 the regression mirror of the classification story, and the fitted $\hat g$ is a warm-start
 candidate for the v0.4 value function.

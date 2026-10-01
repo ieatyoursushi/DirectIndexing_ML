@@ -36,10 +36,10 @@ public sealed class TaxLedger
     /// <summary>Annual cap on net capital loss deducted against ordinary income (26 USC §1211(b)).</summary>
     public const decimal AnnualOrdinaryOffsetCap = 3_000m;
 
-    /// <summary>τ short-term — ordinary marginal rate applied when h &lt; 365 days.</summary>
+    /// <summary>τ short-term — ordinary marginal rate applied to short-term lots (held ≤ 1 calendar year, §1222).</summary>
     public const decimal TauShortTerm = 0.37m;
 
-    /// <summary>τ long-term — preferential rate applied when h ≥ 365 days.</summary>
+    /// <summary>τ long-term — preferential rate applied to long-term lots (held &gt; 1 calendar year).</summary>
     public const decimal TauLongTerm = 0.20m;
 
     /// <summary>
@@ -133,9 +133,19 @@ public sealed class TaxLedger
     /// loss dollar at the full current-year rate regardless of offset capacity.
     /// </summary>
     /// <param name="lossDollars">Unrealized loss in dollars, ≥ 0 (0 for lots not at a loss).</param>
-    /// <param name="holdingDays">Holding period h — selects the short/long-term rate τ(h).</param>
-    public decimal ComputeTaxValue(decimal lossDollars, int holdingDays) =>
-        ComputeTaxValue(lossDollars, holdingDays, OffsetCapacity);
+    /// <param name="isLongTerm">§1222 character of the lot (see <see cref="IsLongTerm"/>) — selects τ.</param>
+    public decimal ComputeTaxValue(decimal lossDollars, bool isLongTerm) =>
+        ComputeTaxValue(lossDollars, isLongTerm, OffsetCapacity);
+
+    /// <summary>
+    /// 26 USC §1222: a holding is long-term iff held MORE than one year, measured on the
+    /// calendar (the holding period starts the day after acquisition, so a sale on the
+    /// anniversary is still short-term). v0.3-2 (ROADMAP F6): previously a trading-day count
+    /// compared with 365, i.e. ≈1.45 calendar years.
+    /// </summary>
+    // [math:lt_flag] — DataMemo/spec/SymbolTable.md
+    public static bool IsLongTerm(DateOnly purchaseDate, DateOnly date) =>
+        date > purchaseDate.AddYears(1);
 
     /// <summary>
     /// Static pure form — used by the soft-label forward closures, which freeze
@@ -143,11 +153,11 @@ public sealed class TaxLedger
     /// paths without holding a ledger reference.
     /// </summary>
     // [math:g_tax] — DataMemo/spec/SymbolTable.md
-    public static decimal ComputeTaxValue(decimal lossDollars, int holdingDays, decimal offsetCapacity)
+    public static decimal ComputeTaxValue(decimal lossDollars, bool isLongTerm, decimal offsetCapacity)
     {
         if (lossDollars <= 0m) return 0m;
 
-        decimal tau      = holdingDays >= 365 ? TauLongTerm : TauShortTerm;
+        decimal tau      = isLongTerm ? TauLongTerm : TauShortTerm;
         decimal usedNow  = Math.Min(lossDollars, offsetCapacity);
         decimal banked   = Math.Max(lossDollars - offsetCapacity, 0m);
 

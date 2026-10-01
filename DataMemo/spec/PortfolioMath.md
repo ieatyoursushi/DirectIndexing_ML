@@ -44,13 +44,14 @@ $$h_k = t - s_k \in \mathbb{Z}_{\geq 0}$$
 lot.HoldingPeriod(currentDay)        // = currentDay - PurchaseDayIndex
 ```
 
-**Short/long-term flag** (step function of holding period):
-$$s = \mathbb{1}[h_k \geq 365] \in \{0, 1\}$$
+**Short/long-term flag** (§1222, on the calendar — since v0.3-2; $h_k$ above is a trading-day
+feature and is *not* the legal holding period):
+$$s = \mathbb{1}[\mathrm{date}(t) > \mathrm{date}(s_k) + 1\,\mathrm{yr}] \in \{0, 1\}$$
 ```csharp
-lot.IsLongTerm(currentDay)           // = HoldingPeriod >= 365
+lot.IsLongTerm(today)                // = TaxLedger.IsLongTerm(PurchaseDate, today)
 ```
 This determines the applicable tax rate $\tau(h)$ in the tax-alpha formula (§4 of theory memo):
-$$\tau(h) = \begin{cases} \tau_{\text{ST}} & h < 365 \\ \tau_{\text{LT}} & h \geq 365 \end{cases}, \quad \tau_{\text{ST}} > \tau_{\text{LT}}$$
+$$\tau(s) = \begin{cases} \tau_{\text{ST}} & s = 0 \\ \tau_{\text{LT}} & s = 1 \end{cases}, \quad \tau_{\text{ST}} > \tau_{\text{LT}}$$
 
 ---
 
@@ -112,7 +113,7 @@ $$\text{OrdinaryOffsetBudget}_t = \max\!\bigl(0,\ \$3{,}000 - \max(0, -\text{net
 $$\text{taxValue}_k = \tau(h_k)\cdot\min(D_k,\ \text{OffsetCapacity}_t)
 + \tau_f \cdot \max(D_k - \text{OffsetCapacity}_t,\ 0)\cdot\delta$$
 
-with $D_k$ the loss in dollars, $\tau(h) \in \{0.37, 0.20\}$ (short/long at $h = 365$),
+with $D_k$ the loss in dollars, $\tau(h) \in \{0.37, 0.20\}$ (short/long at the calendar anniversary, §1222),
 $\tau_f = 0.20$, and $\delta = 0.5$ a constant stand-in for a hazard-rate discount on banked
 losses. At year-end, `RollYearEnd()` banks $\max(0, \text{netLoss} - \$3{,}000)$ into
 `LossCarryforward` (which **survives**) and zeroes the annual accumulator. The legacy gate
@@ -206,7 +207,7 @@ So $d = 17$ before one-hot encoding of `Sector` (schema v4, unchanged in $d$ sin
 |-------|---------|--------|--------|
 | `L` | $\ell_k = (P_t - p_k)/p_k$ | `lot.UnrealizedReturn()` | $(-1, \infty)$ |
 | `H` | $h_k = t - s_k$ | `lot.HoldingPeriod()` | $\mathbb{Z}_{\geq 0}$ |
-| `S` | $s = \mathbb{1}[h \geq 365]$ | `lot.IsLongTerm()` | $\{0,1\}$ |
+| `S` | $s = \mathbb{1}[\mathrm{date}(t) > \mathrm{date}(s_k)+1\,\mathrm{yr}]$ | `lot.IsLongTerm(date)` | $\{0,1\}$ |
 | `B` | $p_k$ | `lot.CostBasis` | $\mathbb{R}_{>0}$ |
 | `W` | $w_k = q_k P_t / V_t$ | derived | $(0,1)$ |
 | `K` | lot count for ticker $A_i$ | counted from `OpenLots` | $\mathbb{Z}_{>0}$ |

@@ -176,18 +176,20 @@ public sealed class SimulationEngine
         // taxValue_k = g(ledger_t, h_k, ℓ_k) — capacity-aware harvest value.
         // Loss in dollars is 0 for lots not at a loss (winners have no harvestable loss).
         decimal lossDollars = unrealized < 0m ? (lot.CostBasis - close) * lot.Shares : 0m;
-        decimal taxValue    = _state.Ledger.ComputeTaxValue(lossDollars, holdingDays);
+        bool    longTerm    = lot.IsLongTerm(date);
+        decimal taxValue    = _state.Ledger.ComputeTaxValue(lossDollars, longTerm);
 
         var snap = new LotStateVector
         {
             // Lot-level
             L          = (float)unrealized,
             H          = holdingDays,
-            S          = lot.IsLongTerm(t) ? 1 : 0,
+            S          = longTerm ? 1 : 0,
             B          = (float)lot.CostBasis,
             W          = portValue > 0m ? (float)(lot.Shares * close / portValue) : 0f,
             K          = _lotCount.GetValueOrDefault(lot.Symbol, 1),
             Shares     = lot.Shares,   // in-memory plumbing for soft-label re-dollarization
+            PurchaseDayNumber = lot.PurchaseDate.DayNumber,   // in-memory plumbing (§1222 forward)
 
             // Portfolio-level (shared TaxLedger + risk state)
             RealizedGainsYTD     = (float)_state.Ledger.RealizedGainsYTD,
