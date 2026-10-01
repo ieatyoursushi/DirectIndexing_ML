@@ -248,6 +248,38 @@ switch (mode)
             Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}.csv"));
     }
     break;
+    // σ̂ forecast evaluation (v0.3-7): QLIKE per estimator × horizon × market-vol tercile.
+    // World: the real cache by default; --mc-standalone=N [--mc-days --mc-seed --mc-sigma]
+    // for a GBM world (the control: constant σ, so the constant estimator should win).
+    // → data/artifacts-vol/qlike{-mc}.json
+    case "vol-eval":
+    {
+        int mcNames = IntFlag("--mc-standalone=", 0);
+        PriceLoader world;
+        string tag;
+        if (mcNames > 0)
+        {
+            world = PriceLoader.FromGbm(PriceLoader.UniformGbmUniverse(mcNames, (float)DoubleFlag("--mc-sigma=", 0.25)),
+                                        IntFlag("--mc-days=", 504), IntFlag("--mc-seed=", 42));
+            tag = "-mc";
+        }
+        else
+        {
+            world = new PriceLoader();
+            world.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
+            tag = "";
+        }
+        var result = DirectIndexing.Core.Simulation.Volatility.VolEval.Run(world);
+        var outPath = Path.Combine(dataDir, "artifacts-vol", $"qlike{tag}.json");
+        DirectIndexing.Core.Simulation.Volatility.VolEval.Write(result, outPath, tag == "" ? "real" : "gbm");
+        foreach (var (h, cells) in result)
+        {
+            Console.WriteLine($"[vol-eval] h={h,2}  " + string.Join("  ", cells.OrderBy(c => c.Value.Mean)
+                .Select(c => $"{c.Key}={c.Value.Mean:F4} (L {c.Value.Low:F3} M {c.Value.Mid:F3} H {c.Value.High:F3})")));
+        }
+        Console.WriteLine($"[vol-eval] → {outPath}");
+    }
+    break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
     // Each case loads the --lots dataset into List<LotStateVector>, then hands it
     // straight to LoadFromEnumerable. No CSV inside ML.NET, no [LoadColumn]
@@ -426,6 +458,11 @@ switch (mode)
         covTests.Test_LedoitWolf_RepairsRank_IntensityShrinksWithT();
         covTests.Test_PointInTime_IgnoresTheFuture();
         covTests.Test_DollarWeights_SeePositionSize();
+
+        var volTests = new VolatilityTests();
+        volTests.Test_Ewma_Recursion_And_QLike_Floor();
+        volTests.Test_Estimators_AreCausal_FitRejectsLookAhead();
+        volTests.Test_Garch_RecoversParams_AndWinsOnClusteredData();
 
         var trimTests = new TrimTests();
         trimTests.Test_Trim_SellsOnlyGains_ConsumesCarryforward();
