@@ -83,6 +83,24 @@ if (args.Contains("--contrib"))
     if (cnArg is not null && int.TryParse(cnArg["--contrib-names=".Length..], out var cn))
         contribCfg = contribCfg with { NamesPerContribution = cn };
 }
+
+// ── Sell-winner trim (v0.3-4) ────────────────────────────────────────────────
+// --trim sells gain lots of names above (1 + band) × equal weight back toward target
+// and reinvests the proceeds, making realized gains endogenous so the Schedule D
+// ledger has gains to net. Off by default. Tunable: --trim-interval=N, --trim-band=B.
+var trimCfg = DirectIndexing.Core.Simulation.TrimPolicy.Off;
+if (args.Contains("--trim"))
+{
+    trimCfg = trimCfg with { Enabled = true };
+    var tiArg = args.FirstOrDefault(a => a.StartsWith("--trim-interval="));
+    if (tiArg is not null && int.TryParse(tiArg["--trim-interval=".Length..], out var ti))
+        trimCfg = trimCfg with { IntervalDays = ti };
+    var tbArg = args.FirstOrDefault(a => a.StartsWith("--trim-band="));
+    if (tbArg is not null && decimal.TryParse(tbArg["--trim-band=".Length..],
+            System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var tb))
+        trimCfg = trimCfg with { Band = tb };
+}
 if (mode is ("simulate" or "simulate-mc") && contribCfg.Enabled)
     Console.WriteLine($"[ContributionPolicy] {contribCfg.Describe()}");
 // ── Dataset + artifact layout ───────────────────────────────────────────────
@@ -170,13 +188,13 @@ switch (mode)
         var loader = new PriceLoader();
         loader.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
 
-        var engine    = new SimulationEngine(loader, oracleCfg, contribCfg);
+        var engine    = new SimulationEngine(loader, oracleCfg, contribCfg, trimCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{ctradeTag}.csv");
+        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{trimCfg.DatasetTag}{ctradeTag}.csv");
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] → {outPath}  " +
@@ -207,10 +225,10 @@ switch (mode)
         }
 
         var synthetic = PriceLoader.FromGbm(universe, mcDays, mcSeed);
-        var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg).Run(10_000_000m);
+        var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg, trimCfg).Run(10_000_000m);
         new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{ctradeTag}.csv"));
+            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{trimCfg.DatasetTag}{ctradeTag}.csv"));
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -386,6 +404,9 @@ switch (mode)
         washTests.Test_State_BeforeSide_LotLevelClock();
         washTests.Test_Engine_ZeroViolations_OnWorldsThatHadThem();
         washTests.Test_ReharvestGuard_Off_IsStillLawful();
+
+        var trimTests = new TrimTests();
+        trimTests.Test_Trim_SellsOnlyGains_ConsumesCarryforward();
 
         var contribTests = new ContributionPolicyTests();
         contribTests.Test_DefaultIsDisabled();

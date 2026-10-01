@@ -24,6 +24,7 @@ public sealed class SimulationEngine
     private readonly TrackingErrorProxy  _te;
     private readonly OracleConfig        _oracle;
     private readonly ContributionPolicy  _contrib;
+    private readonly TrimPolicy          _trim;
 
     // ── Initial book value — the base for the exogenous contribution schedule ──
     private decimal _initialValue;
@@ -31,6 +32,8 @@ public sealed class SimulationEngine
     // ── Running totals for the contribution ablation's summary line ───────────
     private decimal _contributedTotal;
     private int     _contributedLots;
+    private decimal _trimmedGains;
+    private int     _trimmedLots;
 
     // ── Output ────────────────────────────────────────────────────────────────
     private readonly List<LotStateVector> _snapshots = new(128_000);
@@ -51,13 +54,15 @@ public sealed class SimulationEngine
     public SimulationEngine(
         PriceLoader prices,
         OracleConfig? oracleConfig = null,
-        ContributionPolicy? contributionPolicy = null)
+        ContributionPolicy? contributionPolicy = null,
+        TrimPolicy? trimPolicy = null)
     {
         _prices  = prices;
         _te      = new TrackingErrorProxy(prices);
         _oracle  = oracleConfig ?? OracleConfig.Default;
         _state   = new PortfolioState { ReharvestGuard = _oracle.ReharvestGuard };
         _contrib = contributionPolicy ?? ContributionPolicy.Off;
+        _trim    = trimPolicy ?? TrimPolicy.Off;
     }
     // ── Public entry point ───────────────────────────────────────────────────
 
@@ -81,6 +86,9 @@ public sealed class SimulationEngine
         if (_contrib.Enabled)
             Console.WriteLine($"[SimulationEngine] Contributions: {_contributedTotal:C0} across " +
                               $"{_contributedLots:N0} new lots ({_contrib.Describe()})");
+        if (_trim.Enabled)
+            Console.WriteLine($"[SimulationEngine] Trim: {_trimmedLots:N0} gain lots sold, " +
+                              $"{_trimmedGains:C0} realized gains ({_trim.Describe()})");
         return _snapshots;
     }
 
@@ -152,6 +160,7 @@ public sealed class SimulationEngine
         // Contributions run AFTER harvests and reopens so they see today's loss sales —
         // a ticker loss-sold today fails CanBuy and is correctly ineligible.
         ProcessContribution(t, closes, portValue);
+        ProcessTrim(t, closes, portValue);
 
         // Year-end reset (G_net ← 0, net loss rolls into carryforward, wash clocks persist)
         var tomorrow = t + 1 < _prices.DayCount ? _prices.GetDate(t + 1) : today.AddDays(1);
@@ -274,34 +283,45 @@ public sealed class SimulationEngine
         int elapsed = t - PriceLoader.WarmupDays;
         if (elapsed <= 0 || elapsed % _contrib.IntervalDays != 0) return;
 
+        _contributedTotal += BuyUnderweight(t, closes, portValue, _contrib.AmountPer(_initialValue),
+                                            _contrib.NamesPerContribution, _contrib.SkipHarvestableNames,
+                                            exclude: null, ref _contributedLots);
+    }
+
+    /// <summary>
+    /// The shared buy path (contributions and trim reinvestment): split <paramref name="cash"/>
+    /// over the <paramref name="names"/> most underweight eligible tickers vs an equal-weight
+    /// target. Eligible = priced, passes §1091's after-side (<c>CanBuy</c>), not excluded, and —
+    /// when <paramref name="skipHarvestable"/> — holding no harvestable lot (a fresh lot would be
+    /// a §1091 replacement and block that harvest for 30 days). Returns dollars invested.
+    /// </summary>
+    private decimal BuyUnderweight(int t, Dictionary<string, decimal> closes, decimal portValue,
+        decimal cash, int names, bool skipHarvestable, ISet<string>? exclude, ref int lotsMinted)
+    {
         // Actual dollar value currently held per ticker (0 for fully-harvested names).
         var heldValue = new Dictionary<string, decimal>();
         foreach (var lot in _state.OpenLots)
             if (closes.TryGetValue(lot.Symbol, out decimal px))
                 heldValue[lot.Symbol] = heldValue.GetValueOrDefault(lot.Symbol) + lot.Shares * px;
 
-        // Eligible = priced today AND buyable under §1091's after-side (no loss sale in the
-        // last 30 calendar days) AND — unless the ablation flag disables it — holding no
-        // currently harvestable lot: buying such a name would make the fresh lot a §1091
-        // replacement and block that harvest for 30 days (the before-side), which is why a
-        // real manager steers new cash away from names it is about to harvest.
         var eligible = closes
             .Where(kv => kv.Value > 0m && _state.CanBuy(kv.Key) &&
-                         !(_contrib.SkipHarvestableNames && HasHarvestableLot(kv.Key, kv.Value)))
+                         (exclude is null || !exclude.Contains(kv.Key)) &&
+                         !(skipHarvestable && HasHarvestableLot(kv.Key, kv.Value)))
             .Select(kv => kv.Key)
             .ToList();
-        if (eligible.Count == 0) return;
+        if (eligible.Count == 0) return 0m;
 
         // Rank by underweight vs an equal-weight target over the priced universe.
         decimal targetWeight = 1m / closes.Count;
         var picks = eligible
             .OrderByDescending(sym => targetWeight - heldValue.GetValueOrDefault(sym) / portValue)
-            .Take(_contrib.NamesPerContribution)
+            .Take(names)
             .ToList();
-        if (picks.Count == 0) return;
+        if (picks.Count == 0) return 0m;
 
-        decimal cash    = _contrib.AmountPer(_initialValue);
-        decimal perName = cash / picks.Count;
+        decimal perName  = cash / picks.Count;
+        decimal invested = 0m;
 
         foreach (var symbol in picks)
         {
@@ -313,9 +333,70 @@ public sealed class SimulationEngine
             _state.OpenLot(lot);
             _trades.Add(new TradeEvent(_prices.GetDate(t), t, symbol, TradeKind.Buy, lot, price, 0m));
             _lotCount[symbol] = _lotCount.GetValueOrDefault(symbol) + 1;
-            _contributedTotal += shares * price;
-            _contributedLots++;
+            invested += shares * price;
+            lotsMinted++;
         }
+        return invested;
+    }
+
+    /// <summary>
+    /// Sell-winner trim (v0.3-4, <see cref="TrimPolicy"/>): sell whole GAIN lots of names above
+    /// (1 + band) × equal weight, highest basis first, while each lot fits inside the name's
+    /// excess; reinvest the proceeds through <see cref="BuyUnderweight"/>. Gain sales go to the
+    /// ledger pool of their §1222 character and open no §1091 window.
+    /// </summary>
+    // [math:trim] — DataMemo/spec/SymbolTable.md
+    private void ProcessTrim(int t, Dictionary<string, decimal> closes, decimal portValue)
+    {
+        if (!_trim.Enabled) return;
+
+        int elapsed = t - PriceLoader.WarmupDays;
+        if (elapsed <= 0 || elapsed % _trim.IntervalDays != 0) return;
+
+        var heldValue = new Dictionary<string, decimal>();
+        foreach (var lot in _state.OpenLots)
+            if (closes.TryGetValue(lot.Symbol, out decimal px))
+                heldValue[lot.Symbol] = heldValue.GetValueOrDefault(lot.Symbol) + lot.Shares * px;
+
+        decimal target = portValue / closes.Count;
+        var overweight = heldValue
+            .Where(kv => kv.Value > (1m + _trim.Band) * target)
+            .OrderByDescending(kv => kv.Value)
+            .Take(_trim.NamesPerTrim)
+            .ToList();
+        if (overweight.Count == 0) return;
+
+        var date = _prices.GetDate(t);
+        decimal proceeds = 0m;
+        var trimmed = new HashSet<string>();
+        foreach (var (symbol, held) in overweight)
+        {
+            decimal close  = closes[symbol];
+            decimal excess = held - target;
+            var gainLots = _state.OpenLotsOf(symbol)
+                .Where(l => close >= l.CostBasis)
+                .OrderByDescending(l => l.CostBasis)
+                .ToList();
+            foreach (var lot in gainLots)
+            {
+                decimal value = lot.Shares * close;
+                if (value > excess) continue;          // whole lots only; never overshoot the target
+                decimal gain = (close - lot.CostBasis) * lot.Shares;
+                _trades.Add(new TradeEvent(date, t, symbol, TradeKind.Sell, lot, close, gain));
+                _state.HarvestLot(lot, close);         // realizes into the ledger; a gain opens no window
+                _lotCount[symbol] = Math.Max(0, _lotCount.GetValueOrDefault(symbol, 1) - 1);
+                excess        -= value;
+                proceeds      += value;
+                _trimmedGains += gain;
+                _trimmedLots++;
+                trimmed.Add(symbol);
+            }
+        }
+        if (proceeds <= 0m) return;
+
+        int minted = 0;
+        BuyUnderweight(t, closes, portValue, proceeds, _trim.NamesPerTrim,
+                       skipHarvestable: true, exclude: trimmed, ref minted);
     }
 
     private bool HasHarvestableLot(string symbol, decimal close) =>
