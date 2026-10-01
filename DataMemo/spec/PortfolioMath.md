@@ -67,11 +67,10 @@ $$\mathcal{S}_t = \left(\mu_t,\ \text{ledger}_t,\ \mathcal{W}_t\right)$$
 | Component | C# member | Type | Meaning |
 |-----------|-----------|------|---------|
 | $\mu_t$ | `OpenLots` | `List<Lot>` | Full lot measure across all assets |
-| $\text{ledger}_t$ | `Ledger` | `TaxLedger` | Schedule D bookkeeping: `RealizedGainsYTD` $\in \mathbb{R}$ (signed net, the pre-v0.25 `G_YTD`), `LossCarryforward` $\in \mathbb{R}_{\ge 0}$ (survives year-end), derived `OrdinaryOffsetBudget` $\in [0, 3000]$ and `OffsetCapacity` |
+| $\text{ledger}_t$ | `Ledger` | `TaxLedger` | Schedule D bookkeeping by §1222 character (v0.3-3): `NetShortTerm`, `NetLongTerm` $\in \mathbb{R}$ (signed net this year), `CarryShortTerm`, `CarryLongTerm` $\in \mathbb{R}_{\ge 0}$ (prior-year carryforward, survives year-end); derived `RealizedGainsYTD` (their sum), `OrdinaryOffsetBudget` $\in [0, 3000]$ and `OffsetCapacity`, both computed from the netting map `LedgerState.Close` |
 | $\mathcal{W}_t$ | `_lastLossSale` + open-lot `PurchaseDate`s, via `WashClock(lot)` / `CanBuy(ticker)` | `Dictionary<string,DateOnly>` + `Lot.PurchaseDate` | §1091 state on the **calendar** (v0.3-1): last loss-sale date per ticker and the acquisition dates of open lots |
 
-The pre-v0.25 name `G_YTD` survives only as a reading aid; the code reads
-`Ledger.RealizedGainsYTD` directly (the alias was retired with the gated oracle).
+The pre-v0.25 name `G_YTD` survives only as a reading aid for $G^{\mathrm{net}}=G^{\mathrm{ST}}+G^{\mathrm{LT}}$.
 
 ### 2.2 Time Evolution
 
@@ -79,19 +78,19 @@ The pre-v0.25 name `G_YTD` survives only as a reading aid; the code reads
 *calendar-date difference* computed on demand (§2.4), never an incremented counter.
 
 **HarvestLot()** implements the state transition on lot $k$ of asset $A_i$:
-1. Realise P&L into the ledger (`Ledger.RecordRealized`):
+1. Realise P&L into the pool of the lot's §1222 character at the sale date (`Ledger.RecordRealized(ΔG, lot.IsLongTerm(date))`):
 $$\Delta G = q_k (P_t - p_k) \qquad \text{(negative for a loss)}$$
-$$\text{RealizedGainsYTD}_{t+1} = \text{RealizedGainsYTD}_t + \Delta G$$
+$$G^{c}_{t+1} = G^{c}_t + \Delta G,\qquad c=\mathbf 1_{\mathrm{LT}}(t,k)$$
 
 2. Remove atom from the measure:
 $$\mu_{t+1}^{A_i} = \mu_t^{A_i} - q_k\,\delta_{(p_k, s_k)}$$
 
 3. If the sale realized a **loss**, date-stamp it: $\mathrm{lastLossSale}(A_i) \leftarrow \mathrm{date}(t)$.
-   Gain sales (the v0.3-7 trim) never open a §1091 window.
+   Gain sales (the v0.3-4 trim) never open a §1091 window.
 
 ### 2.3 The TaxLedger — Sign Convention and Tax-Law Semantics (supersedes the G_YTD gate detail)
 
-`RealizedGainsYTD` is a **signed scalar** tracking net realised P&L for the year:
+$G^{\mathrm{ST}}, G^{\mathrm{LT}}$ (and their sum $G^{\mathrm{net}}$) are **signed scalars** tracking net realised P&L for the year:
 
 - **Positive**: net realised gains dominate (realized/external gains exceed harvested losses)
 - **Negative**: net realised losses dominate (TLH has offset or exceeded gains)
@@ -107,17 +106,28 @@ never wasted (it offsets gains from anywhere on the 1040, then \$3k/yr of ordina
 and the rest carries forward indefinitely), so "do I have gains this year" is magnitude and
 timing information, not a veto. The ledger therefore encodes it as **value, not permission**:
 
-$$\text{OrdinaryOffsetBudget}_t = \max\!\bigl(0,\ \$3{,}000 - \max(0, -\text{net}_t)\bigr),\qquad
-\text{OffsetCapacity}_t = \max(\text{net}_t, 0) + \text{OrdinaryOffsetBudget}_t$$
+Since v0.3-3 (ROADMAP F8) the ledger is the law's own netting rather than a blended pool.
+The year-end netting map $\mathcal S$ (`LedgerState.Close`; full statement in
+[MLDerivations §1.3](MLDerivations.md) and `SymbolTable.md` `schedule_d`):
 
-$$\text{taxValue}_k = \tau(h_k)\cdot\min(D_k,\ \text{OffsetCapacity}_t)
-+ \tau_f \cdot \max(D_k - \text{OffsetCapacity}_t,\ 0)\cdot\delta$$
+1. carryforward enters as a loss of its character;
+2. ST and LT cross-net;
+3. up to \$3,000 of net loss is deducted from ordinary income, ST first;
+4. the remainder carries forward by character.
 
-with $D_k$ the loss in dollars, $\tau(h) \in \{0.37, 0.20\}$ (short/long at the calendar anniversary, §1222),
-$\tau_f = 0.20$, and $\delta = 0.5$ a constant stand-in for a hazard-rate discount on banked
-losses. At year-end, `RollYearEnd()` banks $\max(0, \text{netLoss} - \$3{,}000)$ into
-`LossCarryforward` (which **survives**) and zeroes the annual accumulator. The legacy gate
-was retired with the gated oracle arm (`archive/RetiredComponents.md` §6).
+It yields the year's tax $T$, the deduction, and next year's carryforward $C'$. Then
+
+$$\text{OrdinaryOffsetBudget}_t = 3000-\mathrm{ded}_t,\qquad \text{OffsetCapacity}_t = n_S^+ + n_L^+ + \text{OrdinaryOffsetBudget}_t$$
+
+$$\text{taxValue}_k = \bigl[T(\mathrm{ledger}_t)-T(\mathrm{ledger}_t\oplus_c(-D_k))\bigr]
++ \tau_f\,\delta\,\bigl[\textstyle\sum C'(\mathrm{ledger}_t\oplus_c(-D_k))-\sum C'(\mathrm{ledger}_t)\bigr]$$
+
+with $D_k$ the loss in dollars, $c$ the lot's §1222 character (calendar anniversary), $\tau_f = 0.20$,
+and $\delta = 0.5$ a constant stand-in for a hazard-rate discount on banked losses. The current-year
+slice earns the rate of what it displaces ($\tau_{\mathrm{ST}}=0.37$ against a ST gain or the ordinary
+line, $\tau_{\mathrm{LT}}=0.20$ against a LT gain), and nothing when carryforward already absorbs those.
+At year-end, `RollYearEnd()` keeps only $C'$ (which **survives**) and zeroes both annual pools. The
+legacy gate was retired with the gated oracle arm (`archive/RetiredComponents.md` §6).
 
 ### 2.4 The Wash-Sale Clock $\mathcal{W}$ — §1091 on both sides, in calendar days (v0.3-1)
 
@@ -128,13 +138,16 @@ days centered on the sale date.
 **The simulator enforces both sides** (ROADMAP finding F7, fixed in v0.3-1):
 
 - **Before-side (the harvest gate).** For lot $k$ of ticker $A$ on date $d$,
-  $$\mathcal{W}_{k} = \min\Bigl(999,\ d-\mathrm{lastLossSale}(A),\ \min_{j\in\mathrm{open}(A),\,j\ne k}\bigl(d-\mathrm{date}(s_j)\bigr)\Bigr)\quad[\mathrm{d_{cal}}],$$
-  so a **different** lot bought within 30 days is a replacement and blocks the harvest. The
-  lot being sold is never its own replacement. The oracle gate is
+  $$\mathcal{W}_{k} = \min\Bigl(999,\ g\cdot(d-\mathrm{lastLossSale}(A)),\ \min_{j\in\mathrm{acq}_{30}(A),\,j\ne k}\bigl(d-\mathrm{date}(s_j)\bigr)\Bigr)\quad[\mathrm{d_{cal}}],$$
+  so a **different** lot bought within 30 days is a replacement and blocks the harvest. It counts
+  whether still open or already sold ($\mathrm{acq}_{30}$, v0.3-2b; Reg. 1.1091-1). The lot being
+  sold is never its own replacement. The oracle gate is
   $$f^*(x) \supseteq \mathbb{1}[\mathcal{W}_{k} > 30],$$
   **strict**, because day 30 is still inside the inclusive window.
-  (The $d-\mathrm{lastLossSale}$ term is the pre-existing conservative rule of not re-harvesting
-  a ticker within 30 days of its own harvest. It is now measured on the calendar.)
+  (The $d-\mathrm{lastLossSale}$ term, $g=1$, is the pre-existing conservative rule of not
+  re-harvesting a ticker within 30 days of its own harvest. It is **stricter than §1091**, since
+  selling acquires nothing. `--no-reharvest-guard` sets $g=\infty$; the audit stays at 0
+  violations either way.)
 - **After-side (every buy).** $\mathrm{CanBuy}(A)=\mathbb 1[d-\mathrm{lastLossSale}(A)>30]$.
   The same-ticker reopen is scheduled for the first trading day on or after
   $\mathrm{sale}+31$ calendar days, and is re-deferred by date if the ticker is loss-sold again
@@ -147,9 +160,9 @@ sales to be wash sales before the fix, and 0 after.
 
 ### 2.5 Year-End Reset
 
-On January 1 of each simulated year the ledger rolls: net loss beyond the \$3k ordinary
-allowance banks into `LossCarryforward` (which persists), then `RealizedGainsYTD` resets to
-0. Wash-sale clocks intentionally **do not
+On January 1 of each simulated year the ledger rolls through the netting map $\mathcal S$: the
+character-split remainder beyond the \$3k ordinary deduction becomes `CarryShortTerm`/`CarryLongTerm`
+(which persist and are consumed by later gains), and both annual pools reset to 0. Wash-sale clocks intentionally **do not
 reset** — the IRS 30-day window crosses year-end boundaries.
 
 ```csharp
@@ -177,8 +190,8 @@ The **dimensionality partition** of the $d$ feature coordinates:
 LotSnapshot ∈ ℝ^d × 𝒴
 ├── x ∈ 𝒳 ⊂ ℝ^d  (features — model inputs)
 │   ├── L, H, S, B, W, K              ← 𝒳_lot     ⊂ ℝ^6   (lot-level)
-│   ├── RealizedGainsYTD, LossCarryforward, OrdinaryOffsetBudget,
-│   │   Sigma_TE, WashClock           ← 𝒳_portfolio ⊂ ℝ^5  (portfolio-level: ledger + risk)
+│   ├── NetST, NetLT, CarryST, CarryLT, OrdinaryOffsetBudget,
+│   │   Sigma_TE, WashClock           ← 𝒳_portfolio ⊂ ℝ^7  (portfolio-level: ledger + risk)
 │   ├── R_t, SigmaRange, DeltaMA50, DeltaMA200  ← 𝒳_asset ⊂ ℝ^4  (asset-level)
 │   └── TaxValue, DaysToYE            ← 𝒳_derived  ⊂ ℝ^2  (composite)
 │
@@ -190,7 +203,7 @@ LotSnapshot ∈ ℝ^d × 𝒴
     └── Y_Utility ∈ ℝ                 ← raw U(x)  (per-lot diagnostic; see MLDerivations §2.5)
 ```
 
-So $d = 17$ before one-hot encoding of `Sector` (schema v4, unchanged in $d$ since v3; was 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
+So $d = 19$ before one-hot encoding of `Sector` (schema v5, v0.3-3: the ledger split by character; 17 in v3/v4, 15 pre-v0.25). The ML model learns $\hat{\eta} : \mathbb{R}^d \to [0,1]$ using the $d$ feature columns as input and `Y_Soft` as the training target (or `Y_Oracle` for hard-label classifiers).
 
 **Schema-first timing:** `LotSnapshot` is defined now as the **interface contract** before the simulation exists. Every downstream component — `PriceLoader`, `OracleGate`, `SoftLabelBuilder`, `SimulationExporter` — is built against this schema. Defining it late would mean those components implicitly define the schema through whatever they happen to produce, which is riskier in a typed system.
 
@@ -216,8 +229,8 @@ So $d = 17$ before one-hot encoding of `Sector` (schema v4, unchanged in $d$ sin
 
 | Field | Formula | Source |
 |-------|---------|--------|
-| `RealizedGainsYTD` | signed net realised P&L YTD (pre-v0.25 `G_YTD`) | `Ledger.RealizedGainsYTD` |
-| `LossCarryforward` | $\sum_{\text{years}} \max(0, \text{netLoss} - \$3k)$, survives year-end | `Ledger.LossCarryforward` |
+| `NetST`, `NetLT` | $G^{\mathrm{ST}}, G^{\mathrm{LT}}$: signed net realised P&L YTD by §1222 character | `Ledger.NetShortTerm`, `Ledger.NetLongTerm` |
+| `CarryST`, `CarryLT` | $C^{\mathrm{ST}}, C^{\mathrm{LT}}$: prior-year carryforward by character (output of the netting map $\mathcal S$), survives year-end, consumed by later gains | `Ledger.CarryShortTerm`, `Ledger.CarryLongTerm` |
 | `OrdinaryOffsetBudget` | $\max(0, \$3k - \max(0, -\text{net}))$ | `Ledger.OrdinaryOffsetBudget` (derived) |
 | `Sigma_TE` | $\sigma_{\text{TE}} = \sqrt{\delta w^\top \Sigma\, \delta w}$ | computed in simulation |
 | `WashClock` | $\mathcal{W}_{k} \in \mathbb{Z}_{\geq 0}\cup\{999\}$, calendar days | `PortfolioState.WashClock(lot)` |
@@ -284,7 +297,7 @@ The raw panel $\{(X_{k,t}, Y_{k,t})\}$ is **not** i.i.d. — it has two sources 
 At any fixed $t$, all open lots share the **same portfolio-level state**:
 $$G_t^{\text{YTD}},\; \sigma_{\text{TE},t} \in \text{PortfolioState}_t$$
 
-So `LotSnapshot(AAPL, t=50)` and `LotSnapshot(MSFT, t=50)` share the same ledger (`RealizedGainsYTD`, `OrdinaryOffsetBudget`) and `Sigma_TE` coordinates — they are correlated through the common $\mathcal{S}_t$.
+So `LotSnapshot(AAPL, t=50)` and `LotSnapshot(MSFT, t=50)` share the same ledger (`NetST` … `OrdinaryOffsetBudget`) and `Sigma_TE` coordinates — they are correlated through the common $\mathcal{S}_t$.
 
 #### Source 2: Temporal dependence (same lot at consecutive days)
 
@@ -296,7 +309,7 @@ The label $\tilde{y}_{k,t} = f^*(x_{k,t})$ is a **deterministic function of $x_{
 
 $$\tilde{y}_{k,t} \perp \tilde{y}_{j,s} \mid x_{k,t} \quad \forall (j,s) \neq (k,t)$$
 
-The shared portfolio state is not hidden — it is **explicitly encoded** as columns in every snapshot. `RealizedGainsYTD`, `LossCarryforward`, `OrdinaryOffsetBudget`, and `Sigma_TE` appear as coordinates in $x_{k,t}$. The cross-sectional correlation is absorbed into the feature representation rather than lurking as latent confounding.
+The shared portfolio state is not hidden — it is **explicitly encoded** as columns in every snapshot. `NetST`, `NetLT`, `CarryST`, `CarryLT`, `OrdinaryOffsetBudget`, and `Sigma_TE` appear as coordinates in $x_{k,t}$. The cross-sectional correlation is absorbed into the feature representation rather than lurking as latent confounding.
 
 This is the **ergodic collapse** described in §2.2 of the theory memo:
 

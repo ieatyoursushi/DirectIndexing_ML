@@ -10,7 +10,7 @@
 > label family it generates, and (3) each supervised and unsupervised model implemented in
 > the ML.NET pillar.
 >
-> **Schema version: v4 (d = 17), oracle: scalarized (the only mode since the pre-v0.3
+> **Schema version: v5 (d = 19; ledger by §1222 character since v0.3-3), oracle: scalarized (the only mode since the pre-v0.3
 > downsizing), validation: purged temporal splits available (v0.26), models: GBT + logistic.**
 > Retired objects (the v0.2 gated oracle, RF, elastic net, the linreg demonstrator,
 > feature-space PCA/K-means) keep their findings in `archive/RetiredComponents.md`.
@@ -46,7 +46,7 @@ The whole system is one chain:
 ```text
 Portfolio state (lots, tax ledger, tracking error)
       ↓   feature extraction
- Lot features X  — one row = one lot, on one day (17 numbers)
+ Lot features X  — one row = one lot, on one day (19 numbers)
       ↓   the oracle rule f*
  Hard label Y_Oracle ∈ {0,1}  — "harvest this lot today?"
       ↓   run the rule forward 30 days
@@ -55,12 +55,12 @@ Portfolio state (lots, tax ledger, tracking error)
  Predicted harvest propensity  η̂(x) ∈ [0,1]
 ```
 
-**One row is one lot on one day.** It carries 17 numeric features in four groups:
+**One row is one lot on one day.** It carries 19 numeric features in four groups:
 
 | Group | Features | What they describe |
 |---|---|---|
 | **Lot** (6) | unrealized return, holding days, long-term flag, cost basis, portfolio weight, lot count | the position itself |
-| **Portfolio** (5) | realized gains YTD, loss carryforward, ordinary-offset budget, tracking error, wash-sale clock | shared state — same for every lot that day |
+| **Portfolio** (7) | net short-/long-term realized P&L YTD, short-/long-term loss carryforward, ordinary-offset budget, tracking error, wash-sale clock | shared state — same for every lot that day |
 | **Asset** (4) | daily return, intraday range, MA50 deviation, MA200 deviation | what the stock is doing |
 | **Derived** (2) | tax value, days to year-end | composites of the above |
 
@@ -114,16 +114,19 @@ $x_{k,t}\in\mathcal X$ is exactly one `LotStateVector` (minus its labels and met
 Projecting onto a single lot,
 
 $$
-\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{17}.
+\phi_{\mathrm{lot}}:(\mathrm{Lot}_k,\mathcal S_t,P_t)\ \longmapsto\ x_{k,t}\in\mathbb R^{19}.
 $$
 
 > **Schema note (v0.25).** $d$ moved $15\to17$: the single portfolio coordinate
 > $G^{\mathrm{YTD}}$ became the three-field **TaxLedger** block, and the derived coordinate
 > $\alpha_{\mathrm{tax}}$ was replaced by the capacity-aware $\mathrm{TaxValue}$.
+> **Schema note (v0.3-3, v5).** $d$ moved $17\to19$: the blended
+> $(G^{\mathrm{net}},C^{\mathrm{fwd}})$ split by §1222 character into
+> $(G^{\mathrm{ST}},G^{\mathrm{LT}},C^{\mathrm{ST}},C^{\mathrm{LT}})$ (ROADMAP F8).
 
 ## 1.2 Coordinates with explicit types
 
-The 17 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are the following
+The 19 numeric coordinates (`FeatureLists.NumericFeatures`, in schema order) are the following
 maps. For lot $k$ with shares $q_k\in\mathbb Z_{>0}$, cost basis $p_k\in\mathbb R_{>0}$,
 purchase day $s_k\in\mathbb Z_{\ge0}$, current price $P_t\in\mathbb R_{>0}$, portfolio value
 $V_t\in\mathbb R_{>0}$:
@@ -142,10 +145,10 @@ W=w_k &= \frac{q_kP_t}{V_t}\in(0,1)
    &&\text{portfolio weight}\\
 K &= \#\{\text{open lots with ticker }A_i\}\in\mathbb Z_{>0}
    &&\text{lot count}\\[4pt]
-G^{\mathrm{net}}_t &\in\mathbb R
-   &&\text{RealizedGainsYTD — signed net realized P\&L}\\
-C^{\mathrm{fwd}}_t &\in\mathbb R_{\ge0}
-   &&\text{LossCarryforward — banked losses}\\
+G^{\mathrm{ST}}_t,\ G^{\mathrm{LT}}_t &\in\mathbb R
+   &&\text{NetST, NetLT — signed net realized P\&L by character}\\
+C^{\mathrm{ST}}_t,\ C^{\mathrm{LT}}_t &\in\mathbb R_{\ge0}
+   &&\text{CarryST, CarryLT — prior-year carryforward by character}\\
 O_t &\in[0,3000]
    &&\text{OrdinaryOffsetBudget — §1211(b) allowance left}\\
 \sigma_{\mathrm{TE}} &\in\mathbb R_{\ge0}
@@ -177,25 +180,47 @@ $\tau:\{0,1\}\to\{\tau_{\mathrm{ST}},\tau_{\mathrm{LT}}\}$,
 $\tau(S)=\tau_{\mathrm{ST}}(1-S)+\tau_{\mathrm{LT}}S$ (written $\tau(h)$ elsewhere for brevity), with
 $\tau_{\mathrm{ST}}=0.37>\tau_{\mathrm{LT}}=0.20$.
 
-## 1.3 The tax-value map $g_{\mathrm{tax}}$ (the v0.25 object)
+## 1.3 The tax-value map $g_{\mathrm{tax}}$ (v0.25; Schedule D form since v0.3-3)
 
 The TaxLedger (`Core/Portfolio/TaxLedger.cs`) is the deterministic Schedule D state
-$\mathrm{ledger}_t=(G^{\mathrm{net}}_t,\,C^{\mathrm{fwd}}_t)$ with the derived allowance
-$O_t=\max\{0,\ 3000-\max(0,-G^{\mathrm{net}}_t)\}$ and **offset capacity**
+$\mathrm{ledger}_t=(G^{\mathrm{ST}}_t,G^{\mathrm{LT}}_t,C^{\mathrm{ST}}_t,C^{\mathrm{LT}}_t)\in\mathcal L=\mathbb R^2\times\mathbb R^2_{\ge0}$:
+this year's signed net realized P&L by §1222 character, and prior years' carryforward by
+character (§1212(b) preserves it).
 
-$$
-\mathrm{cap}_t \;=\; \max\{G^{\mathrm{net}}_t,\,0\} \;+\; O_t \;\in\mathbb R_{\ge0}.
-$$
+**The year-end netting map** $\mathcal S:\mathcal L\to\mathbb R\times[0,3000]\times\mathbb R^2_{\ge0}$
+(`LedgerState.Close`) is Schedule D plus the carryover worksheet, run as if the year closed now:
 
-For a lot whose loss in dollars is $D_k=\max\{0,\ (p_k-P_t)q_k\}$ (zero for a winner),
+1. carryforward enters as a loss of its own character: $n_S=G^{\mathrm{ST}}-C^{\mathrm{ST}}$, $n_L=G^{\mathrm{LT}}-C^{\mathrm{LT}}$;
+2. if $n_S,n_L$ have opposite signs they cross-net toward $0$;
+3. a remaining net loss deducts $\mathrm{ded}=\min\{3000,\ n_S^-+n_L^-\}$ from ordinary income (§1211(b)), short-term first;
+4. the rest carries forward with character, $C'=(n_S^- -\mathrm{ded}_S,\ n_L^- -\mathrm{ded}_L)$;
+
+and the year's tax is $T=\tau_{\mathrm{ST}}n_S^+ +\tau_{\mathrm{LT}}n_L^+ -\tau_{\mathrm{ord}}\,\mathrm{ded}$
+($\tau_{\mathrm{ord}}=\tau_{\mathrm{ST}}$: short-term gains are ordinary income). Derived:
+$O_t=3000-\mathrm{ded}$ and $\mathrm{cap}_t=n_S^++n_L^++O_t$.
+
+For a lot of character $c=\mathbf 1_{\mathrm{LT}}$ whose loss in dollars is $D_k=\max\{0,(p_k-P_t)q_k\}$,
+let $\mathrm{ledger}\oplus_c(-D)$ add $-D$ to the pool of character $c$. Then
 
 $$
 \boxed{\;
-g_{\mathrm{tax}}(\mathrm{ledger}_t,h_k,\ell_k)
-=\underbrace{\tau(h_k)\cdot\min\{D_k,\ \mathrm{cap}_t\}}_{\text{usable this year, full rate}}
-\;+\;\underbrace{\tau_{\mathrm{fut}}\cdot\max\{D_k-\mathrm{cap}_t,\,0\}\cdot\delta}_{\text{banked, discounted}}
+g_{\mathrm{tax}}(\mathrm{ledger}_t,c,D_k)
+=\underbrace{T(\mathrm{ledger}_t)-T(\mathrm{ledger}_t\oplus_c(-D_k))}_{\text{tax saved this year}}
+\;+\;\underbrace{\tau_{\mathrm{fut}}\,\delta\,\bigl[\textstyle\sum C'(\mathrm{ledger}_t\oplus_c(-D_k))-\sum C'(\mathrm{ledger}_t)\bigr]}_{\text{newly banked, discounted}}
 \;}
 $$
+
+**Why a counterfactual difference rather than a closed form.** $T$ is piecewise linear in
+the ledger, so $g_{\mathrm{tax}}$ is too. Its slope on each piece is the rate of whatever
+the marginal loss dollar *displaces*: an un-offset short-term gain ($\tau_{\mathrm{ST}}$), a
+long-term gain ($\tau_{\mathrm{LT}}$), the ordinary line ($\tau_{\mathrm{ord}}$), or nothing
+(it is only banked). The harvested lot's own character decides *which pool* the loss enters,
+not its rate. A hand-written $\tau(c)\min(D,\mathrm{cap})+\dots$ gets this wrong whenever
+the characters differ, and it ignores carryforward's prior claim on the gains and on the
+\$3k line (ROADMAP F8). **Reduction:** with $C=0$ and gains of a single character, it is
+exactly the v0.25 form
+$\tau\min\{D,\mathrm{cap}\}+\tau_{\mathrm{fut}}\delta(D-\mathrm{cap})^+$, with $\tau$ the rate
+of the gains (or $\tau_{\mathrm{ord}}$ on the \$3k line).
 
 with $\tau_{\mathrm{fut}}=0.20$ and $\delta=0.5$. Economically: $\delta$ is a **hazard-rate
 object** — $\delta\approx\Pr(\text{loss absorbed by a gain before death})\times$ (time-value
@@ -214,14 +239,14 @@ The coordinates partition by *origin of state* into four blocks:
 
 $$
 \mathcal X \;=\; \underbrace{\mathcal X_{\mathrm{lot}}}_{\mathbb R^6}\ \oplus\
-\underbrace{\mathcal X_{\mathrm{port}}}_{\mathbb R^5}\ \oplus\
+\underbrace{\mathcal X_{\mathrm{port}}}_{\mathbb R^7}\ \oplus\
 \underbrace{\mathcal X_{\mathrm{asset}}}_{\mathbb R^4}\ \oplus\
 \underbrace{\mathcal X_{\mathrm{derived}}}_{\mathbb R^2},
-\qquad \dim\mathcal X = 6+5+4+2 = 17.
+\qquad \dim\mathcal X = 6+7+4+2 = 19.
 $$
 
 - $\mathcal X_{\mathrm{lot}}=(L,H,S,B,W,K)$ — intrinsic to the lot.
-- $\mathcal X_{\mathrm{port}}=(G^{\mathrm{net}}_t,C^{\mathrm{fwd}}_t,O_t,\sigma_{\mathrm{TE}},\mathcal W^{A_i}_t)$ — shared state $\mathcal S_t$, identical across every lot on day $t$.
+- $\mathcal X_{\mathrm{port}}=(G^{\mathrm{ST}}_t,G^{\mathrm{LT}}_t,C^{\mathrm{ST}}_t,C^{\mathrm{LT}}_t,O_t,\sigma_{\mathrm{TE}},\mathcal W_{k,t})$ — shared state $\mathcal S_t$, identical across every lot on day $t$.
 - $\mathcal X_{\mathrm{asset}}=(R_t,\Sigma\mathrm{Range},\Delta\mathrm{MA}_{50},\Delta\mathrm{MA}_{200})$ — from the price series.
 - $\mathcal X_{\mathrm{derived}}=(\mathrm{TaxValue},\mathrm{DaysToYE})$ — composites.
 
@@ -481,7 +506,7 @@ PR-AUC, *and* test-period positive rate together.
 `PreprocessingPipeline.Build` realizes
 
 $$
-\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{17}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=17+m,
+\phi(x,z)=\Bigl[\,\underbrace{\mathrm{Norm}(x)}_{\in\mathbb R^{19}}\ \big\Vert\ \underbrace{\mathrm{OneHot}(\mathrm{Clean}(z))}_{\in\{0,1\}^{m}}\,\Bigr]\in\mathbb R^{d},\quad d=19+m,
 $$
 
 where $\mathrm{Norm}(x)_j=(x_j-\mu_j)/\sigma_j$ with $(\mu_j,\sigma_j)$ estimated on the
@@ -622,7 +647,7 @@ PCA on the standardized feature covariance $C\in\mathbb R^{17\times17}$ and K-me
 per-symbol technical aggregates were course-era diagnostics; both found no exploitable
 low-dimensional or clustered structure in lot-state space (`archive/RetiredComponents.md`
 §4–§5). Their successor is a **different object**: the eigendecomposition of the
-point-in-time **return** covariance $\hat\Sigma_t\in\mathbb R^{N\times N}$ (v0.3-4), which
+point-in-time **return** covariance $\hat\Sigma_t\in\mathbb R^{N\times N}$ (v0.3-6), which
 serves covariance cleaning (Marchenko–Pastur), the agent's factor summaries $U_k^\top\delta w$
 (v0.4b), and core+reserve universe reduction (v0.45, issue #6).
 
@@ -678,13 +703,13 @@ point of use. It restates §0–§3 for a reader who wants no inference.*
 The feature space is
 
 $$
-\mathcal X\subset\mathbb R^{17}.
+\mathcal X\subset\mathbb R^{19}.
 $$
 
 A feature vector is
 
 $$
-x\in\mathcal X,\qquad x=\langle x_1,\dots,x_{17}\rangle.
+x\in\mathcal X,\qquad x=\langle x_1,\dots,x_{19}\rangle.
 $$
 
 A lot-indexed observation at lot $k$ and day $t$ is
@@ -738,7 +763,7 @@ g_{\mathrm{tax}}:\ \mathcal L\times\mathbb Z_{\ge0}\times\mathbb R\ \to\ \mathbb
 $$
 
 where $\mathcal L$ is the space of ledger states
-$\mathrm{ledger}_t=(G^{\mathrm{net}}_t,C^{\mathrm{fwd}}_t)\in\mathbb R\times\mathbb R_{\ge0}$.
+$\mathrm{ledger}_t=(G^{\mathrm{ST}}_t,G^{\mathrm{LT}}_t,C^{\mathrm{ST}}_t,C^{\mathrm{LT}}_t)\in\mathbb R^2\times\mathbb R^2_{\ge0}$.
 
 The offset capacity is
 
@@ -749,7 +774,7 @@ $$
 The preprocessing map is
 
 $$
-\phi:\ \mathcal X\times\mathcal Z\ \to\ \mathbb R^{d},\qquad d=17+m .
+\phi:\ \mathcal X\times\mathcal Z\ \to\ \mathbb R^{d},\qquad d=19+m .
 $$
 
 The backtest soft label is
@@ -798,7 +823,7 @@ constants drift.)
 - `ValidationHardening_v026.md` — purged temporal splits and the leakage-vs-prevalence diagnosis.
 - `MLNetLayer.md` — implementation architecture + ML.NET ↔ sklearn parameter map.
 - `MLNetLeakageAudit.md` — training-fold-only invariants.
-- `src/Core/Portfolio/LotStateVector.cs` — canonical d=17 schema · `TaxLedger.cs` — $g_{\mathrm{tax}}$.
+- `src/Core/Portfolio/LotStateVector.cs` — canonical d=19 schema · `TaxLedger.cs` — $g_{\mathrm{tax}}$.
 - `src/Core/Oracle/OracleBoundary.cs`, `OracleConfig.cs` — $f^*$, $U$, constants.
 - `src/Core/Simulation/SoftLabelBuilder.cs`, `GbmSimulator.cs` — $\tilde y_{\mathrm{BT}}$, $\tilde y_{\mathrm{GBM}}$.
 - `src/ML/CSharp/MLNet/Splits/` — `DataSplit`, `SplitPolicy`, `TemporalSplit`.

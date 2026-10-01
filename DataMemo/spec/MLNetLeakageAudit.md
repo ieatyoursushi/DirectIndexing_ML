@@ -65,7 +65,7 @@ shape plus a MathNet SVD over the *same* training-fold matrix, so test variance 
 the principal axes.
 
 The rule carries over to its successor, the eigendecomposition of the return covariance
-$\hat\Sigma_t$ (v0.3-4). There it takes the time-series form: **a covariance used on day $t$
+$\hat\Sigma_t$ (v0.3-6). There it takes the time-series form: **a covariance used on day $t$
 may be estimated only from returns observed before $t$** ($\mathcal F_{t-1}$-measurable). The
 current `TrackingErrorProxy` violates exactly this. It estimates $\hat\Sigma$ once from the
 full price history, so $\sigma_{\mathrm{TE}}$ (a feature) peeks forward (ROADMAP finding F1).

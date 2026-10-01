@@ -29,7 +29,7 @@ public static class LotStateVectorCsvReader
         string[] required =
         {
             "L","H","S","B","W","K",
-            "RealizedGainsYTD","LossCarryforward","OrdinaryOffsetBudget","Sigma_TE","WashClock",
+            "NetST","NetLT","CarryST","CarryLT","OrdinaryOffsetBudget","Sigma_TE","WashClock",
             "R_t","SigmaRange","DeltaMA50","DeltaMA200",
             "TaxValue","DaysToYE",
             "Y_Oracle","Y_Soft_GBM","Y_Soft_BT","Y_TaxValue","Y_Utility",
@@ -54,8 +54,10 @@ public static class LotStateVectorCsvReader
                 B          = ParseFloat(f[idx["B"]]),
                 W          = ParseFloat(f[idx["W"]]),
                 K          = ParseInt(f[idx["K"]]),
-                RealizedGainsYTD     = ParseFloat(f[idx["RealizedGainsYTD"]]),
-                LossCarryforward     = ParseFloat(f[idx["LossCarryforward"]]),
+                NetST                = ParseFloat(f[idx["NetST"]]),
+                NetLT                = ParseFloat(f[idx["NetLT"]]),
+                CarryST              = ParseFloat(f[idx["CarryST"]]),
+                CarryLT              = ParseFloat(f[idx["CarryLT"]]),
                 OrdinaryOffsetBudget = ParseFloat(f[idx["OrdinaryOffsetBudget"]]),
                 Sigma_TE   = ParseFloat(f[idx["Sigma_TE"]]),
                 WashClock  = ParseInt(f[idx["WashClock"]]),

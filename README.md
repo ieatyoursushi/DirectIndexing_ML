@@ -151,7 +151,8 @@ suite) and `docs-check` (the math ↔ code spine; see Methodology).
 
 One row of `data/lots.csv` is an immutable "photograph" of one lot at one day — the type
 [`LotStateVector`](src/Core/Portfolio/LotStateVector.cs), which is the load-bearing schema of the
-whole codebase. It is **schema v4** (`d = 17` numeric features, 25 columns). v0.25 (schema v3)
+whole codebase. It is **schema v5** (`d = 19` numeric features, 27 columns). v0.3-3 split the
+ledger by §1222 character (Schedule D netting with consumed carryforward). v0.25 (schema v3)
 turned the `G_YTD` scalar into the three-field `TaxLedger` block, replaced `TaxAlpha` with the
 capacity-aware `TaxValue`, and added the `Y_TaxValue` / `Y_Utility` labels. v4 dropped the retired
 gated-oracle spectator label. Every column's type, units and code source are in
@@ -159,10 +160,10 @@ gated-oracle spectator label. Every column's type, units and code source are in
 
 | Group | Columns |
 |---|---|
-| **Lot-level** | `L` unrealized return · `H` holding days · `S` short/long flag · `B` cost basis · `W` lot weight · `K` open lots in same ticker |
-| **Portfolio-level** (TaxLedger) | `RealizedGainsYTD` signed net realized P&L YTD (the pre-v0.25 `G_YTD`) · `LossCarryforward` banked losses, survives year-end (26 USC §1212(b)) · `OrdinaryOffsetBudget` remaining $3k/yr allowance · `Sigma_TE` tracking error · `WashClock` calendar days to the lot's nearest §1091 event (both sides; 999 = none) |
+| **Lot-level** | `L` unrealized return · `H` lot age (trading days) · `S` §1222 long-term flag (calendar) · `B` cost basis · `W` lot weight · `K` open lots in same ticker |
+| **Portfolio-level** (TaxLedger) | `NetST` / `NetLT` signed net realized P&L YTD by character · `CarryST` / `CarryLT` prior-year loss carryforward by character (26 USC §1212(b); consumed by later gains) · `OrdinaryOffsetBudget` the $3k/yr allowance not yet claimed (carryforward claims it first) · `Sigma_TE` tracking error · `WashClock` calendar days to the lot's nearest §1091 event (both sides; 999 = none) |
 | **Asset-level** | `R_t` daily return · `SigmaRange` range-vol proxy · `DeltaMA50` · `DeltaMA200` |
-| **Derived** | `TaxValue` = τ(h)·min(loss, capacity) + τ_f·max(loss−capacity, 0)·δ · `DaysToYE` |
+| **Derived** | `TaxValue` = this year's tax saved (at the rate of whatever the loss displaces) + τ_f·δ·(newly banked carryforward), a counterfactual difference of the Schedule D netting · `DaysToYE` |
 | **Labels** | `Y_Oracle ∈ {0,1}` (hard, "fires today?") · `Y_Soft_BT ∈ [0,1]` (fraction of next 30 real days the rule fires; NaN near the window end) · `Y_Soft_GBM ∈ [0,1]` (same, over 200 simulated paths) · `Y_TaxValue ∈ ℝ≥0` (regression target = `TaxValue`) · `Y_Utility ∈ ℝ` (the per-lot scalarized objective `U(x)`; the RL reward is defined at portfolio level, see SymbolTable §I) |
 | **Metadata** | `Symbol` · `Sector` · `Timestep` *(dropped before modeling)* |
 

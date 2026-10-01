@@ -193,8 +193,10 @@ public sealed class SimulationEngine
             PurchaseDayNumber = lot.PurchaseDate.DayNumber,   // in-memory plumbing (§1222 forward)
 
             // Portfolio-level (shared TaxLedger + risk state)
-            RealizedGainsYTD     = (float)_state.Ledger.RealizedGainsYTD,
-            LossCarryforward     = (float)_state.Ledger.LossCarryforward,
+            NetST                = (float)_state.Ledger.NetShortTerm,
+            NetLT                = (float)_state.Ledger.NetLongTerm,
+            CarryST              = (float)_state.Ledger.CarryShortTerm,
+            CarryLT              = (float)_state.Ledger.CarryLongTerm,
             OrdinaryOffsetBudget = (float)_state.Ledger.OrdinaryOffsetBudget,
             Sigma_TE   = sigmaTE,
             WashClock  = washClock,

@@ -1,32 +1,31 @@
 namespace DirectIndexing.Core.Portfolio;
 
 /// <summary>
-/// Individual-investor tax ledger — the tax-law state object that replaces the
-/// bare G_YTD scalar (v0.25, issue #23).
+/// Individual-investor tax ledger — the Schedule D state object (v0.25, issue #23;
+/// character pools and carryforward consumption since v0.3-3, ROADMAP F8).
 ///
-/// Encodes the Schedule D mechanics that matter for tax-loss harvesting in the
-/// individual (indefinite-carryforward) regime:
+/// State (all $, this calendar year unless noted):
+///   G^ST, G^LT  — signed net realized P&amp;L by §1222 character (gains +, losses −)
+///   C^ST, C^LT  — capital-loss carryforward from PRIOR years, by character (≥ 0;
+///                 §1212(b) preserves character)
 ///
-///   1. RealizedGainsYTD — signed net realized P&amp;L this calendar year
-///      (external gains positive, harvested losses negative). Resets at
-///      year-end. Identical semantics to the pre-v0.25 G_YTD scalar.
-///   2. Up to $3,000/yr of net capital loss offsets ordinary income
-///      (26 USC §1211(b)); the unused remainder is OrdinaryOffsetBudget.
-///   3. Net loss beyond the ordinary allowance carries forward indefinitely
-///      (26 USC §1212(b)) — LossCarryforward survives year-end. This is the
-///      mechanic the old constant re-seed got wrong: a loss harvested with no
-///      gains available is banked, never wasted.
+/// Year-end netting S(ledger) — the law as Schedule D + the carryover worksheet run it:
+///   1. carryforward enters as a loss of its own character:  n_S = G^ST − C^ST,  n_L = G^LT − C^LT
+///   2. opposite-signed nets cross-net:                      n_S, n_L ← netted toward 0
+///   3. a remaining net loss deducts up to $3,000 from ordinary income (§1211(b)),
+///      taken from the short-term loss first
+///   4. what is left carries forward with its character (§1212(b))
+///   tax T = τ_ST·n_S⁺ + τ_LT·n_L⁺ − τ_ord·deduction        (τ_ord = τ_ST: ST gains are ordinary)
 ///
-/// The ledger is deterministic bookkeeping over already-simulated events —
-/// a state-transition function (state, decision) → state', structurally
-/// identical to the wash-clock evolution. It is NOT an estimator and holds
-/// no latent parameters.
+/// Carryforward is CONSUMED in step 1 — the year's gains absorb it before a new loss
+/// can — which is the F8 bug of the v0.25 blended pool (banked, never used; the $3k line
+/// valued at full rate even when carryforward already claimed it).
 ///
-/// v0.25 simplification (deliberate, documented): short- and long-term
-/// realizations share one blended pool with a single τ(h) applied at harvest.
-/// Real Schedule D runs two typed pools with cross-netting and
-/// character-preserving carryforward; splitting them is a bounded future
-/// extension.
+/// The ledger is deterministic bookkeeping — a state-transition function, structurally
+/// identical to the wash-clock evolution. It is NOT an estimator and holds no latent
+/// parameters. Valuation (<see cref="ComputeTaxValue(decimal,bool)"/>) is a
+/// counterfactual difference of S, so the rate a loss earns is the rate of whatever it
+/// actually offsets, never the harvested lot's own τ by fiat.
 /// </summary>
 // [math:ledger] — DataMemo/spec/SymbolTable.md
 public sealed class TaxLedger
@@ -36,22 +35,25 @@ public sealed class TaxLedger
     /// <summary>Annual cap on net capital loss deducted against ordinary income (26 USC §1211(b)).</summary>
     public const decimal AnnualOrdinaryOffsetCap = 3_000m;
 
-    /// <summary>τ short-term — ordinary marginal rate applied to short-term lots (held ≤ 1 calendar year, §1222).</summary>
+    /// <summary>τ_ST — ordinary marginal rate: short-term gains and the §1211(b) deduction (held ≤ 1 calendar year, §1222).</summary>
     public const decimal TauShortTerm = 0.37m;
 
-    /// <summary>τ long-term — preferential rate applied to long-term lots (held &gt; 1 calendar year).</summary>
+    /// <summary>τ_LT — preferential rate on net long-term gains (held &gt; 1 calendar year).</summary>
     public const decimal TauLongTerm = 0.20m;
 
+    /// <summary>τ_ord — rate of the §1211(b) ordinary-income deduction (= τ_ST for this client).</summary>
+    public const decimal TauOrdinary = TauShortTerm;
+
     /// <summary>
-    /// Rate applied to the banked slice of a harvest (losses used in a future
-    /// tax year). Blended-pool simplification: future absorption is assumed to
-    /// offset long-term-rate gains.
+    /// Rate applied to newly BANKED carryforward (losses used in a future tax year).
+    /// Character-blind simplification: future absorption is assumed to offset
+    /// long-term-rate gains.
     /// </summary>
     public const decimal TauFuture = 0.20m;
 
     /// <summary>
-    /// δ — discount on the banked slice of a harvest's tax value. Constant in
-    /// v0.25, but conceptually a hazard-rate object:
+    /// δ — discount on the banked slice of a harvest's tax value. Constant, but
+    /// conceptually a hazard-rate object:
     ///   δ ≈ Pr(loss absorbed by a gain before death) × time-value to absorption.
     /// It must never be silently assumed → 1 (carryforward is NOT worth face
     /// value for a low-outside-activity client; see Rev. Rul. 74-175 —
@@ -61,81 +63,90 @@ public sealed class TaxLedger
 
     // ── State ────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Signed net realized P&amp;L this calendar year. External/seeded gains push
-    /// it up, harvested losses push it down — exactly the pre-v0.25 G_YTD.
-    /// </summary>
-    public decimal RealizedGainsYTD { get; private set; }
+    /// <summary>G^ST — signed net short-term realized P&amp;L this year.</summary>
+    public decimal NetShortTerm { get; private set; }
 
-    /// <summary>
-    /// Accumulated net losses beyond each year's ordinary allowance.
-    /// SURVIVES year-end — the field the old constant re-seed got wrong.
-    /// </summary>
-    public decimal LossCarryforward { get; private set; }
+    /// <summary>G^LT — signed net long-term realized P&amp;L this year.</summary>
+    public decimal NetLongTerm { get; private set; }
+
+    /// <summary>C^ST — short-term capital-loss carryforward from prior years (≥ 0).</summary>
+    public decimal CarryShortTerm { get; private set; }
+
+    /// <summary>C^LT — long-term capital-loss carryforward from prior years (≥ 0).</summary>
+    public decimal CarryLongTerm { get; private set; }
+
+    /// <summary>The ledger's four numbers as a value — what a frozen-state valuation needs.</summary>
+    public LedgerState State => new(NetShortTerm, NetLongTerm, CarryShortTerm, CarryLongTerm);
 
     // ── Derived quantities ───────────────────────────────────────────────────
 
-    /// <summary>
-    /// Remaining ordinary-income offset allowance this year:
-    /// max(0, $3,000 − net loss already realized). Resets implicitly at
-    /// year-end because it is derived from RealizedGainsYTD.
-    /// </summary>
-    // [math:offset_budget] — DataMemo/spec/SymbolTable.md
-    public decimal OrdinaryOffsetBudget =>
-        Math.Max(0m, AnnualOrdinaryOffsetCap - Math.Max(0m, -RealizedGainsYTD));
+    /// <summary>G^net = G^ST + G^LT — signed net realized P&amp;L this year, both characters.</summary>
+    public decimal RealizedGainsYTD => NetShortTerm + NetLongTerm;
+
+    /// <summary>C = C^ST + C^LT — total carryforward on the books.</summary>
+    public decimal LossCarryforward => CarryShortTerm + CarryLongTerm;
 
     /// <summary>
-    /// offsetCapacity_t — dollars of a NEW harvested loss usable this tax year:
-    /// net gains still un-offset plus the remaining ordinary allowance.
+    /// O_t — the §1211(b) allowance NOT yet claimed if the year closed today:
+    /// 3000 − deduction(S(ledger)). Carryforward claims it before a new harvest can.
+    /// </summary>
+    // [math:offset_budget] — DataMemo/spec/SymbolTable.md
+    public decimal OrdinaryOffsetBudget => State.OrdinaryOffsetBudget;
+
+    /// <summary>
+    /// cap_t — dollars of a NEW harvested loss usable this tax year (either character):
+    /// net gains still un-offset after carryforward and cross-netting, plus O_t.
     /// </summary>
     // [math:offset_capacity] — DataMemo/spec/SymbolTable.md
-    public decimal OffsetCapacity =>
-        Math.Max(0m, RealizedGainsYTD) + OrdinaryOffsetBudget;
+    public decimal OffsetCapacity => State.OffsetCapacity;
 
     // ── Transitions ──────────────────────────────────────────────────────────
 
-    /// <summary>Realized P&amp;L from a harvest/sale: ΔG = q_k · (P_t − p_k), negative for a loss.</summary>
-    public void RecordRealized(decimal delta) => RealizedGainsYTD += delta;
+    /// <summary>Realized P&amp;L of a sale: ΔG = q_k·(P_t − p_k) into the pool of its §1222 character.</summary>
+    public void RecordRealized(decimal delta, bool isLongTerm)
+    {
+        if (isLongTerm) NetLongTerm  += delta;
+        else            NetShortTerm += delta;
+    }
 
     /// <summary>
-    /// External/exogenous gains — client activity outside the simulated book
-    /// (the hook for the v0.5 outside-gains client personas; the engine no longer
-    /// seeds it since the gated oracle was retired). Deliberately does NOT net
-    /// against LossCarryforward; carryforward netting against endogenous gains
-    /// arrives with the sell-winner trim process (v0.3-7).
+    /// External/exogenous gains — client activity outside the simulated book (the hook
+    /// for the v0.5 outside-gains client personas). Same pools as the book's own sales.
     /// </summary>
-    public void RecordExternalGains(decimal amount) => RealizedGainsYTD += amount;
+    public void RecordExternalGains(decimal amount, bool isLongTerm) => RecordRealized(amount, isLongTerm);
 
     /// <summary>
-    /// Year-end (Jan 1) roll: net loss beyond the ordinary allowance banks into
-    /// LossCarryforward; the annual accumulator resets. Mirrors Schedule D
-    /// year-boundary netting under the blended-pool simplification.
+    /// Year-end (Jan 1) roll: run Schedule D netting, keep only the character-split
+    /// carryforward, reset the annual pools.
     /// </summary>
     // [math:year_end_roll] — DataMemo/spec/SymbolTable.md
     public void RollYearEnd()
     {
-        decimal netLoss = Math.Max(0m, -RealizedGainsYTD);
-        LossCarryforward += Math.Max(0m, netLoss - AnnualOrdinaryOffsetCap);
-        RealizedGainsYTD  = 0m;
+        var y = State.Close();
+        CarryShortTerm = y.CarryShortTerm;
+        CarryLongTerm  = y.CarryLongTerm;
+        NetShortTerm   = 0m;
+        NetLongTerm    = 0m;
     }
 
     // ── Valuation ────────────────────────────────────────────────────────────
 
     /// <summary>
     /// taxValue_k — dollar value of harvesting a loss of <paramref name="lossDollars"/>
-    /// right now, given current ledger state:
+    /// right now, as a counterfactual difference of the year-end netting S:
     ///
-    ///   τ(h)·min(loss, offsetCapacity)              — usable THIS year, full rate
-    /// + τ_future·max(loss − offsetCapacity, 0)·δ    — banked, discounted
+    ///   [T(ledger) − T(ledger ⊕ loss)]                        — tax saved THIS year
+    /// + τ_fut·δ·[C(ledger ⊕ loss) − C(ledger)]                — newly banked, discounted
     ///
-    /// Supersedes the v0.2 TaxAlpha = τ(h)·|P&amp;L|·𝟙[G_YTD&gt;0], which (a) counted
-    /// winners' |gains| as if they were harvestable losses and (b) valued every
-    /// loss dollar at the full current-year rate regardless of offset capacity.
+    /// with "⊕ loss" = record −lossDollars in the lot's character pool. The rate the
+    /// current-year slice earns is whatever it displaces: a short-term gain (τ_ST), a
+    /// long-term gain (τ_LT), or the ordinary deduction (τ_ord) — and nothing at all if
+    /// carryforward already absorbs those (F8).
     /// </summary>
     /// <param name="lossDollars">Unrealized loss in dollars, ≥ 0 (0 for lots not at a loss).</param>
-    /// <param name="isLongTerm">§1222 character of the lot (see <see cref="IsLongTerm"/>) — selects τ.</param>
+    /// <param name="isLongTerm">§1222 character of the lot (see <see cref="IsLongTerm"/>).</param>
     public decimal ComputeTaxValue(decimal lossDollars, bool isLongTerm) =>
-        ComputeTaxValue(lossDollars, isLongTerm, OffsetCapacity);
+        ComputeTaxValue(lossDollars, isLongTerm, State);
 
     /// <summary>
     /// 26 USC §1222: a holding is long-term iff held MORE than one year, measured on the
@@ -148,19 +159,72 @@ public sealed class TaxLedger
         date > purchaseDate.AddYears(1);
 
     /// <summary>
-    /// Static pure form — used by the soft-label forward closures, which freeze
-    /// offsetCapacity at the snapshot and re-value the loss along future price
-    /// paths without holding a ledger reference.
+    /// Static pure form — used by the soft-label forward closures, which freeze the
+    /// ledger at the snapshot and re-value the loss along future price paths.
     /// </summary>
     // [math:g_tax] — DataMemo/spec/SymbolTable.md
-    public static decimal ComputeTaxValue(decimal lossDollars, bool isLongTerm, decimal offsetCapacity)
+    public static decimal ComputeTaxValue(decimal lossDollars, bool isLongTerm, LedgerState ledger)
     {
         if (lossDollars <= 0m) return 0m;
 
-        decimal tau      = isLongTerm ? TauLongTerm : TauShortTerm;
-        decimal usedNow  = Math.Min(lossDollars, offsetCapacity);
-        decimal banked   = Math.Max(lossDollars - offsetCapacity, 0m);
+        var before = ledger.Close();
+        var after  = ledger.With(-lossDollars, isLongTerm).Close();
 
-        return tau * usedNow + TauFuture * banked * CarryforwardDiscount;
+        decimal savedNow = before.Tax - after.Tax;
+        decimal banked   = (after.CarryShortTerm + after.CarryLongTerm)
+                         - (before.CarryShortTerm + before.CarryLongTerm);
+        return savedNow + TauFuture * banked * CarryforwardDiscount;
     }
 }
+
+/// <summary>
+/// The ledger's four numbers as an immutable value: (G^ST, G^LT, C^ST, C^LT).
+/// <see cref="Close"/> is the Schedule D year-end netting S — a pure function.
+/// </summary>
+public readonly record struct LedgerState(
+    decimal NetShortTerm, decimal NetLongTerm, decimal CarryShortTerm, decimal CarryLongTerm)
+{
+    public LedgerState With(decimal delta, bool isLongTerm) => isLongTerm
+        ? this with { NetLongTerm  = NetLongTerm  + delta }
+        : this with { NetShortTerm = NetShortTerm + delta };
+
+    /// <summary>
+    /// S(ledger): Schedule D netting as if the year closed now →
+    /// (tax, §1211(b) deduction, next year's character-split carryforward, the
+    /// post-netting gains n_S⁺ + n_L⁺).
+    /// </summary>
+    // [math:schedule_d] — DataMemo/spec/SymbolTable.md
+    public YearClose Close()
+    {
+        // 1. prior carryforward enters as a loss of its own character
+        decimal nS = NetShortTerm - CarryShortTerm;
+        decimal nL = NetLongTerm  - CarryLongTerm;
+
+        // 2. cross-netting of opposite-signed character nets
+        if (nS < 0m && nL > 0m) { decimal x = Math.Min(-nS, nL); nS += x; nL -= x; }
+        if (nL < 0m && nS > 0m) { decimal x = Math.Min(-nL, nS); nL += x; nS -= x; }
+
+        // 3. §1211(b) deduction, short-term loss first
+        decimal lossS = Math.Max(0m, -nS), lossL = Math.Max(0m, -nL);
+        decimal deduction = Math.Min(TaxLedger.AnnualOrdinaryOffsetCap, lossS + lossL);
+        decimal fromS = Math.Min(deduction, lossS);
+
+        // 4. character-preserving carryforward (§1212(b))
+        decimal gains = Math.Max(0m, nS) + Math.Max(0m, nL);
+        decimal tax   = TaxLedger.TauShortTerm * Math.Max(0m, nS)
+                      + TaxLedger.TauLongTerm  * Math.Max(0m, nL)
+                      - TaxLedger.TauOrdinary  * deduction;
+        return new YearClose(tax, deduction, lossS - fromS, lossL - (deduction - fromS), gains);
+    }
+
+    public decimal OrdinaryOffsetBudget => TaxLedger.AnnualOrdinaryOffsetCap - Close().Deduction;
+
+    public decimal OffsetCapacity
+    {
+        get { var y = Close(); return y.GainsAfterNetting + (TaxLedger.AnnualOrdinaryOffsetCap - y.Deduction); }
+    }
+}
+
+/// <summary>The result of <see cref="LedgerState.Close"/>.</summary>
+public readonly record struct YearClose(
+    decimal Tax, decimal Deduction, decimal CarryShortTerm, decimal CarryLongTerm, decimal GainsAfterNetting);

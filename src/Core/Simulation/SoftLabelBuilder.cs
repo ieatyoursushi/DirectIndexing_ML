@@ -8,7 +8,7 @@ namespace DirectIndexing.Core.Simulation;
 /// after the main backtesting day loop has set Y_Oracle.
 ///
 /// Both strategies freeze the portfolio state at the snapshot's timestep:
-///   - The TaxLedger scalars (RealizedGainsYTD and the derived offsetCapacity)
+///   - The TaxLedger (G^ST, G^LT, C^ST, C^LT — snapshot.Ledger)
 ///     and Sigma_TE are held constant (from the snapshot fields).
 ///   - The wash-sale clock advances by the number of days into the window.
 ///   - The §1222 holding period is evaluated on the step's CALENDAR date, so τ can
@@ -78,7 +78,7 @@ public sealed class SoftLabelBuilder
     private int StepLabel(
         float price, int s, int calendarAhead,
         float costBasis, float shares, DateOnly purchaseDate, DateOnly stepDate, int initClock,
-        float sigmaTE, decimal frozenCapacity)
+        float sigmaTE, LedgerState frozenLedger)
     {
         float ell = costBasis > 0f ? (price - costBasis) / costBasis : 0f;
 
@@ -86,7 +86,7 @@ public sealed class SoftLabelBuilder
             ? (decimal)(costBasis - price) * (decimal)shares
             : 0m;
         decimal taxValue = TaxLedger.ComputeTaxValue(
-            lossDollars, TaxLedger.IsLongTerm(purchaseDate, stepDate), frozenCapacity);
+            lossDollars, TaxLedger.IsLongTerm(purchaseDate, stepDate), frozenLedger);
 
         return OracleBoundary.Label(
             unrealizedReturn: (decimal)ell,
@@ -117,8 +117,7 @@ public sealed class SoftLabelBuilder
         float   shares    = snap.Shares;
         var     purchase  = DateOnly.FromDayNumber(snap.PurchaseDayNumber);
         var     t0Date    = _prices.GetDate(snap.Timestep);
-        decimal frozenCap = (decimal)Math.Max(snap.RealizedGainsYTD, 0f)
-                          + (decimal)snap.OrdinaryOffsetBudget;
+        var frozenLedger = snap.Ledger;
 
         // Delegate path simulation and first-passage counting to GbmSimulator.
         // Per-snapshot Random, deterministically seeded from (Symbol, Timestep) with a
@@ -134,7 +133,7 @@ public sealed class SoftLabelBuilder
             firesOnStep: (price, s) =>
                 StepLabel(price, s, CalendarDaysAhead(snap.Timestep, s), costBasis, shares, purchase,
                           t0Date.AddDays(CalendarDaysAhead(snap.Timestep, s)), initClock,
-                          sigmaTE, frozenCap) == 1,
+                          sigmaTE, frozenLedger) == 1,
             rng: rng);
     }
 
@@ -155,8 +154,7 @@ public sealed class SoftLabelBuilder
         float   shares    = snap.Shares;
         var     purchase  = DateOnly.FromDayNumber(snap.PurchaseDayNumber);
         var     t0Date    = _prices.GetDate(snap.Timestep);
-        decimal frozenCap = (decimal)Math.Max(snap.RealizedGainsYTD, 0f)
-                          + (decimal)snap.OrdinaryOffsetBudget;
+        var frozenLedger = snap.Ledger;
 
         int oracleDays = 0;
 
@@ -169,7 +167,7 @@ public sealed class SoftLabelBuilder
 
             if (StepLabel(price, s, CalendarDaysAhead(t0, s), costBasis, shares, purchase,
                           t0Date.AddDays(CalendarDaysAhead(t0, s)), initClock,
-                          sigmaTE, frozenCap) == 1)
+                          sigmaTE, frozenLedger) == 1)
                 oracleDays++;
         }
 

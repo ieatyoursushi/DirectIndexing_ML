@@ -57,11 +57,13 @@ where $V_0 = \$10{,}000{,}000$ (default) and $N$ = number of tickers with valid 
 
 **Tax state (v0.25, issue #23):** the engine's tax bookkeeping is the `TaxLedger`
 (`Core/Portfolio/TaxLedger.cs`), replacing the bare `G_YTD` scalar. Stored state:
-`RealizedGainsYTD` (signed net realized P&L this calendar year — identical semantics to the
-old G_YTD) and `LossCarryforward` (net losses beyond each year's ordinary allowance;
-survives year-end, 26 USC §1212(b)). Derived: `OrdinaryOffsetBudget`
-$= \max(0,\ \$3{,}000 - \max(0, -\text{net}))$ (§1211(b)) and
-$\text{offsetCapacity} = \max(\text{net}, 0) + \text{OrdinaryOffsetBudget}$.
+the signed net realized P&L this calendar year **by §1222 character**
+(`NetShortTerm`, `NetLongTerm`; their sum is the old G_YTD) and the prior-year carryforward by
+character (`CarryShortTerm`, `CarryLongTerm`; survives year-end, 26 USC §1212(b)). Since
+v0.3-3 everything else is derived from the Schedule D netting map
+$\mathcal S$ (`LedgerState.Close`): `OrdinaryOffsetBudget` $=3000-\mathrm{ded}$ (§1211(b), after
+carryforward's claim), offsetCapacity $=n_S^++n_L^++O$, and TaxValue as the counterfactual
+difference $\Delta T + \tau_f\delta\,\Delta C'$ ([MLDerivations §1.3](MLDerivations.md)).
 
 **No external-gains seed.** The book is honestly loss-only — offsetCapacity collapses to the
 \$3k/yr ordinary allowance until the book realizes gains of its own: the tax-code-accurate
@@ -82,8 +84,9 @@ For each trading day $t$:
 4. **Feature extraction + oracle** — for each open lot $k$:
    - Compute $\ell_k = (P_t^{(A_k)} - p_k) / p_k$, loss dollars
      $D_k = \max(0,\ (p_k - P_t) q_k)$, and the ledger valuation
-     $\text{taxValue}_k = \tau(h_k)\min(D_k, \text{capacity}) + \tau_f \max(D_k - \text{capacity}, 0)\,\delta$
-     with $\tau(h) = 0.37/0.20$ (short/long at the calendar anniversary, §1222), $\tau_f = 0.20$, $\delta = 0.5$.
+     $\text{taxValue}_k = g_{\mathrm{tax}}(\mathrm{ledger}_t, c_k, D_k)$ — the Schedule D counterfactual
+     difference of [MLDerivations §1.3](MLDerivations.md) (tax saved this year at the displaced rate,
+     plus newly banked carryforward at $\tau_f\delta = 0.10$), $c_k$ the lot's §1222 character.
    - Evaluate the oracle (`OracleBoundary.Label(snapshot, config)`):
        $f^*(\mathbf{x}_k) = \mathbf{1}[\ell_k \le -\theta_1] \cdot \mathbf{1}[\mathcal{W}_{k} > 30] \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}] \cdot \mathbf{1}[U(\mathbf{x}_k) > 0]$,
        where $U = \text{taxValue}_k - \lambda \hat\sigma_{\text{TE}}^2 - c_{\text{trade}}$
@@ -111,7 +114,7 @@ When the oracle fires on lot $k$ at price $P_t$:
 
 $$
 \Delta = q_k (P_t - p_k) \qquad \text{(negative for a loss)} \qquad
-\text{Ledger.RecordRealized}(\Delta): \text{RealizedGainsYTD} \mathrel{+}= \Delta
+\text{Ledger.RecordRealized}(\Delta, c): G^{c} \mathrel{+}= \Delta,\quad c=\mathbf 1_{\mathrm{LT}}(t,k)
 $$
 
 The lot is removed from $\mu_t$, the loss sale is date-stamped (opening the ticker's §1091
@@ -207,7 +210,7 @@ For snapshot $(k, t)$:
    \phi(P, s) = \mathbf{1}\!\Bigl[\frac{P - p_k}{p_k} \le -0.02\Bigr]
                 \cdot \mathbf{1}[\mathcal{W}_{k} + \Delta_{\mathrm{cal}}(t,t{+}s) > 30]
                 \cdot \mathbf{1}[\hat\sigma_{\text{TE}} \le \theta_{\max}]
-                \cdot \mathbf{1}\!\bigl[\text{taxValue}(D_k(P),\, h_k + s,\, \text{cap})
+                \cdot \mathbf{1}\!\bigl[g_{\mathrm{tax}}\bigl(\overline{\mathrm{ledger}}_t,\ c_k(\mathrm{date}(t)+\Delta_{\mathrm{cal}}),\ D_k(P)\bigr)
                       - \lambda\hat\sigma_{\text{TE}}^2 - c_{\text{trade}} > 0\bigr]
    $$
 
@@ -276,7 +279,7 @@ $$
   \bigl(r_t^{(i)} - \bar{r}^{(i)}\bigr)\bigl(r_t^{(j)} - \bar{r}^{(j)}\bigr)
 $$
 
-> ⚠ **Look-ahead (ROADMAP finding F1, fixed in v0.3-4).** Because $\hat\Sigma$ uses the
+> ⚠ **Look-ahead (ROADMAP finding F1, fixed in v0.3-6).** Because $\hat\Sigma$ uses the
 > *whole* loaded history, $\hat\sigma_{\mathrm{TE},t}$ depends on returns after $t$. It is a
 > feature and an input to $U$, so this violates "features never peek." With 20 years loaded
 > ($T\approx5{,}000>N$) the full-sample estimator was also what kept $\hat\Sigma$
@@ -344,7 +347,7 @@ Names are simulated **independently** — the true covariance of this world is d
 $\Sigma = \operatorname{diag}(\sigma_i^2\Delta)$. (The retired engine priced σ_TE with the
 *real* data's covariance over these independent prices, an inconsistency the merge removes:
 `TrackingErrorProxy` now estimates Σ̂ from the synthetic world's own returns.) Correlated
-GBM via a Cholesky factor of a cleaned Σ̂ is the natural extension once v0.3-4 lands.
+GBM via a Cholesky factor of a cleaned Σ̂ is the natural extension once v0.3-6 lands.
 
 ### 6.2  Volatility Calibration (`CalibrateGbmUniverse`)
 

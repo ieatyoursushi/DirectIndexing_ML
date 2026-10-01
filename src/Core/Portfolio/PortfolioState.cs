@@ -132,7 +132,7 @@ public class PortfolioState
     public void HarvestLot(Lot lot, decimal currentPrice)
     {
         var gain = (currentPrice - lot.CostBasis) * lot.Shares;
-        Ledger.RecordRealized(gain);   // negative delta for a loss — sign is self-consistent
+        Ledger.RecordRealized(gain, lot.IsLongTerm(Today));   // into its §1222 pool; negative for a loss
         lot.IsOpen    = false;
         OpenLots.Remove(lot);
         _openBySymbol[lot.Symbol].Remove(lot);

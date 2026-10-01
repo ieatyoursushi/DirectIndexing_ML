@@ -39,13 +39,14 @@ with the full ladder in hand.
 
 | # | Finding | Why it matters | Fixed in |
 |---|---|---|---|
-| **F1** | `TrackingErrorProxy` estimates $\hat\Sigma$ once from the **full** price history | $\hat\sigma_{\mathrm{TE}}$ is a feature and an input to $U$, so a 2008 row sees 2009–2026 returns. This breaks standing rule 6. The deterministic-oracle leakage control cannot see it: it tests splits, not feature construction. A point-in-time window with $L<N$ is also rank-deficient, which makes shrinkage *necessary* | **v0.3-4** (no gate: correctness) |
+| **F1** | `TrackingErrorProxy` estimates $\hat\Sigma$ once from the **full** price history | $\hat\sigma_{\mathrm{TE}}$ is a feature and an input to $U$, so a 2008 row sees 2009–2026 returns. This breaks standing rule 6. The deterministic-oracle leakage control cannot see it: it tests splits, not feature construction. A point-in-time window with $L<N$ is also rank-deficient, which makes shrinkage *necessary* | **v0.3-6** (no gate: correctness) |
 | **F2** | `MonteCarloEngine` duplicated the simulator's day loop and had drifted six ways | every simulator fix had to be made twice; the RL environment needs one engine | ✅ downsizing (one engine, two price sources) |
 | **F3** | three inconsistent RL-reward definitions across the docs; the increment form **telescopes**, and a summed per-lot $U$ miscounts shared TE | an optimizer exploits exactly these | ✅ pinned in [`SymbolTable.md` §I](DataMemo/spec/SymbolTable.md) (running-cost form, derived) |
 | **F4** | symbol overloading (λ, δ, W, τ, σ, H/L, S, U, V, D, γ, q, θ, "GBM", "days") | the main source of the cognitive load, and the root cause of F6/F7 | ✅ notation contract, [`SymbolTable.md` §J](DataMemo/spec/SymbolTable.md) |
 | **F5** | docs had drifted from code and from each other (e.g. a cited test that never existed; two R² values) | stale specs are worse than none | ✅ `docs-check` + recorded-drift table |
-| **F6** | holding period counts **trading** days but is compared with **365**, so "long-term" ≈ 1.45 calendar years (§1222) | lots held 1.0–1.45y got τ = 0.37 instead of 0.20; the `S` feature was wrong | ✅ **v0.3-2**: `TaxLedger.IsLongTerm` (calendar). Measured (60-name GBM world, 1260 d, seed 7): `S` flips on 4,913 / 48,551 rows (10.1%), yet **0** TaxValue/label changes — offset capacity is 0 on 98.3% of rows in a loss-only book, and τ only multiplies the capacity slice. The fix becomes economically visible once gains exist (v0.3-3 ledger, v0.3-4 trim) |
+| **F6** | holding period counts **trading** days but is compared with **365**, so "long-term" ≈ 1.45 calendar years (§1222) | lots held 1.0–1.45y got τ = 0.37 instead of 0.20; the `S` feature was wrong | ✅ **v0.3-2**: `TaxLedger.IsLongTerm` (calendar). Measured (60-name GBM world, 1260 d, seed 7): `S` flips on 4,913 / 48,551 rows (10.1%), yet **0** TaxValue/label changes — offset capacity is 0 on 98.3% of rows in a loss-only book, and τ only multiplies the capacity slice. The fix becomes economically visible once gains exist (v0.3-3 ledger, v0.3-6 trim) |
 | **F7** | §1091 enforced one-sided: no buy *after* a loss sale, but nothing blocks a **harvest after a recent buy**; the window is 30 **trading** days | contributions buy the most-underweight (fallen) names, exactly the ones about to be harvested. Measured by an independent audit on a weekday-calendar synthetic world: **24.3% of the contrib arm's loss sales were wash sales** | ✅ **v0.3-1**: 0 violations after the fix |
+| **F8** | `LossCarryforward` was banked but **never consumed**, and the $3k ordinary line was valued at full rate even when carryforward already claimed it; ST and LT shared one blended pool, so a loss earned its own τ instead of the rate of what it offset | new-loss value overstated in years with carryforward; character netting absent | ✅ **v0.3-3** (Schedule D ledger) |
 
 ## Standing rules (apply to every version)
 
@@ -56,12 +57,12 @@ with the full ladder in hand.
    keep arms apart.
 3. **Schema changes take a version bump** through the codebook assert (`LotStateVector` is
    **v4**: 25 columns, d = 17).
-4. **Economic claims cite the baseline ladder** (from v0.3-6), not classification metrics
+4. **Economic claims cite the baseline ladder** (from v0.3-11), not classification metrics
    alone.
 5. **Report ROC-AUC + PR-AUC + test-period positive rate together**, never PR-AUC alone. Prefer
    `--split=temporal` for any forward-deployment claim.
 6. **Labels may peek at the future; features never.** (The founding invariant. F1 is a live
-   violation until v0.3-4.)
+   violation until v0.3-6.)
 7. Don't rewrite theory docs; extend along the seams. Archive docs get banners, never edits.
 8. **The spine stays in sync:** a PR that changes an `[math:*]`-anchored member updates its row
    in [`DataMemo/spec/SymbolTable.md`](DataMemo/spec/SymbolTable.md) in the same PR, and
@@ -172,23 +173,22 @@ somewhat.
 | ✅ **v0.3-1** §1091 two-sided window (F7) | calendar-dated state: a lot-level clock $\mathcal W_k$ = min(days since the ticker's last loss sale, days since a *different* open lot was acquired), with a strict gate $\mathcal W>30$ (the window is inclusive); `CanBuy` gates every buy; the reopen lands at sale + 31 calendar days; contributions skip names holding a harvestable lot (`--contrib-allow-harvestable` for the ablation). SymbolTable `wash_clock`, `can_buy`, `wash_audit` | **done:** the independent audit reads **0 violations** on worlds that had 24.3% (weekday, contrib) and 97.7% (daily calendar, reopen on day 30). Weekday world: baseline loss sales +15% (calendar window ≈ 21 trading days, not 30); contrib `oracle+` −18%. **Pending on your machine:** re-measure the P0 on the 20-year data |
 | ✅ **v0.3-2** §1222 calendar holding period (F6) | `TaxLedger.IsLongTerm = date(t) > date(s_k) + 1yr`, one function used by `Lot`, the snapshot and the soft-label forward steps; `H` stays a trading-day feature | **done:** `S` flips on 10.1% of rows of the 60-name world, 0 TaxValue/label changes — capacity is 0 on 98.3% of rows of a loss-only book (visible once gains exist) |
 | ✅ **v0.3-2b** re-harvest guard → ablation (Q1) | the "no second harvest of a ticker within 30 d of its own loss sale" term of $\mathcal W$ is stricter than §1091 (a loss sale is disallowed only by a replacement **acquisition**). `--no-reharvest-guard` drops it. Removing it exposed a real gap the guard had masked: a lot bought **and sold** inside the window is still a replacement for another lot's loss sale (Reg. 1.1091-1), so the before-side now also scans closed lots acquired within 30 d | **done:** guard-off audit = **0 violations**. 60-name world + `--contrib`: oracle+ 0.703% → 1.013%, harvests 1295 → 1884, rows with $\mathcal W\le30$ 62% → 41%; soft labels fall (BT 0.137 → 0.107) because more losses are realised. Without contributions (one lot per ticker) the arms are byte-identical. Default stays guarded until the P0 re-run decides |
-| **v0.3-3** P0 close-out | retrain GBT + logistic under `--split=temporal` on the corrected `lots_contrib.csv`; class-weight re-check; decide whether `--contrib` becomes the default | ROC + PR + test prevalence vs the v0.26 baseline above |
-| **v0.3-4** point-in-time $\hat\Sigma_t$ (F1) | memo `decisions/VolatilityModel_v03.md` written **first** (design in full). `ICovarianceEstimator`: `FullSample` (legacy arm, to measure the look-ahead), `PitSample`, `PitLedoitWolf` (constant-correlation target, closed form), optional MP clipping; the eigendecomposition is exposed for the PCA successor role; `--cov=` arms | **no gate** (correctness). Measure the σ_TE shift, the spectator flip rate of $f^*$/$U$, label deltas, temporal metrics |
-| **v0.3-5** per-name $\hat\sigma_{i,t}$ | `IVolEstimator`: `Trailing21` (current), `Ewma(0.94)`, `Garch11` (Gaussian MLE, α+β<1, 𝓕_{t−1} data only); seam `SoftLabelBuilder.EstimateVol` | **decision-flip gate**, thresholds pre-registered in the memo. Material → v0.3-5b adds $\hat\sigma$ as a feature (schema v5). Otherwise record the negative result and re-test $\hat\sigma$ as RL state at v0.4b |
-| **v0.3-6** policy seam + metric ladder | `IHarvestPolicy` (Oracle = default, byte-identical), `NeverHarvest` (rung 1), `ThresholdHarvest` (rung 2), Oracle (rung 3). `RunMetrics` from the ledger: after-tax wealth, used-now vs banked benefit, ex-ante vs **realized** TE, turnover, cost → `data/runs/<tag>/metrics.json`. A `ladder` command. Flat, serializable observation/action records | rungs 1–3 run from one command. This seam is where rung 6 (RL) plugs in |
-| **v0.3-7** sell-winner trim | a second action type through the seam, behind a flag | carryforward netting exercised; `RealizedGainsYTD` endogenous |
-| **v0.3-8** exit: RL readiness | SymbolTable §I finalized: reward calibration ($\kappa_r$), observation vector, executor, fed-predictions rule | the v0.3 gate |
-
-**Deferred out of v0.3:** richer soft-label families (#17) → v0.4a backlog (the RL reward uses
-the ledger, not the soft-label family); typed ST/LT ledger pools → backlog.
+| ✅ **v0.3-3** ledger completion (F8), schema v5 | `TaxLedger` becomes Schedule D: pools $(G^{ST},G^{LT})$ by §1222 character, carryforward $(C^{ST},C^{LT})$ by character, the year-end netting map $\mathcal S$ (`LedgerState.Close`: carryforward enters as a loss of its character → cross-netting → $3k ordinary deduction ST-first → character carryforward). TaxValue is the **counterfactual difference** $\Delta T+\tau_f\delta\,\Delta C'$, so a loss earns the rate of what it displaces. Schema v5: `NetST, NetLT, CarryST, CarryLT, OrdinaryOffsetBudget` replace `RealizedGainsYTD, LossCarryforward, OrdinaryOffsetBudget` (d 17 → 19) | **done:** hand-computed Schedule D tests (ST-first deduction, character carryforward, consumption, cross-netting, displaced-rate valuation, F8 crowd-out). 60-name `--contrib` world: 142 of 39,936 loss rows were overvalued by up to $810 (mean $280) in early-January rows with carryforward on the books; 0 oracle flips. Small in a loss-only book; the trim (v0.3-4) is what gives the pools gains to net |
+| **v0.3-4** sell-winner trim | `TrimPolicy` behind `--trim`: periodically sell overweight gain lots toward equal weight, highest basis first; gain sales open no §1091 window and enter the trade log | realized gains, carryforward drawdown, cross-character netting exercised; TaxValue distribution shift |
+| **v0.3-5** P0 close-out (your machine) | re-simulate baseline/contrib after v0.3-1…4; retrain GBT + logistic under `--split=temporal`; decide the `--contrib` and re-harvest-guard defaults | ROC + PR + test prevalence vs the v0.26 baseline (0.9970 / 0.4585 / 0.221%) |
+| **v0.3-6** point-in-time $\hat\Sigma_t$ (F1) + dollar δw | memo `decisions/VolatilityModel_v03.md` **first**. `ICovarianceEstimator`: `FullSample` (legacy, to measure the look-ahead), `PitSample`, `PitLedoitWolf` (constant-correlation target, closed form); TE on **dollar** active weights; `--cov=` arms | correctness, no gate: σ_TE shift, spectator flip rate of $f^*$/$U$, label deltas |
+| **v0.3-7** σ̂ estimators + forecast evaluation | `IVolEstimator`: `Trailing21`, `Ewma(0.94)`, `Garch11` with walk-forward `Fit(window)` only; per-name $\hat\sigma_{i,t}$ and market $\hat\sigma_{m,t}$; `vol-eval` → QLIKE vs baselines, by regime | QLIKE of EWMA/GARCH beats trailing-21 |
+| **v0.3-8** role 1: σ̂ as a feature (schema v6) | `SigmaHat`, `SigmaMkt`, `ZBarrier` $=d/(\hat\sigma\sqrt h)$, `PBarrier` $=2\Phi(-z)$ | ablations under `--split=temporal` only: with/without; logistic-closes-the-gap test; metrics stratified by $\hat\sigma_m$ tercile |
+| **v0.3-9** role 2: σ̂ in labels | `Y_Soft_GBM` by filtered historical simulation (`--soft-gbm=gbm\|fhs`) | label shift; bias vs `Y_Soft_BT` within vol buckets |
+| **v0.3-10** role 3: σ̂ in the environment | `PriceLoader.FromFhs` — date-block residual bootstrap along simulated σ paths (`simulate-mc --world=gbm\|fhs`) | clustering (ACF of \|r\| > 0), excess kurtosis, cross-correlation preserved, seed-deterministic |
+| **v0.3-11** label families (#17) + policy seam + ladder | `Y_Soft_BT_90/180`, `Y_Persist`, `Y_TaxWeighted` (`--target=`); `IHarvestPolicy` (Oracle default, `NeverHarvest`, `ThresholdHarvest`), `RunMetrics` from the ledger + trade log, `ladder` command | rungs 1–3 run from one command; the RL seam |
+| **v0.3-12** exit: RL readiness | SymbolTable §I finalized (state incl. σ̂ summaries, ledger pools, factor exposures; the pinned reward with TE from $\hat\Sigma_t$); `decisions/PolicyLayer_v04.md` | the v0.3 gate |
 
 **v0.3 gate:**
-- zero §1091 violations, and holding periods on the calendar;
-- temporal PR-AUC recovers on the corrected contrib data, with ROC and prevalence reported alongside;
-- $\hat\sigma_{\mathrm{TE}}$ is 𝓕_t-measurable, with its effect recorded;
-- the $\hat\sigma$ build decision is recorded with numbers;
-- ladder rungs 1–3 run;
-- the trim exercises carryforward;
+- zero §1091 violations; holding periods on the calendar; Schedule D tests green;
+- $\hat\Sigma_t$ is 𝓕_t-measurable, with its effect recorded; σ̂ QLIKE beats trailing-21;
+- all three σ̂ roles measured as separate ablations;
+- the trim exercises carryforward; ladder rungs 1–3 run;
 - `docs-check` is green.
 
 ### Commands for the steps that need the real 20-year data (run on your machine)
@@ -224,7 +224,7 @@ value a one-step optimizer can't see) is RL's earnable surplus, now quantified.
 The MDP is fully typed in [`SymbolTable.md` §I](DataMemo/spec/SymbolTable.md).
 - **State:** a flat record of the ledger, $\hat\sigma_{\mathrm{TE}}$, $V_t$, wash and candidate-score
   summaries, and factor exposures $\Phi_k^\top\delta w$ (PCA on $\hat\Sigma_t$), plus $\hat\sigma$
-  summaries, re-tested here regardless of the v0.3-5 outcome.
+  summaries, re-tested here regardless of the v0.3-7 outcome.
 - **Action:** low-dimensional $(\vartheta,m,b)$ driving a deterministic executor. The oracle is a
   fixed action, so rung 3 lies inside the policy class.
 - **Transition:** `ProcessDay`.
@@ -233,7 +233,7 @@ The MDP is fully typed in [`SymbolTable.md` §I](DataMemo/spec/SymbolTable.md).
   (the increment form is rejected: it telescopes).
 - **Warm starts:** the GBT $\hat\eta$ and the $\hat g_{\mathrm{tax}}$ regression.
 - **Episodes:** from `PriceLoader.FromGbm` before real-history fine-tuning.
-- **Runtime:** C#-native vs Python (gymnasium/SB3) is decided at the start of v0.4b; the v0.3-6
+- **Runtime:** C#-native vs Python (gymnasium/SB3) is decided at the start of v0.4b; the v0.3-11
   records are serializable for either.
 
 **Gate:** rung 6 vs rung 5 under walk-forward evaluation, stability across regimes, and alpha
@@ -242,7 +242,7 @@ per unit of TE/turnover.
 ## v0.45 — Universe & replacement layer (moved after RL)
 
 - **Core+reserve construction.** PCA's successor role (issue #6): the eigendecomposition of the
-  point-in-time $\hat\Sigma_t$ from v0.3-4 shrinks the set of names the agent harvests over. It
+  point-in-time $\hat\Sigma_t$ from v0.3-6 shrinks the set of names the agent harvests over. It
   drops multicollinear, similarly-clustered names while preserving index beta and factor
   exposures; the reduced-away names form the substitute pool.
 - **Offline core-basket optimizer:** min TE + complexity − dispersion potential, sweeping
@@ -276,11 +276,11 @@ while preserving harvestable dispersion (ladder rungs 2–6 in the hybrid enviro
 
 | Question | Decide at | Current lean |
 |---|---|---|
-| RL runtime: C#-native (derivative-free search over $(\vartheta,m,b)$, TorchSharp later) vs Python gymnasium/SB3 over a step bridge | v0.4b start | undecided; v0.3-6 records are runtime-agnostic |
-| Materiality thresholds for the $\hat\sigma$ decision-flip gate | v0.3-4 memo | propose: spectator flip rate > 1% of oracle positives, or temporal ΔPR-AUC > 0.01 (ratify) |
+| RL runtime: C#-native (derivative-free search over $(\vartheta,m,b)$, TorchSharp later) vs Python gymnasium/SB3 over a step bridge | v0.4b start | undecided; v0.3-11 records are runtime-agnostic |
+| ~~Materiality thresholds for the $\hat\sigma$ decision-flip gate~~ | — | **resolved:** σ̂ is built unconditionally (it is structural: TE, Markov state, simulator physics); its three roles are measured as separate ablations (v0.3-8/9/10) instead of gating the build |
 | Does `--contrib` become the default simulation? | v0.3-3 | yes, if the corrected recovery holds |
 | §1091 exactness: block the harvest (practice) vs partial disallowance with basis adjustment (law-exact) | v0.3-1 | block; exact treatment recorded as an extension |
-| $\kappa_r$ (relative active-risk aversion) calibration | v0.3-8 / v0.4b | client parameter; ≈\$12/day at $V$=\$10M, σ_TE=2.5%, κ_r=1 |
+| $\kappa_r$ (relative active-risk aversion) calibration | v0.3-12 / v0.4b | client parameter; ≈\$12/day at $V$=\$10M, σ_TE=2.5%, κ_r=1 |
 | Leakage regression test (fit on train vs train + test, assert the production path matches train) | any | backlog; the audit memo records that it never existed |
 | Tax-value regression R²: 0.92 vs 0.88 in different docs | next canonical run | re-measure; the artifact is the arbiter |
 | Richer soft-label families (#17); typed ST/LT pools | v0.4a+ | deferred |

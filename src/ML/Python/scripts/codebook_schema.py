@@ -7,7 +7,7 @@ matches this list exactly, so drift fails loudly instead of silently.
 
 Each entry: name, dtype, units, role, description, encoding, missing, source.
 Mathematical definitions follow DataMemo/spec/ (SymbolTable.md is the index).
-Schema version: v4 (25 columns, d = 17).
+Schema version: v5 (27 columns, d = 19) — v0.3-3 split the ledger by §1222 character.
 """
 from __future__ import annotations
 
@@ -90,37 +90,61 @@ COLUMNS: list[dict] = [
         "source": "counted from PortfolioState.OpenLots",
     },
     {
-        "name": "RealizedGainsYTD",
+        "name": "NetST",
         "dtype": "float",
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Signed net realized gain/loss for the calendar year to date "
-            "(the pre-v0.25 G_YTD), shared by every lot at the same timestep. "
-            "Starts at 0 (no external-gains seed: the honest loss-only book); "
-            "harvesting a loss pushes it down, realized gains push it up. "
-            "Resets to 0 at year-end (net loss beyond the $3k ordinary "
-            "allowance rolls into LossCarryforward instead of vanishing)."
+            "G^ST — signed net SHORT-term (held <= 1 calendar year, §1222) realized "
+            "gain/loss for the calendar year to date, shared by every lot at the "
+            "same timestep. Harvested ST losses push it down, ST gains up. Resets "
+            "to 0 at year-end (Schedule D netting; leftover loss becomes CarryST)."
         ),
-        "encoding": "Signed continuous. Positive = net realized gains.",
+        "encoding": "Signed continuous. Positive = net ST gains.",
         "missing": "None.",
-        "source": "TaxLedger.RealizedGainsYTD (via PortfolioState.Ledger)",
+        "source": "TaxLedger.NetShortTerm (via PortfolioState.Ledger)",
     },
     {
-        "name": "LossCarryforward",
+        "name": "NetLT",
         "dtype": "float",
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Accumulated net capital losses beyond each year's $3,000 "
-            "ordinary-income allowance (26 USC §1212(b)). Carries forward "
-            "indefinitely — SURVIVES the year-end reset — which is the "
-            "tax-law mechanic making 'harvest now, use later' always weakly "
-            "correct for individual investors."
+            "G^LT — signed net LONG-term (held > 1 calendar year) realized "
+            "gain/loss for the calendar year to date. Resets to 0 at year-end."
         ),
-        "encoding": "Non-negative continuous, monotone non-decreasing within a run.",
+        "encoding": "Signed continuous. Positive = net LT gains.",
         "missing": "None.",
-        "source": "TaxLedger.LossCarryforward (updated at year-end roll)",
+        "source": "TaxLedger.NetLongTerm",
+    },
+    {
+        "name": "CarryST",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "C^ST — short-term capital-loss carryforward from prior years "
+            "(26 USC §1212(b) preserves character). Enters this year's netting "
+            "as a ST loss, so it is CONSUMED by this year's gains before a new "
+            "harvest can use them (ROADMAP F8)."
+        ),
+        "encoding": "Non-negative continuous; changes only at the year-end roll.",
+        "missing": "None.",
+        "source": "TaxLedger.CarryShortTerm (year-end roll)",
+    },
+    {
+        "name": "CarryLT",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "C^LT — long-term capital-loss carryforward from prior years. "
+            "The $3,000 ordinary deduction is taken from short-term loss first, "
+            "so loss-only books bank mostly into the character they harvest."
+        ),
+        "encoding": "Non-negative continuous; changes only at the year-end roll.",
+        "missing": "None.",
+        "source": "TaxLedger.CarryLongTerm (year-end roll)",
     },
     {
         "name": "OrdinaryOffsetBudget",
@@ -128,12 +152,13 @@ COLUMNS: list[dict] = [
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Remaining ordinary-income offset allowance for the year: "
-            "max(0, $3,000 − net loss realized so far) per 26 USC §1211(b). "
-            "Together with max(RealizedGainsYTD, 0) it forms offsetCapacity, "
-            "the dollars of a new harvested loss usable this tax year."
+            "The §1211(b) ordinary-income allowance NOT yet claimed if the "
+            "year closed today: $3,000 minus the deduction of the Schedule D "
+            "netting of (NetST, NetLT, CarryST, CarryLT). Carryforward claims it "
+            "before a new harvest can. Together with the gains left after netting "
+            "it forms offsetCapacity, the dollars of a new loss usable this year."
         ),
-        "encoding": "Continuous in [0, 3000]. Resets to 3000 at year-end.",
+        "encoding": "Continuous in [0, 3000]. Derived from the four ledger columns.",
         "missing": "None.",
         "source": "TaxLedger.OrdinaryOffsetBudget (derived)",
     },
@@ -230,18 +255,19 @@ COLUMNS: list[dict] = [
         "units": "US dollars",
         "role": "feature (derived, lot-level × TaxLedger)",
         "description": (
-            "Capacity-aware dollar value of harvesting this lot today: "
-            "TaxValue = τ(H)·min(loss, offsetCapacity) "
-            "+ τ_future·max(loss − offsetCapacity, 0)·δ, where "
-            "offsetCapacity = max(RealizedGainsYTD, 0) + OrdinaryOffsetBudget, "
-            "τ(H) is the short/long-term rate (0.37/0.20), τ_future = 0.20 and "
-            "δ = 0.5 discounts the banked (carried-forward) slice. Supersedes "
-            "the v0.2 TaxAlpha, which valued every loss dollar at the full "
-            "current-year rate and counted winners' |gains| as harvestable."
+            "Dollar value of harvesting this lot today, as a counterfactual "
+            "difference of the Schedule D year-end netting S: "
+            "TaxValue = [T(ledger) − T(ledger ⊕ loss)] + τ_future·δ·[ΔC], "
+            "i.e. this year's tax saved (at the rate of whatever the loss "
+            "displaces: a ST gain 0.37, a LT gain 0.20, the $3k ordinary line "
+            "0.37 — nothing if carryforward already absorbs those) plus the "
+            "newly banked carryforward ΔC at τ_future = 0.20, discounted δ = 0.5. "
+            "The lot's own §1222 character (S) only decides which pool the loss "
+            "enters. Supersedes the v0.2 TaxAlpha and the v0.25 blended pool."
         ),
         "encoding": "Non-negative continuous; 0 when the lot is not at a loss.",
         "missing": "None.",
-        "source": "TaxLedger.ComputeTaxValue(lossDollars, H)",
+        "source": "TaxLedger.ComputeTaxValue(lossDollars, isLongTerm)",
     },
     {
         "name": "DaysToYE",
@@ -251,7 +277,7 @@ COLUMNS: list[dict] = [
         "description": (
             "Calendar days remaining until December 31 of the simulated tax "
             "year. Year-end is when the ledger's annual accumulators reset "
-            "(and net losses roll into LossCarryforward), so harvest urgency "
+            "(and net losses roll into CarryST / CarryLT), so harvest urgency "
             "varies with this clock."
         ),
         "encoding": "Integer in [0, 365].",
@@ -395,7 +421,7 @@ COLUMNS: list[dict] = [
 #: Header order expected in data/lots.csv (must match SimulationExporter).
 EXPECTED_HEADER: list[str] = [c["name"] for c in COLUMNS]
 
-# The d = 17 numeric feature block, in schema order — derived, never restated.
+# The d = 19 numeric feature block, in schema order — derived, never restated.
 # Must equal C# FeatureLists.NumericFeatures (asserted by tests/test_codebook_schema.py).
 NUMERIC_FEATURES: list[str] = [
     c["name"] for c in COLUMNS

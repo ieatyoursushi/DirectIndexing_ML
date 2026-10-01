@@ -14,7 +14,7 @@ public record WeightedRow : LotStateVector
     public static WeightedRow From(LotStateVector v, float weight) => new()
     {
         L = v.L, H = v.H, S = v.S, B = v.B, W = v.W, K = v.K,
-        RealizedGainsYTD = v.RealizedGainsYTD, LossCarryforward = v.LossCarryforward,
+        NetST = v.NetST, NetLT = v.NetLT, CarryST = v.CarryST, CarryLT = v.CarryLT,
         OrdinaryOffsetBudget = v.OrdinaryOffsetBudget,
         Sigma_TE = v.Sigma_TE, WashClock = v.WashClock,
         R_t = v.R_t, SigmaRange = v.SigmaRange,

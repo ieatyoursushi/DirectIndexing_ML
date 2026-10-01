@@ -14,11 +14,12 @@ namespace DirectIndexing.Core.Portfolio;
 ///
 /// Sign conventions (see PortfolioMath.md §3 for derivations):
 ///   L   — negative for a harvestable lot  (ℓ = (P_t − p_k)/p_k &lt; 0)
-///   RealizedGainsYTD — signed net realized P&amp;L YTD (the pre-v0.25 G_YTD);
+///   NetST / NetLT — signed net realized P&amp;L YTD by §1222 character (G^ST, G^LT);
 ///   positive means net gains exist to offset, negative after net-loss harvests
 ///
-/// Schema v4 (pre-v0.3 downsizing): d = 17 numeric features, 25 exported columns —
-/// v3 minus the retired Y_Oracle_GatedSpec spectator label.
+/// Schema v5 (v0.3-3): d = 19 numeric features, 27 exported columns — v4's blended
+/// RealizedGainsYTD / LossCarryforward split by character (ROADMAP F8).
+/// Schema v4 (pre-v0.3 downsizing): v3 minus the retired Y_Oracle_GatedSpec label.
 /// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
 public record LotStateVector
@@ -61,17 +62,20 @@ public record LotStateVector
 
     // ── Portfolio-level features (shared state 𝒮_t) — TaxLedger + risk state ─
 
-    /// <summary>
-    /// ledger_t.RealizedGainsYTD ∈ ℝ — signed net realised gain/loss this
-    /// calendar year (the pre-v0.25 G_YTD). Resets at year-end.
-    /// </summary>
-    public float RealizedGainsYTD     { get; init; }
+    /// <summary>ledger_t.G^ST ∈ ℝ — signed net SHORT-term realized P&amp;L this year. Resets at year-end.</summary>
+    public float NetST                { get; init; }
 
-    /// <summary>
-    /// ledger_t.LossCarryforward ∈ ℝ≥0 — accumulated net losses beyond each
-    /// year's $3k ordinary allowance. SURVIVES year-end (26 USC §1212(b)).
-    /// </summary>
-    public float LossCarryforward     { get; init; }
+    /// <summary>ledger_t.G^LT ∈ ℝ — signed net LONG-term realized P&amp;L this year. Resets at year-end.</summary>
+    public float NetLT                { get; init; }
+
+    /// <summary>ledger_t.C^ST ∈ ℝ≥0 — short-term loss carryforward from prior years (§1212(b)).</summary>
+    public float CarryST              { get; init; }
+
+    /// <summary>ledger_t.C^LT ∈ ℝ≥0 — long-term loss carryforward from prior years (§1212(b)).</summary>
+    public float CarryLT              { get; init; }
+
+    /// <summary>The frozen ledger (G^ST, G^LT, C^ST, C^LT) as a value, for counterfactual valuation.</summary>
+    public LedgerState Ledger => new((decimal)NetST, (decimal)NetLT, (decimal)CarryST, (decimal)CarryLT);
 
     /// <summary>
     /// ledger_t.OrdinaryOffsetBudget ∈ [0, 3000] — remaining ordinary-income

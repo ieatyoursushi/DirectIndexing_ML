@@ -21,8 +21,10 @@ public record MLReadyRow
     public float B { get; init; }
     public float W { get; init; }
     public float K { get; init; }
-    public float RealizedGainsYTD { get; init; }
-    public float LossCarryforward { get; init; }
+    public float NetST { get; init; }
+    public float NetLT { get; init; }
+    public float CarryST { get; init; }
+    public float CarryLT { get; init; }
     public float OrdinaryOffsetBudget { get; init; }
     public float Sigma_TE { get; init; }
     public float WashClock { get; init; }

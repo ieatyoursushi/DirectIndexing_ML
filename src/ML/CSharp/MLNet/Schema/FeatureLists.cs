@@ -7,13 +7,14 @@ namespace DirectIndexing.ML.MLNet.Schema;
 /// </summary>
 public static class FeatureLists
 {
-    // Schema v4: d = 17 numeric features (unchanged since v3, v0.25: G_YTD → three
-    // TaxLedger columns; TaxAlpha → capacity-aware TaxValue). v4 dropped the
-    // retired Y_Oracle_GatedSpec label.
+    // Schema v5 (v0.3-3): d = 19 numeric features. The ledger is exported by character
+    // (NetST, NetLT, CarryST, CarryLT) + the derived OrdinaryOffsetBudget, replacing
+    // v4's blended RealizedGainsYTD / LossCarryforward. v4 had dropped the retired
+    // Y_Oracle_GatedSpec label; v3 (v0.25) had moved G_YTD → TaxLedger, TaxAlpha → TaxValue.
     public static readonly string[] NumericFeatures =
     {
         "L", "H", "S", "B", "W", "K",
-        "RealizedGainsYTD", "LossCarryforward", "OrdinaryOffsetBudget",
+        "NetST", "NetLT", "CarryST", "CarryLT", "OrdinaryOffsetBudget",
         "Sigma_TE", "WashClock",
         "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
         "TaxValue", "DaysToYE",
