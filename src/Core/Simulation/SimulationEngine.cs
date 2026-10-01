@@ -20,7 +20,7 @@ public sealed class SimulationEngine
 {
     // ── Dependencies ─────────────────────────────────────────────────────────
     private readonly PriceLoader         _prices;
-    private readonly PortfolioState      _state  = new();
+    private readonly PortfolioState      _state;
     private readonly TrackingErrorProxy  _te;
     private readonly OracleConfig        _oracle;
     private readonly ContributionPolicy  _contrib;
@@ -56,6 +56,7 @@ public sealed class SimulationEngine
         _prices  = prices;
         _te      = new TrackingErrorProxy(prices);
         _oracle  = oracleConfig ?? OracleConfig.Default;
+        _state   = new PortfolioState { ReharvestGuard = _oracle.ReharvestGuard };
         _contrib = contributionPolicy ?? ContributionPolicy.Off;
     }
     // ── Public entry point ───────────────────────────────────────────────────

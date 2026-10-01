@@ -29,10 +29,15 @@ if (ctradeArg is not null && decimal.TryParse(ctradeArg["--ctrade=".Length..],
         System.Globalization.CultureInfo.InvariantCulture, out var ctradeOverride))
     oracleCfg = oracleCfg with { CTrade = ctradeOverride };
 
+// --no-reharvest-guard: drop the stricter-than-§1091 "no second harvest of a ticker within
+// 30 days of its own loss sale" term from 𝒲 (v0.3-2b ablation; §1091's two sides stay).
+bool noReharvestGuard = args.Contains("--no-reharvest-guard");
+if (noReharvestGuard) oracleCfg = oracleCfg with { ReharvestGuard = false };
+
 // The oracle flags only shape simulate/simulate-mc; warn instead of silently
 // no-op'ing when passed to other modes (mlnet-* modes read a lots CSV as-is).
-if (mode is not ("simulate" or "simulate-mc") && ctradeArg is not null)
-    Console.WriteLine($"[WARN] --ctrade has no effect on mode '{mode}' — " +
+if (mode is not ("simulate" or "simulate-mc") && (ctradeArg is not null || noReharvestGuard))
+    Console.WriteLine($"[WARN] --ctrade/--no-reharvest-guard have no effect on mode '{mode}' — " +
                       "it configures the simulation only. mlnet-* modes read the lots CSV as-is.");
 
 // ── Split policy (v0.26, validation hardening) ──────────────────────────────
@@ -86,8 +91,10 @@ if (mode is ("simulate" or "simulate-mc") && contribCfg.Enabled)
 // arm tag plus the split tag, so arms never clobber each other:
 //   lots.csv + random          → data/artifacts-mlnet/
 //   lots_contrib.csv + temporal → data/artifacts-mlnet_contrib-temporal/
-// --ctrade=<x> tags the simulated dataset (lots_ctrade<x>.csv) the same way.
-var ctradeTag      = ctradeArg is null ? "" : $"_ctrade{oracleCfg.CTrade.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+// --ctrade=<x> and --no-reharvest-guard tag the simulated dataset (lots_ctrade<x>.csv,
+// lots_noreharvest.csv) the same way.
+var ctradeTag      = (ctradeArg is null ? "" : $"_ctrade{oracleCfg.CTrade.ToString(System.Globalization.CultureInfo.InvariantCulture)}")
+                   + (noReharvestGuard ? "_noreharvest" : "");
 // All default paths are anchored at the repo root (the directory holding
 // DirectIndexing.sln), so `dotnet run --project src -- …` from the root and
 // `cd src && dotnet run -- …` behave identically. A user-supplied --lots is
@@ -378,6 +385,7 @@ switch (mode)
         washTests.Test_Audit_WindowEdges_SameLot_AndGains();
         washTests.Test_State_BeforeSide_LotLevelClock();
         washTests.Test_Engine_ZeroViolations_OnWorldsThatHadThem();
+        washTests.Test_ReharvestGuard_Off_IsStillLawful();
 
         var contribTests = new ContributionPolicyTests();
         contribTests.Test_DefaultIsDisabled();

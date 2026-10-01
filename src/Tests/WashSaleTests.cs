@@ -1,3 +1,4 @@
+using DirectIndexing.Core.Oracle;
 using System.Diagnostics;
 using DirectIndexing.Core.Portfolio;
 using DirectIndexing.Core.Simulation;
@@ -96,6 +97,55 @@ public class WashSaleTests
         int bad = WashSaleAudit.Violations(eng.Trades).Count;
         Debug.Assert(n > 100 && bad == 0, $"daily-calendar world: {bad} violations of {n}");
         Console.WriteLine($"WashSale Test 4 passed: daily-calendar world: 0 violations in {n} loss sales (reopen at +31)");
+    }
+
+    // v0.3-2b: the re-harvest guard is stricter than §1091. With it off, a second OLD lot of a
+    // just-loss-sold ticker is harvestable immediately (selling acquires nothing), the after-side
+    // still blocks buys, and the independent audit still reads zero on the worlds above.
+    public void Test_ReharvestGuard_Off_IsStillLawful()
+    {
+        var d0 = new DateOnly(2024, 3, 1);
+        var guarded = new PortfolioState();
+        var lawOnly = new PortfolioState { ReharvestGuard = false };
+        foreach (var st in new[] { guarded, lawOnly })
+        {
+            st.SetDate(d0);
+            var a = new Lot("AAA", "X", 100m, 10, 0, d0.AddDays(-400));
+            var b = new Lot("AAA", "X", 100m, 10, 0, d0.AddDays(-300));
+            st.OpenLot(a); st.OpenLot(b);
+            st.SetDate(d0.AddDays(5));
+            st.HarvestLot(a, 90m);                       // loss sale of A
+            st.SetDate(d0.AddDays(10));
+            int clockB = st.WashClock(b);
+            Debug.Assert(!st.CanBuy("AAA"), "after-side must block buys regardless of the guard");
+            if (st.ReharvestGuard) Debug.Assert(clockB == 5,   $"guarded: B sees A's sale 5 d ago, got {clockB}");
+            else                   Debug.Assert(clockB == PortfolioState.NeverClock, $"law-only: A is closed, so no wash-relevant event remains, got {clockB}");
+        }
+
+        // the case the open-lot scan missed: C bought on day −20 and loss-sold on day −5 is
+        // still a replacement for B's loss sale on day 0 (acquired 20 days before it)
+        var st2 = new PortfolioState { ReharvestGuard = false };
+        st2.SetDate(d0.AddDays(-20));
+        var bOld = new Lot("BBB", "X", 100m, 10, 0, d0.AddDays(-400));
+        var c    = new Lot("BBB", "X", 100m, 10, 0, d0.AddDays(-20));
+        st2.OpenLot(bOld); st2.OpenLot(c);
+        st2.SetDate(d0.AddDays(-5));
+        st2.HarvestLot(c, 90m);
+        st2.SetDate(d0);
+        Debug.Assert(st2.WashClock(bOld) == 20, $"closed replacement acquired 20 d ago must count, got {st2.WashClock(bOld)}");
+        st2.SetDate(d0.AddDays(11));
+        Debug.Assert(st2.WashClock(bOld) == 31, $"…and age out after the window, got {st2.WashClock(bOld)}");
+
+        var weekday = PriceLoader.FromGbm(PriceLoader.UniformGbmUniverse(60, 0.35f), 1260, seed: 7);
+        var contrib = ContributionPolicy.Off with { Enabled = true, IntervalDays = 21, NamesPerContribution = 5 };
+        int Losses(SimulationEngine e) => e.Trades.Count(x => x.Kind == TradeKind.Sell && x.RealizedGain < 0m);
+        var on  = new SimulationEngine(weekday, contributionPolicy: contrib);
+        var off = new SimulationEngine(weekday, OracleConfig.Default with { ReharvestGuard = false }, contrib);
+        on.Run(10_000_000m); off.Run(10_000_000m);
+        int vOff = WashSaleAudit.Violations(off.Trades).Count;
+        Debug.Assert(vOff == 0, $"guard off: {vOff} §1091 violations");
+        Debug.Assert(Losses(off) >= Losses(on), $"guard off must not harvest less ({Losses(off)} vs {Losses(on)})");
+        Console.WriteLine($"WashSale Test 5 passed: guard off is lawful (0 violations); loss sales {Losses(on)} → {Losses(off)}");
     }
 
     // A world whose calendar has every day (so trading day = calendar day), with two

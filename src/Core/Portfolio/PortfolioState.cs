@@ -41,8 +41,25 @@ public class PortfolioState
     /// <summary>Sentinel clock value: no wash-relevant event on record.</summary>
     public const int NeverClock = 999;
 
+    /// <summary>
+    /// Re-harvest guard (v0.3-2b). When on (default, the v0.1–v0.3-1 behavior), 𝒲 also counts
+    /// days since the ticker's own last loss sale, so a second lot of a ticker cannot be
+    /// harvested within 30 days of the first. That is STRICTER than §1091: a loss sale is
+    /// disallowed only by a replacement ACQUISITION within ±30 days, and selling another
+    /// old lot acquires nothing. Off (--no-reharvest-guard) = the law's two sides only;
+    /// the after-side (<see cref="CanBuy"/>) is unaffected either way.
+    /// </summary>
+    public bool ReharvestGuard { get; init; } = true;
+
     // Last LOSS sale per ticker (gain sales never start a wash window).
     private readonly Dictionary<string, DateOnly> _lastLossSale = new();
+
+    // Acquisition dates of lots of a ticker that were bought AND sold within the last 30
+    // calendar days. A closed lot is still a §1091 replacement for another lot's loss sale
+    // if it was acquired inside that sale's window (Reg. 1.1091-1) — the open-lot scan alone
+    // misses it. Under the re-harvest guard this set is redundant (the closed lot's own sale
+    // came after its purchase, so DaysSinceLossSale is always smaller); without it, it is the law.
+    private readonly Dictionary<string, List<DateOnly>> _recentClosedBuys = new();
 
     // μ_t = { atoms currently open }, plus a per-ticker index of the same atoms
     public List<Lot> OpenLots { get; } = new();
@@ -63,18 +80,22 @@ public class PortfolioState
 
     /// <summary>
     /// 𝒲 for one lot — the calendar distance to the nearest wash-relevant event:
-    /// min(days since the ticker's last loss sale, days since the most recent
-    /// acquisition of a DIFFERENT open lot of the ticker), capped at 999.
+    /// min(days since the ticker's last loss sale [only under <see cref="ReharvestGuard"/>],
+    /// days since the most recent acquisition of a DIFFERENT lot of the ticker — open, or
+    /// closed but acquired within the window), capped at 999.
     /// Harvesting the lot is wash-clean iff 𝒲 &gt; 30.
     /// </summary>
     // [math:wash_clock] — DataMemo/spec/SymbolTable.md
     public int WashClock(Lot lot)
     {
-        int clock = DaysSinceLossSale(lot.Symbol);
+        int clock = ReharvestGuard ? DaysSinceLossSale(lot.Symbol) : NeverClock;
         if (_openBySymbol.TryGetValue(lot.Symbol, out var lots))
             foreach (var other in lots)
                 if (!ReferenceEquals(other, lot))
                     clock = Math.Min(clock, Today.DayNumber - other.PurchaseDate.DayNumber);
+        if (_recentClosedBuys.TryGetValue(lot.Symbol, out var closed))
+            foreach (var bought in closed)
+                clock = Math.Min(clock, Today.DayNumber - bought.DayNumber);
         return Math.Clamp(clock, 0, NeverClock);
     }
 
@@ -117,6 +138,15 @@ public class PortfolioState
         _openBySymbol[lot.Symbol].Remove(lot);
         if (gain < 0m)
             _lastLossSale[lot.Symbol] = Today;   // a LOSS sale opens the §1091 window
+
+        // a lot bought within the window stays a potential replacement after it is sold
+        if (Today.DayNumber - lot.PurchaseDate.DayNumber <= WashWindowDays)
+        {
+            if (!_recentClosedBuys.TryGetValue(lot.Symbol, out var closed))
+                _recentClosedBuys[lot.Symbol] = closed = new List<DateOnly>();
+            closed.RemoveAll(d => Today.DayNumber - d.DayNumber > WashWindowDays);
+            closed.Add(lot.PurchaseDate);
+        }
     }
 
     // ─── Derived quantities ──────────────────────────────────────────────────

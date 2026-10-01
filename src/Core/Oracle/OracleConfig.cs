@@ -30,6 +30,12 @@ public sealed record OracleConfig
     /// <summary>IRS §1091 wash-sale window half-width, calendar days (clean iff 𝒲 &gt; this).</summary>
     public int WashSaleDays { get; init; } = 30;
 
+    /// <summary>
+    /// Re-harvest guard: 𝒲 also counts days since the ticker's own last loss sale
+    /// (stricter than §1091 — see PortfolioState.ReharvestGuard). Ablation: --no-reharvest-guard.
+    /// </summary>
+    public bool ReharvestGuard { get; init; } = true;
+
     // ── Economic terms of U(x) = taxValue − λσ_TE² − c_trade ──────────────────
 
     /// <summary>θ_max — LOOSE hard TE ceiling; tail-risk circuit breaker only.</summary>
