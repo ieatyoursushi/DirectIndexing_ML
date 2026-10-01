@@ -249,29 +249,30 @@ simulation order of harvest decisions.
 
 ## §5  Tracking Error (`TrackingErrorProxy`)
 
-### 5.1  Definition — Quadratic Form (v0.2)
+### 5.1  Definition — Quadratic Form (v0.2; point-in-time, dollar-weighted since v0.3-6)
 
 $$
-\hat\sigma_{\text{TE},t} = \sqrt{\delta w_t^\top \hat\Sigma\, \delta w_t \cdot 252}
+\hat\sigma_{\text{TE},t} = \sqrt{252\cdot\delta w_t^\top \hat\Sigma_t\, \delta w_t}
 $$
 
-where $\hat\Sigma$ is the $N \times N$ daily return covariance matrix pre-computed once
-from the full price history at load time, and $\delta w_t$ is the active weight deviation:
-
-$$
-\delta w_i = \begin{cases}
-  \dfrac{1}{n_t^{\text{open}}} - \dfrac{1}{N} & \text{if lot } i \text{ is open at day } t \\[6pt]
-  -\dfrac{1}{N}                                & \text{otherwise (in wash-sale / not held)}
-\end{cases}
-$$
-
-Both portfolio and benchmark use **equal weights**, consistent with the equal-dollar
-lot initialisation.
+**Active weights (default, v0.3-6).** $\delta w_{t,i}=w^P_{t,i}-w^B_{t,i}$ with
+$w^P_{t,i}=\sum_{k\in A_i}q_kP_{i,t}/V_t$ (dollar weights of the book) and $w^B_{t,i}=1/N_t$ over
+the $N_t$ names priced today. The legacy form (`--te-weights=names`) is
+$\delta w_i=\mathbf 1[i\ \text{held}]/n^{\text{open}}_t-1/N$, which is blind to position size.
+Contributions, the trim and reopens make sizes unequal; on the 60-name `--contrib` world the
+dollar form raises median $\hat\sigma_{\mathrm{TE}}$ 2.5× (0.0074 → 0.018).
 
 ### 5.2  Covariance Estimation
 
-$\hat\Sigma$ is estimated once at construction from the full available return history
-(up to 504 trading days).  Pairwise available-case sample covariance with Bessel's correction:
+**Default: point-in-time Ledoit–Wolf (`--cov=pit-lw`).** $\hat\Sigma_t$ is estimated from the
+trailing window $r_{t-L+1..t}$ ($L=252$), refit every 21 trading days, and shrunk toward the
+constant-correlation target with the closed-form intensity. The full design (missing data, thin
+names, the rank argument) is in
+[`decisions/VolatilityModel_v03.md`](../decisions/VolatilityModel_v03.md) §2, with the
+`SymbolTable.md` rows `cov_hat_pit` and `ledoit_wolf`.
+
+**Legacy (`--cov=fullsample`).** Estimated once from the full loaded history, as a pairwise
+available-case sample covariance with Bessel's correction:
 
 $$
 \hat\Sigma_{ij} = \frac{1}{T_{ij}-1}
@@ -279,12 +280,13 @@ $$
   \bigl(r_t^{(i)} - \bar{r}^{(i)}\bigr)\bigl(r_t^{(j)} - \bar{r}^{(j)}\bigr)
 $$
 
-> ⚠ **Look-ahead (ROADMAP finding F1, fixed in v0.3-6).** Because $\hat\Sigma$ uses the
-> *whole* loaded history, $\hat\sigma_{\mathrm{TE},t}$ depends on returns after $t$. It is a
-> feature and an input to $U$, so this violates "features never peek." With 20 years loaded
-> ($T\approx5{,}000>N$) the full-sample estimator was also what kept $\hat\Sigma$
-> well-conditioned. A point-in-time window with $L<N$ is rank-deficient, which makes shrinkage
-> necessary (`SymbolTable.md` `cov_hat_pit`).
+> **Look-ahead (ROADMAP finding F1, fixed in v0.3-6).** The full-sample $\hat\Sigma$ makes
+> $\hat\sigma_{\mathrm{TE},t}$ depend on returns after $t$. It is a feature and an input to $U$,
+> so this violated "features never peek." It is kept as an arm so the effect can be measured.
+> On a GBM world (stationary by construction) the effect is negligible (median TE 0.0074 vs
+> 0.0073). On real history, where 2008/2020 sit in the full sample, it is expected to be material
+> and is measured on the 20-year data. A point-in-time window with $L<N$ is rank-deficient, which
+> is why the default shrinks.
 
 $\hat\Sigma$ is symmetric by construction; diagonal entries $\hat\Sigma_{ii}$ are the
 per-stock daily return variances.  A guard `max(variance, 0)` before the square root

@@ -84,6 +84,23 @@ if (args.Contains("--contrib"))
         contribCfg = contribCfg with { NamesPerContribution = cn };
 }
 
+// ── Risk model (v0.3-6, F1 + Q2) ─────────────────────────────────────────────
+// --cov=fullsample|pit|pit-lw selects Σ̂ (default pit-lw: point-in-time Ledoit–Wolf;
+// fullsample is the legacy look-ahead arm). --te-weights=names|dollars selects δw
+// (default dollars). `--cov=fullsample --te-weights=names` reproduces pre-v0.3-6 output.
+var riskCfg = DirectIndexing.Core.Simulation.Covariance.RiskModel.Default;
+var covArg = args.FirstOrDefault(a => a.StartsWith("--cov="));
+if (covArg is not null)
+    riskCfg = riskCfg with { Covariance = DirectIndexing.Core.Simulation.Covariance.CovarianceFactory.Parse(covArg["--cov=".Length..]) };
+var teArg = args.FirstOrDefault(a => a.StartsWith("--te-weights="));
+if (teArg is not null)
+    riskCfg = riskCfg with { Weighting = teArg["--te-weights=".Length..] switch
+    {
+        "names"   => DirectIndexing.Core.Simulation.TeWeighting.Names,
+        "dollars" => DirectIndexing.Core.Simulation.TeWeighting.Dollars,
+        var x     => throw new ArgumentException($"--te-weights must be names|dollars, got '{x}'"),
+    } };
+
 // ── Sell-winner trim (v0.3-4) ────────────────────────────────────────────────
 // --trim sells gain lots of names above (1 + band) × equal weight back toward target
 // and reinvests the proceeds, making realized gains endogenous so the Schedule D
@@ -188,13 +205,13 @@ switch (mode)
         var loader = new PriceLoader();
         loader.Load(Path.Combine(dataDir, "raw"), Path.Combine(dataDir, "constituents.json"));
 
-        var engine    = new SimulationEngine(loader, oracleCfg, contribCfg, trimCfg);
+        var engine    = new SimulationEngine(loader, oracleCfg, contribCfg, trimCfg, riskCfg);
         var snapshots = engine.Run(initialPortfolioValue: 10_000_000m);
 
         var softLabeller = new SoftLabelBuilder(loader, oracleCfg);
         softLabeller.Label(snapshots);
 
-        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{trimCfg.DatasetTag}{ctradeTag}.csv");
+        var outPath = Path.Combine(dataDir, $"lots{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}.csv");
         SimulationExporter.WriteCsv(snapshots, outPath);
         sw.Stop();
         Console.WriteLine($"[simulate] → {outPath}  " +
@@ -225,10 +242,10 @@ switch (mode)
         }
 
         var synthetic = PriceLoader.FromGbm(universe, mcDays, mcSeed);
-        var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg, trimCfg).Run(10_000_000m);
+        var snapshots = new SimulationEngine(synthetic, oracleCfg, contribCfg, trimCfg, riskCfg).Run(10_000_000m);
         new SoftLabelBuilder(synthetic, oracleCfg).Label(snapshots);
         SimulationExporter.WriteCsv(snapshots,
-            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{trimCfg.DatasetTag}{ctradeTag}.csv"));
+            Path.Combine(dataDir, $"lots-mc{contribCfg.DatasetTag}{trimCfg.DatasetTag}{riskCfg.DatasetTag}{ctradeTag}.csv"));
     }
     break;
     // ── ML.NET layer — typed, in-process supervised pipeline (GBT + logistic) ──
@@ -404,6 +421,11 @@ switch (mode)
         washTests.Test_State_BeforeSide_LotLevelClock();
         washTests.Test_Engine_ZeroViolations_OnWorldsThatHadThem();
         washTests.Test_ReharvestGuard_Off_IsStillLawful();
+
+        var covTests = new CovarianceTests();
+        covTests.Test_LedoitWolf_RepairsRank_IntensityShrinksWithT();
+        covTests.Test_PointInTime_IgnoresTheFuture();
+        covTests.Test_DollarWeights_SeePositionSize();
 
         var trimTests = new TrimTests();
         trimTests.Test_Trim_SellsOnlyGains_ConsumesCarryforward();

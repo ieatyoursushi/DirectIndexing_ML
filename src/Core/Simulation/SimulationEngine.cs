@@ -1,3 +1,4 @@
+using DirectIndexing.Core.Simulation.Covariance;
 using DirectIndexing.Core.Oracle;
 using DirectIndexing.Core.Portfolio;
 
@@ -55,10 +56,12 @@ public sealed class SimulationEngine
         PriceLoader prices,
         OracleConfig? oracleConfig = null,
         ContributionPolicy? contributionPolicy = null,
-        TrimPolicy? trimPolicy = null)
+        TrimPolicy? trimPolicy = null,
+        RiskModel? riskModel = null)
     {
         _prices  = prices;
-        _te      = new TrackingErrorProxy(prices);
+        var risk = riskModel ?? RiskModel.Default;
+        _te      = new TrackingErrorProxy(prices, CovarianceFactory.Create(prices, risk.Covariance), risk.Weighting);
         _oracle  = oracleConfig ?? OracleConfig.Default;
         _state   = new PortfolioState { ReharvestGuard = _oracle.ReharvestGuard };
         _contrib = contributionPolicy ?? ContributionPolicy.Off;
@@ -108,8 +111,9 @@ public sealed class SimulationEngine
 
         if (portValue <= 0m) portValue = 1m;   // guard against empty portfolio
 
-        // Equal-weighted return of open lots — avoids structural jumps from harvest/reopen events
-        float sigmaTE = _te.Update(_state.OpenLots.Select(l => l.Symbol));
+        // σ_TE = √(252 δwᵀ Σ̂_t δw) — Σ̂_t point-in-time by default (v0.3-6, F1); the quadratic form
+        // avoids the structural jumps a return-based estimate shows at harvest/reopen events
+        float sigmaTE = _te.Update(t, _state.OpenLots, closes);
 
         // Extract snapshot + oracle for every open lot (iterate over copy; harvests mutate list)
         foreach (var lot in _state.OpenLots.ToList())
