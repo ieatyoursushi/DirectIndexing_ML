@@ -137,6 +137,7 @@ public sealed class GbmSimulator
     /// Returns <see cref="float.NaN"/> if <paramref name="startPrice"/> or
     /// <paramref name="annualSigma"/> are invalid.
     /// </returns>
+    // [math:y_soft_gbm] — DataMemo/spec/SymbolTable.md
     public float FractionFiring(
         float startPrice,
         float annualSigma,

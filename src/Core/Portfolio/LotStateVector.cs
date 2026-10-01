@@ -14,8 +14,12 @@ namespace DirectIndexing.Core.Portfolio;
 ///
 /// Sign conventions (see PortfolioMath.md §3 for derivations):
 ///   L   — negative for a harvestable lot  (ℓ = (P_t − p_k)/p_k &lt; 0)
-///   RealizedGainsYTD — signed net realized P&amp;L YTD (the pre-v0.25 G_YTD);
+///   NetST / NetLT — signed net realized P&amp;L YTD by §1222 character (G^ST, G^LT);
 ///   positive means net gains exist to offset, negative after net-loss harvests
+///
+/// Schema v5 (v0.3-3): d = 19 numeric features, 27 exported columns — v4's blended
+/// RealizedGainsYTD / LossCarryforward split by character (ROADMAP F8).
+/// Schema v4 (pre-v0.3 downsizing): v3 minus the retired Y_Oracle_GatedSpec label.
 /// TLDR this is like the graph of the multivariate X x Y represented by an R^n vector feature space (so feature space + soft label image which is subsetted in R from [0, 1]). Subject to change
 /// </summary>
 public record LotStateVector
@@ -25,10 +29,10 @@ public record LotStateVector
     /// <summary>ℓ = (P_t − p_k)/p_k ∈ (−1, ∞)  — normalised unrealised return</summary>
     public float L           { get; init; }
 
-    /// <summary>h = t − s_k ∈ ℤ_{≥0}  — holding period in days</summary>
+    /// <summary>h = t − s_k ∈ ℤ_{≥0}  — lot age in TRADING days (feature coordinate; §1222 uses S)</summary>
     public int   H           { get; init; }
 
-    /// <summary>s = 𝟙[h ≥ 365] ∈ {0,1}  — short/long-term flag</summary>
+    /// <summary>s = 𝟙[date(t) &gt; date(s_k) + 1 calendar year] ∈ {0,1}  — §1222 long-term flag</summary>
     public int   S           { get; init; }
 
     /// <summary>p_k — cost basis per share (dollars)</summary>
@@ -49,19 +53,29 @@ public record LotStateVector
     /// </summary>
     public float Shares      { get; init; }
 
+    /// <summary>
+    /// Calendar day number of the lot's purchase date. IN-MEMORY PLUMBING ONLY (never
+    /// exported): the soft-label builders re-evaluate the §1222 character along forward
+    /// steps, which needs the purchase date, not the trading-day count H.
+    /// </summary>
+    public int   PurchaseDayNumber { get; init; }
+
     // ── Portfolio-level features (shared state 𝒮_t) — TaxLedger + risk state ─
 
-    /// <summary>
-    /// ledger_t.RealizedGainsYTD ∈ ℝ — signed net realised gain/loss this
-    /// calendar year (the pre-v0.25 G_YTD). Resets at year-end.
-    /// </summary>
-    public float RealizedGainsYTD     { get; init; }
+    /// <summary>ledger_t.G^ST ∈ ℝ — signed net SHORT-term realized P&amp;L this year. Resets at year-end.</summary>
+    public float NetST                { get; init; }
 
-    /// <summary>
-    /// ledger_t.LossCarryforward ∈ ℝ≥0 — accumulated net losses beyond each
-    /// year's $3k ordinary allowance. SURVIVES year-end (26 USC §1212(b)).
-    /// </summary>
-    public float LossCarryforward     { get; init; }
+    /// <summary>ledger_t.G^LT ∈ ℝ — signed net LONG-term realized P&amp;L this year. Resets at year-end.</summary>
+    public float NetLT                { get; init; }
+
+    /// <summary>ledger_t.C^ST ∈ ℝ≥0 — short-term loss carryforward from prior years (§1212(b)).</summary>
+    public float CarryST              { get; init; }
+
+    /// <summary>ledger_t.C^LT ∈ ℝ≥0 — long-term loss carryforward from prior years (§1212(b)).</summary>
+    public float CarryLT              { get; init; }
+
+    /// <summary>The frozen ledger (G^ST, G^LT, C^ST, C^LT) as a value, for counterfactual valuation.</summary>
+    public LedgerState Ledger => new((decimal)NetST, (decimal)NetLT, (decimal)CarryST, (decimal)CarryLT);
 
     /// <summary>
     /// ledger_t.OrdinaryOffsetBudget ∈ [0, 3000] — remaining ordinary-income
@@ -89,6 +103,12 @@ public record LotStateVector
     /// <summary>(P_t − MA_200) / MA_200  — deviation from 200-day moving average</summary>
     public float DeltaMA200  { get; init; }
 
+    /// <summary>σ̂_i,t — annualized EWMA(0.94) σ forecast of this name, 𝓕_t (v0.3-8, schema v6)</summary>
+    public float SigmaHat    { get; init; }
+
+    /// <summary>σ̂_m,t — annualized EWMA σ forecast of the equal-weight market; shared by every lot on a day</summary>
+    public float SigmaMkt    { get; init; }
+
     // ── Derived / composite features ─────────────────────────────────────────
 
     /// <summary>
@@ -101,6 +121,12 @@ public record LotStateVector
 
     /// <summary>Calendar days remaining in the tax year (resets Jan 1)</summary>
     public int   DaysToYE    { get; init; }
+
+    /// <summary>z = d/√V_{t,h} — log-distance to the loss trigger in forecast σ over the label horizon (v0.3-8)</summary>
+    public float ZBarrier    { get; init; }
+
+    /// <summary>2Φ(−z) — driftless-GBM probability of touching the loss trigger within the horizon (a coordinate)</summary>
+    public float PBarrier    { get; init; }
 
     // ── Labels ───────────────────────────────────────────────────────────────
 
@@ -133,19 +159,15 @@ public record LotStateVector
     /// U(x) = TaxValue − λσ_TE² − c_trade ∈ ℝ — the scalarized objective's raw
     /// score before thresholding (issue #17 family; the v0.4 RL per-decision
     /// reward). Label/diagnostic, never a feature: 𝟙[U &gt; 0] is the oracle's own
-    /// boundary. Computed under the run's OracleConfig in BOTH modes.
+    /// boundary. Computed under the run's OracleConfig.
     /// </summary>
     public float Y_Utility   { get; init; }
 
-    /// <summary>
-    /// Spectator gated label ∈ {0,1}: what the v0.2 four-gate oracle would say
-    /// on THIS row, with legacy-G_YTD bookkeeping (seed + Σ realized P&amp;L of this
-    /// run's harvests) carried counterfactually alongside the acting oracle.
-    /// In gated runs it equals Y_Oracle; in scalarized runs it enables
-    /// same-row boundary-geometry comparison. Spectator ≠ acting: the
-    /// trajectory itself was produced by the acting oracle.
-    /// </summary>
-    public int   Y_Oracle_GatedSpec { get; init; }
+    /// <summary>Occupation fraction over the next 90 real days (#17 horizon variant, v0.3-11); NaN near the end.</summary>
+    public float Y_Soft_BT_90  { get; init; }
+
+    /// <summary>TaxValue at the first firing step within 30 real days, 0 if none (#17 dollar-weighted propensity).</summary>
+    public float Y_TaxWeighted { get; init; }
 
     // ── Metadata (for EDA — drop before modelling) ───────────────────────────
 

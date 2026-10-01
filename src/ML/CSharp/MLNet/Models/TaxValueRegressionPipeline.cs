@@ -33,6 +33,7 @@ namespace DirectIndexing.ML.MLNet.Models;
 ///   • Fixed sensible hyperparameters; no CV grid — this is a diagnostic
 ///     target, not a champion contest. Tunable later if it earns a headline.
 /// </summary>
+// [math:g_hat_tax] — DataMemo/spec/SymbolTable.md
 public static class TaxValueRegressionPipeline
 {
     public static void Run(

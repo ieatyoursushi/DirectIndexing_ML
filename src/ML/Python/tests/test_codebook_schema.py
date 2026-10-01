@@ -1,19 +1,19 @@
-"""Guard: the codebook schema must match the real lots.csv header exactly."""
+"""Guards: the codebook schema must match the C# schema and the real lots.csv header."""
+import re
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER
-from scripts.report_helpers import NUMERIC_FEATURES, repo_root
+from scripts.codebook_schema import COLUMNS, EXPECTED_HEADER, NUMERIC_FEATURES, repo_root
 
 
-# Schema v3 (v0.25): 26 columns = 17 numeric features + Sector + Symbol/Timestep
-# metadata + 6 labels (Y_Oracle, Y_Soft_GBM, Y_Soft_BT, Y_TaxValue, Y_Utility,
-# Y_Oracle_GatedSpec).
-def test_schema_has_26_unique_columns():
-    assert len(EXPECTED_HEADER) == 26
-    assert len(set(EXPECTED_HEADER)) == 26
+# Schema v6: 33 columns = 23 numeric features + Sector + Symbol/Timestep metadata
+# + 5 labels (Y_Oracle, Y_Soft_GBM, Y_Soft_BT, Y_TaxValue, Y_Utility). v4 dropped
+# the retired Y_Oracle_GatedSpec spectator (pre-v0.3 downsizing).
+def test_schema_has_33_unique_columns():
+    assert len(EXPECTED_HEADER) == 33
+    assert len(set(EXPECTED_HEADER)) == 33
 
 
 def test_every_entry_fully_documented():
@@ -24,6 +24,24 @@ def test_every_entry_fully_documented():
 
 def test_numeric_features_subset_of_schema():
     assert set(NUMERIC_FEATURES) <= set(EXPECTED_HEADER)
+    assert len(NUMERIC_FEATURES) == 23
+
+
+def test_numeric_features_match_csharp_featurelists():
+    """Cross-language drift check: the Python feature block must equal
+    FeatureLists.NumericFeatures in C#, element for element and in order."""
+    cs = (repo_root(Path(__file__).parent)
+          / "src" / "ML" / "CSharp" / "MLNet" / "Schema" / "FeatureLists.cs").read_text()
+    block = re.search(r"NumericFeatures\s*=\s*\{(.*?)\};", cs, re.S).group(1)
+    assert re.findall(r'"([^"]+)"', block) == NUMERIC_FEATURES
+
+
+def test_header_matches_csharp_exporter():
+    """The exported CSV header (SimulationExporter.Header) must equal the schema."""
+    cs = (repo_root(Path(__file__).parent) / "src" / "Export" / "SimulationExporter.cs").read_text()
+    block = re.search(r"Header\s*=(.*?);", cs, re.S).group(1)
+    header = "".join(re.findall(r'"([^"]*)"', block)).split(",")
+    assert header == EXPECTED_HEADER
 
 
 def test_matches_lots_csv_header():

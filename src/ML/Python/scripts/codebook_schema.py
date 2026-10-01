@@ -6,8 +6,9 @@ is added there, add it here — `scripts.codebook` asserts the CSV header
 matches this list exactly, so drift fails loudly instead of silently.
 
 Each entry: name, dtype, units, role, description, encoding, missing, source.
-Mathematical definitions follow DataMemo/SimulationMath.md and
-DataMemo/PortfolioMath.md.
+Mathematical definitions follow DataMemo/spec/ (SymbolTable.md is the index).
+Schema version: v6 (33 columns, d = 23) — v0.3-8 added the σ̂ feature role
+(SigmaHat, SigmaMkt, ZBarrier, PBarrier), v0.3-11 the #17 labels (Y_Soft_BT_90, Y_TaxWeighted); v5 (v0.3-3) split the ledger by §1222 character.
 """
 from __future__ import annotations
 
@@ -90,38 +91,61 @@ COLUMNS: list[dict] = [
         "source": "counted from PortfolioState.OpenLots",
     },
     {
-        "name": "RealizedGainsYTD",
+        "name": "NetST",
         "dtype": "float",
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Signed net realized gain/loss for the calendar year to date "
-            "(the pre-v0.25 G_YTD), shared by every lot at the same timestep. "
-            "In gated-oracle runs it is seeded with external gains "
-            "(+$1,000,000 = 10% of the $10M portfolio) at simulation start and "
-            "after each year-end reset; harvesting a loss pushes it down. "
-            "Resets to 0 at year-end (net loss beyond the $3k ordinary "
-            "allowance rolls into LossCarryforward instead of vanishing)."
+            "G^ST — signed net SHORT-term (held <= 1 calendar year, §1222) realized "
+            "gain/loss for the calendar year to date, shared by every lot at the "
+            "same timestep. Harvested ST losses push it down, ST gains up. Resets "
+            "to 0 at year-end (Schedule D netting; leftover loss becomes CarryST)."
         ),
-        "encoding": "Signed continuous. Positive = net realized gains.",
+        "encoding": "Signed continuous. Positive = net ST gains.",
         "missing": "None.",
-        "source": "TaxLedger.RealizedGainsYTD (via PortfolioState.Ledger)",
+        "source": "TaxLedger.NetShortTerm (via PortfolioState.Ledger)",
     },
     {
-        "name": "LossCarryforward",
+        "name": "NetLT",
         "dtype": "float",
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Accumulated net capital losses beyond each year's $3,000 "
-            "ordinary-income allowance (26 USC §1212(b)). Carries forward "
-            "indefinitely — SURVIVES the year-end reset — which is the "
-            "tax-law mechanic making 'harvest now, use later' always weakly "
-            "correct for individual investors."
+            "G^LT — signed net LONG-term (held > 1 calendar year) realized "
+            "gain/loss for the calendar year to date. Resets to 0 at year-end."
         ),
-        "encoding": "Non-negative continuous, monotone non-decreasing within a run.",
+        "encoding": "Signed continuous. Positive = net LT gains.",
         "missing": "None.",
-        "source": "TaxLedger.LossCarryforward (updated at year-end roll)",
+        "source": "TaxLedger.NetLongTerm",
+    },
+    {
+        "name": "CarryST",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "C^ST — short-term capital-loss carryforward from prior years "
+            "(26 USC §1212(b) preserves character). Enters this year's netting "
+            "as a ST loss, so it is CONSUMED by this year's gains before a new "
+            "harvest can use them (ROADMAP F8)."
+        ),
+        "encoding": "Non-negative continuous; changes only at the year-end roll.",
+        "missing": "None.",
+        "source": "TaxLedger.CarryShortTerm (year-end roll)",
+    },
+    {
+        "name": "CarryLT",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "feature (portfolio-level, TaxLedger)",
+        "description": (
+            "C^LT — long-term capital-loss carryforward from prior years. "
+            "The $3,000 ordinary deduction is taken from short-term loss first, "
+            "so loss-only books bank mostly into the character they harvest."
+        ),
+        "encoding": "Non-negative continuous; changes only at the year-end roll.",
+        "missing": "None.",
+        "source": "TaxLedger.CarryLongTerm (year-end roll)",
     },
     {
         "name": "OrdinaryOffsetBudget",
@@ -129,12 +153,13 @@ COLUMNS: list[dict] = [
         "units": "US dollars",
         "role": "feature (portfolio-level, TaxLedger)",
         "description": (
-            "Remaining ordinary-income offset allowance for the year: "
-            "max(0, $3,000 − net loss realized so far) per 26 USC §1211(b). "
-            "Together with max(RealizedGainsYTD, 0) it forms offsetCapacity, "
-            "the dollars of a new harvested loss usable this tax year."
+            "The §1211(b) ordinary-income allowance NOT yet claimed if the "
+            "year closed today: $3,000 minus the deduction of the Schedule D "
+            "netting of (NetST, NetLT, CarryST, CarryLT). Carryforward claims it "
+            "before a new harvest can. Together with the gains left after netting "
+            "it forms offsetCapacity, the dollars of a new loss usable this year."
         ),
-        "encoding": "Continuous in [0, 3000]. Resets to 3000 at year-end.",
+        "encoding": "Continuous in [0, 3000]. Derived from the four ledger columns.",
         "missing": "None.",
         "source": "TaxLedger.OrdinaryOffsetBudget (derived)",
     },
@@ -160,13 +185,15 @@ COLUMNS: list[dict] = [
         "units": "calendar days",
         "role": "feature (portfolio-level)",
         "description": (
-            "Days since the last harvest of this lot's ticker. The IRS "
-            "wash-sale rule blocks re-claiming a loss within 30 days, so the "
-            "oracle requires WashClock ≥ 30. Clocks persist across year-end."
+            "Calendar days to this lot's nearest §1091 event: min(days since the "
+            "ticker's last LOSS sale, days since a DIFFERENT open lot of the ticker "
+            "was acquired), capped at 999. The wash-sale window is ±30 calendar days "
+            "inclusive, so the oracle requires WashClock > 30 (v0.3-1: both sides, "
+            "calendar-dated). Clocks are date differences and persist across year-end."
         ),
-        "encoding": "Non-negative integer. Sentinel 999 = ticker never harvested.",
+        "encoding": "Non-negative integer, capped at 999 (= no §1091 event on record).",
         "missing": "None (sentinel encodes 'never').",
-        "source": "PortfolioState.GetWashClock",
+        "source": "PortfolioState.WashClock(lot)",
     },
     {
         "name": "R_t",
@@ -224,23 +251,53 @@ COLUMNS: list[dict] = [
         "source": "computed in SimulationEngine",
     },
     {
+        "name": "SigmaHat",
+        "dtype": "float",
+        "units": "annualized volatility",
+        "role": "feature (asset-level, σ̂)",
+        "description": (
+            "σ̂_i,t — the EWMA(λ = 0.94) forecast of this name's next-day return "
+            "volatility, annualized (√252). F_t-measurable: built from returns up to "
+            "and including day t; no fitted parameters (VolatilityModel_v03 §3)."
+        ),
+        "encoding": "Positive continuous.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "VolState.SigmaHat (EwmaVol.Path)",
+    },
+    {
+        "name": "SigmaMkt",
+        "dtype": "float",
+        "units": "annualized volatility",
+        "role": "feature (asset-level, σ̂, shared)",
+        "description": (
+            "σ̂_m,t — the EWMA forecast of the equal-weight market's volatility. "
+            "Identical for every lot on a day, so it is a near-injective function of "
+            "the date: evaluate its effect under --split=temporal only "
+            "(VolatilityModel_v03 §5, hazard 3)."
+        ),
+        "encoding": "Positive continuous; constant within a Timestep.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "VolState.SigmaMkt",
+    },
+    {
         "name": "TaxValue",
         "dtype": "float",
         "units": "US dollars",
         "role": "feature (derived, lot-level × TaxLedger)",
         "description": (
-            "Capacity-aware dollar value of harvesting this lot today: "
-            "TaxValue = τ(H)·min(loss, offsetCapacity) "
-            "+ τ_future·max(loss − offsetCapacity, 0)·δ, where "
-            "offsetCapacity = max(RealizedGainsYTD, 0) + OrdinaryOffsetBudget, "
-            "τ(H) is the short/long-term rate (0.37/0.20), τ_future = 0.20 and "
-            "δ = 0.5 discounts the banked (carried-forward) slice. Supersedes "
-            "the v0.2 TaxAlpha, which valued every loss dollar at the full "
-            "current-year rate and counted winners' |gains| as harvestable."
+            "Dollar value of harvesting this lot today, as a counterfactual "
+            "difference of the Schedule D year-end netting S: "
+            "TaxValue = [T(ledger) − T(ledger ⊕ loss)] + τ_future·δ·[ΔC], "
+            "i.e. this year's tax saved (at the rate of whatever the loss "
+            "displaces: a ST gain 0.37, a LT gain 0.20, the $3k ordinary line "
+            "0.37 — nothing if carryforward already absorbs those) plus the "
+            "newly banked carryforward ΔC at τ_future = 0.20, discounted δ = 0.5. "
+            "The lot's own §1222 character (S) only decides which pool the loss "
+            "enters. Supersedes the v0.2 TaxAlpha and the v0.25 blended pool."
         ),
         "encoding": "Non-negative continuous; 0 when the lot is not at a loss.",
         "missing": "None.",
-        "source": "TaxLedger.ComputeTaxValue(lossDollars, H)",
+        "source": "TaxLedger.ComputeTaxValue(lossDollars, isLongTerm)",
     },
     {
         "name": "DaysToYE",
@@ -250,7 +307,7 @@ COLUMNS: list[dict] = [
         "description": (
             "Calendar days remaining until December 31 of the simulated tax "
             "year. Year-end is when the ledger's annual accumulators reset "
-            "(and net losses roll into LossCarryforward), so harvest urgency "
+            "(and net losses roll into CarryST / CarryLT), so harvest urgency "
             "varies with this clock."
         ),
         "encoding": "Integer in [0, 365].",
@@ -258,18 +315,46 @@ COLUMNS: list[dict] = [
         "source": "calendar arithmetic in SimulationEngine",
     },
     {
+        "name": "ZBarrier",
+        "dtype": "float",
+        "units": "forecast standard deviations",
+        "role": "feature (derived, lot × σ̂)",
+        "description": (
+            "z = d / sqrt(V_{t,h}): the log-distance to the loss trigger, "
+            "d = max(0, ln(P_t / ((1 − θ₁)·p_k))), in units of the forecast σ over "
+            "the label horizon h = 30 trading days. 0 once the lot is past the trigger."
+        ),
+        "encoding": "Non-negative continuous.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "LossBarrier.Z (SimulationEngine.ExtractSnapshot)",
+    },
+    {
+        "name": "PBarrier",
+        "dtype": "float",
+        "units": "probability",
+        "role": "feature (derived, lot × σ̂)",
+        "description": (
+            "2Φ(−z): the reflection-principle probability that a driftless log-price "
+            "touches the loss trigger within the horizon. A coordinate (loss gate "
+            "only — wash, TE and U gates ignored), not a label."
+        ),
+        "encoding": "Continuous in [0, 1]; 1 when z = 0.",
+        "missing": "NaN during the 20-return EWMA warm-up (median-imputed on the training fold).",
+        "source": "LossBarrier.TouchProbability",
+    },
+    {
         "name": "Y_Oracle",
         "dtype": "int (binary)",
         "units": "—",
         "role": "label (hard)",
         "description": (
-            "Deterministic oracle harvest decision — in gated (v0.2-legacy) "
-            "runs, the conjunction of four gates: 1[L ≤ −0.02] · "
-            "1[Sigma_TE ≤ 0.05] · 1[RealizedGainsYTD > 0] · 1[WashClock ≥ 30]. "
-            "The gains gate is a tracked defect (issue #23); the v0.25 "
-            "scalarized oracle replaces it with a utility threshold. This is "
-            "the decision boundary the supervised models try to learn. Never "
-            "used as a model input."
+            "Deterministic scalarized-oracle harvest decision: "
+            "1[L ≤ −0.02] · 1[WashClock > 30] · 1[Sigma_TE ≤ 0.15] · 1[U > 0], "
+            "U = TaxValue − λ·Sigma_TE² − c_trade (λ = 90,000, c_trade = $10). "
+            "The decision boundary is the level set {U = 0}. This is the "
+            "cross-sectional target the supervised models recover (the leakage "
+            "control: it is deterministic in current features). Never used as "
+            "a model input."
         ),
         "encoding": "0 = do not harvest, 1 = harvest. Positive rate ≈ 1.6%.",
         "missing": "None.",
@@ -339,8 +424,7 @@ COLUMNS: list[dict] = [
             "flat round-trip harvest friction, override via --ctrade=). The "
             "scalarized oracle fires iff U > 0 (plus the hard gates), so the "
             "decision boundary is the level set {U = 0}. "
-            "Computed under the run's OracleConfig in both gated and scalarized "
-            "runs. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
+            "Computed under the run's OracleConfig. Never a feature — 𝟙[U > 0] is the oracle's own boundary; "
             "exported as the issue-#17 continuous target and the v0.4 RL "
             "per-decision reward."
         ),
@@ -349,22 +433,35 @@ COLUMNS: list[dict] = [
         "source": "OracleBoundary.Utility(TaxValue, Sigma_TE, config)",
     },
     {
-        "name": "Y_Oracle_GatedSpec",
-        "dtype": "int (binary)",
-        "units": "—",
-        "role": "label (ablation spectator)",
+        "name": "Y_Soft_BT_90",
+        "dtype": "float",
+        "units": "fraction of days",
+        "role": "label (soft, realized, #17 horizon variant)",
         "description": (
-            "What the v0.2 four-gate oracle would decide on THIS row, with "
-            "legacy G_YTD bookkeeping (seed + realized P&L of this run's "
-            "harvests, re-seeded each year-end) carried counterfactually "
-            "alongside the acting oracle. Equals Y_Oracle in gated runs; in "
-            "scalarized runs it enables same-row boundary-geometry comparison. "
-            "Spectator ≠ acting: the trajectory (which rows exist, wash clocks, "
-            "ledger state) was produced by the acting oracle."
+            "Occupation fraction of the next 90 real trading days on which the frozen-state "
+            "oracle fires (the 90-day sibling of Y_Soft_BT). Its hit indicator "
+            "1[Y_Soft_BT_90 > 0] is the soft_bt_90 training target; a 90-day label needs a "
+            "≥ 90-day embargo, which --target=soft_bt_90 enforces. Labels may peek forward; "
+            "features never."
         ),
-        "encoding": "0 = legacy oracle would not harvest, 1 = would harvest.",
-        "missing": "None.",
-        "source": "OracleBoundary legacy overload over spectator G_YTD",
+        "encoding": "Continuous in [0, 1].",
+        "missing": "NaN when fewer than 90 trading days remain.",
+        "source": "SoftLabelBuilder.ComputeBT",
+    },
+    {
+        "name": "Y_TaxWeighted",
+        "dtype": "float",
+        "units": "US dollars",
+        "role": "label (realized, #17 dollar-weighted)",
+        "description": (
+            "TaxValue at the FIRST step within the next 30 real days on which the oracle "
+            "fires, 0 if it never fires: the dollar-weighted harvest propensity — a "
+            "warm-start target for the v0.4 value function. Y_Persist (occupation given "
+            "a hit) is derived, not exported: Y_Soft_BT / 1[Y_Soft_BT > 0]."
+        ),
+        "encoding": "Non-negative continuous; 0 when the oracle never fires.",
+        "missing": "NaN when fewer than 30 trading days remain.",
+        "source": "SoftLabelBuilder.ComputeBT",
     },
     {
         "name": "Symbol",
@@ -412,3 +509,21 @@ COLUMNS: list[dict] = [
 
 #: Header order expected in data/lots.csv (must match SimulationExporter).
 EXPECTED_HEADER: list[str] = [c["name"] for c in COLUMNS]
+
+# The d = 23 numeric feature block, in schema order — derived, never restated.
+# Must equal C# FeatureLists.NumericFeatures (asserted by tests/test_codebook_schema.py).
+NUMERIC_FEATURES: list[str] = [
+    c["name"] for c in COLUMNS
+    if c["role"].startswith("feature") and not c["dtype"].startswith("string")
+]
+
+
+def repo_root(start=None):
+    """Walk up from `start` (default cwd) to the directory holding DirectIndexing.sln —
+    mirrors PythonRunner.LocateRepoRoot on the C# side."""
+    from pathlib import Path
+    d = (Path(start) if start else Path.cwd()).resolve()
+    for candidate in (d, *d.parents):
+        if (candidate / "DirectIndexing.sln").exists():
+            return candidate
+    raise FileNotFoundError(f"no DirectIndexing.sln above {d}")

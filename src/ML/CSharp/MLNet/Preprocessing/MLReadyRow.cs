@@ -21,8 +21,10 @@ public record MLReadyRow
     public float B { get; init; }
     public float W { get; init; }
     public float K { get; init; }
-    public float RealizedGainsYTD { get; init; }
-    public float LossCarryforward { get; init; }
+    public float NetST { get; init; }
+    public float NetLT { get; init; }
+    public float CarryST { get; init; }
+    public float CarryLT { get; init; }
     public float OrdinaryOffsetBudget { get; init; }
     public float Sigma_TE { get; init; }
     public float WashClock { get; init; }
@@ -30,6 +32,10 @@ public record MLReadyRow
     public float SigmaRange { get; init; }
     public float DeltaMA50 { get; init; }
     public float DeltaMA200 { get; init; }
+    public float SigmaHat { get; init; }
+    public float SigmaMkt { get; init; }
+    public float ZBarrier { get; init; }
+    public float PBarrier { get; init; }
     public float TaxValue { get; init; }
     public float DaysToYE { get; init; }
 

@@ -12,16 +12,19 @@ namespace DirectIndexing.Export;
 /// </summary>
 public static class SimulationExporter
 {
-    // Schema v3 (v0.25, issue #23): G_YTD → three TaxLedger columns,
-    // TaxAlpha → TaxValue, labels Y_TaxValue + Y_Utility (raw U(x)) +
-    // Y_Oracle_GatedSpec (v0.2 spectator predicate). d = 17 features, 26 cols.
+    // Schema v6 (v0.3-8/11): d = 23, 33 cols — + SigmaHat, SigmaMkt, ZBarrier, PBarrier (features)
+    // and the #17 labels Y_Soft_BT_90, Y_TaxWeighted.
+    // Schema v5 (v0.3-3): d = 19 features, 27 cols — the ledger by character
+    // (NetST, NetLT, CarryST, CarryLT, OrdinaryOffsetBudget). Schema v4: d = 17, 25 cols. v3 (v0.25, issue #23) moved G_YTD → three
+    // TaxLedger columns, TaxAlpha → TaxValue, and added labels Y_TaxValue + Y_Utility;
+    // v4 (pre-v0.3 downsizing) dropped the retired Y_Oracle_GatedSpec spectator.
     // Note: LotStateVector.Shares is in-memory plumbing and deliberately NOT here.
     private const string Header =
         "L,H,S,B,W,K," +
-        "RealizedGainsYTD,LossCarryforward,OrdinaryOffsetBudget,Sigma_TE,WashClock," +
-        "R_t,SigmaRange,DeltaMA50,DeltaMA200," +
-        "TaxValue,DaysToYE," +
-        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT,Y_TaxValue,Y_Utility,Y_Oracle_GatedSpec," +
+        "NetST,NetLT,CarryST,CarryLT,OrdinaryOffsetBudget,Sigma_TE,WashClock," +
+        "R_t,SigmaRange,DeltaMA50,DeltaMA200,SigmaHat,SigmaMkt," +
+        "TaxValue,DaysToYE,ZBarrier,PBarrier," +
+        "Y_Oracle,Y_Soft_GBM,Y_Soft_BT,Y_TaxValue,Y_Utility,Y_Soft_BT_90,Y_TaxWeighted," +
         "Symbol,Sector,Timestep";
 
     public static void WriteCsv(IReadOnlyList<LotStateVector> snapshots, string outputPath)
@@ -42,8 +45,10 @@ public static class SimulationExporter
             w.Write(Fmt(s.B));         w.Write(',');
             w.Write(Fmt(s.W));         w.Write(',');
             w.Write(s.K);              w.Write(',');
-            w.Write(Fmt(s.RealizedGainsYTD));     w.Write(',');
-            w.Write(Fmt(s.LossCarryforward));     w.Write(',');
+            w.Write(Fmt(s.NetST));                w.Write(',');
+            w.Write(Fmt(s.NetLT));                w.Write(',');
+            w.Write(Fmt(s.CarryST));              w.Write(',');
+            w.Write(Fmt(s.CarryLT));              w.Write(',');
             w.Write(Fmt(s.OrdinaryOffsetBudget)); w.Write(',');
             w.Write(Fmt(s.Sigma_TE));  w.Write(',');
             w.Write(s.WashClock);      w.Write(',');
@@ -51,14 +56,19 @@ public static class SimulationExporter
             w.Write(Fmt(s.SigmaRange));w.Write(',');
             w.Write(Fmt(s.DeltaMA50)); w.Write(',');
             w.Write(Fmt(s.DeltaMA200));w.Write(',');
+            w.Write(Fmt(s.SigmaHat));  w.Write(',');
+            w.Write(Fmt(s.SigmaMkt));  w.Write(',');
             w.Write(Fmt(s.TaxValue));  w.Write(',');
             w.Write(s.DaysToYE);       w.Write(',');
+            w.Write(Fmt(s.ZBarrier));  w.Write(',');
+            w.Write(Fmt(s.PBarrier));  w.Write(',');
             w.Write(s.Y_Oracle);       w.Write(',');
             w.Write(Fmt(s.Y_Soft_GBM));w.Write(',');
             w.Write(Fmt(s.Y_Soft_BT)); w.Write(',');
             w.Write(Fmt(s.Y_TaxValue));w.Write(',');
             w.Write(Fmt(s.Y_Utility)); w.Write(',');
-            w.Write(s.Y_Oracle_GatedSpec); w.Write(',');
+            w.Write(Fmt(s.Y_Soft_BT_90)); w.Write(',');
+            w.Write(Fmt(s.Y_TaxWeighted)); w.Write(',');
             w.Write(Escape(s.Symbol)); w.Write(',');
             w.Write(Escape(s.Sector)); w.Write(',');
             w.WriteLine(s.Timestep);

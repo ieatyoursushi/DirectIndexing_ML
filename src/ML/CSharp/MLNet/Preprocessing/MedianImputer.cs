@@ -24,11 +24,12 @@ public static class MedianImputer
     private static readonly string[] FloatNumericFeatures =
     {
         "L", "B", "W",
-        "RealizedGainsYTD", "LossCarryforward", "OrdinaryOffsetBudget", "Sigma_TE",
-        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200",
+        "NetST", "NetLT", "CarryST", "CarryLT", "OrdinaryOffsetBudget", "Sigma_TE",
+        "R_t", "SigmaRange", "DeltaMA50", "DeltaMA200", "SigmaHat", "SigmaMkt", "ZBarrier", "PBarrier",
         "TaxValue",
     };
 
+    // [math:imputer] — DataMemo/spec/SymbolTable.md
     public static Dictionary<string, float> Fit(IReadOnlyList<LotStateVector> trainingFold)
     {
         var medians = new Dictionary<string, float>(FloatNumericFeatures.Length);
@@ -75,14 +76,20 @@ public static class MedianImputer
                 L          = ImputeFloat(r.L,          medians["L"]),
                 B          = ImputeFloat(r.B,          medians["B"]),
                 W          = ImputeFloat(r.W,          medians["W"]),
-                RealizedGainsYTD     = ImputeFloat(r.RealizedGainsYTD,     medians["RealizedGainsYTD"]),
-                LossCarryforward     = ImputeFloat(r.LossCarryforward,     medians["LossCarryforward"]),
+                NetST                = ImputeFloat(r.NetST,                medians["NetST"]),
+                NetLT                = ImputeFloat(r.NetLT,                medians["NetLT"]),
+                CarryST              = ImputeFloat(r.CarryST,              medians["CarryST"]),
+                CarryLT              = ImputeFloat(r.CarryLT,              medians["CarryLT"]),
                 OrdinaryOffsetBudget = ImputeFloat(r.OrdinaryOffsetBudget, medians["OrdinaryOffsetBudget"]),
                 Sigma_TE   = ImputeFloat(r.Sigma_TE,   medians["Sigma_TE"]),
                 R_t        = ImputeFloat(r.R_t,        medians["R_t"]),
                 SigmaRange = ImputeFloat(r.SigmaRange, medians["SigmaRange"]),
                 DeltaMA50  = ImputeFloat(r.DeltaMA50,  medians["DeltaMA50"]),
                 DeltaMA200 = ImputeFloat(r.DeltaMA200, medians["DeltaMA200"]),
+                SigmaHat   = ImputeFloat(r.SigmaHat,   medians["SigmaHat"]),
+                SigmaMkt   = ImputeFloat(r.SigmaMkt,   medians["SigmaMkt"]),
+                ZBarrier   = ImputeFloat(r.ZBarrier,   medians["ZBarrier"]),
+                PBarrier   = ImputeFloat(r.PBarrier,   medians["PBarrier"]),
                 TaxValue   = ImputeFloat(r.TaxValue,   medians["TaxValue"]),
 
                 H          = r.H,
@@ -108,14 +115,20 @@ public static class MedianImputer
         "L"          => r.L,
         "B"          => r.B,
         "W"          => r.W,
-        "RealizedGainsYTD"     => r.RealizedGainsYTD,
-        "LossCarryforward"     => r.LossCarryforward,
+        "NetST"                => r.NetST,
+        "NetLT"                => r.NetLT,
+        "CarryST"              => r.CarryST,
+        "CarryLT"              => r.CarryLT,
         "OrdinaryOffsetBudget" => r.OrdinaryOffsetBudget,
         "Sigma_TE"   => r.Sigma_TE,
         "R_t"        => r.R_t,
         "SigmaRange" => r.SigmaRange,
         "DeltaMA50"  => r.DeltaMA50,
         "DeltaMA200" => r.DeltaMA200,
+        "SigmaHat"   => r.SigmaHat,
+        "SigmaMkt"   => r.SigmaMkt,
+        "ZBarrier"   => r.ZBarrier,
+        "PBarrier"   => r.PBarrier,
         "TaxValue"   => r.TaxValue,
         _ => throw new ArgumentException($"unknown float feature '{col}'"),
     };

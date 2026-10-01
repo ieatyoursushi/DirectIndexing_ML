@@ -25,6 +25,7 @@ namespace DirectIndexing.ML.MLNet.Models;
 /// <b>Class balance:</b> balanced example weights are attached via
 /// <c>ExampleWeightColumnName</c>, same pattern as the logistic trainer.
 /// </summary>
+// [math:eta_hat_gbt] — DataMemo/spec/SymbolTable.md
 public static class GradientBoostedTreesTrainer
 {
     public record GbtOutput(
@@ -89,6 +90,7 @@ public static class GradientBoostedTreesTrainer
         var model  = finalEstimator.Fit(trainView);
         var scored = model.Transform(testView);
         var metrics = BinaryMetrics.Compute(ml, scored);
+        metrics.Strata = BinaryMetrics.ByTercile(ml, scored, test.Select(r => r.SigmaMkt).ToList());
 
         return new GbtOutput(
             Metrics:           metrics,
@@ -125,6 +127,7 @@ public static class GradientBoostedTreesTrainer
             .Append(ml.BinaryClassification.Trainers.FastTree(options));
     }
 
+    // [math:y_target_bin] — DataMemo/spec/SymbolTable.md
     private static (List<LotStateVector> Filtered, Func<LotStateVector, bool> Label)
         SelectTarget(IReadOnlyList<LotStateVector> data, string target) =>
         target.ToLowerInvariant() switch
@@ -132,6 +135,8 @@ public static class GradientBoostedTreesTrainer
             "oracle"  => (data.ToList(), r => r.Y_Oracle == 1),
             "soft_bt" => (data.Where(r => !float.IsNaN(r.Y_Soft_BT)).ToList(),
                           r => r.Y_Soft_BT > 0f),
+            "soft_bt_90" => (data.Where(r => !float.IsNaN(r.Y_Soft_BT_90)).ToList(),
+                          r => r.Y_Soft_BT_90 > 0f),
             _ => throw new ArgumentException($"unknown target '{target}'"),
         };
 }

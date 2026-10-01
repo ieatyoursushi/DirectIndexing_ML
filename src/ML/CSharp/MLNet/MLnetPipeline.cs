@@ -2,7 +2,7 @@ using DirectIndexing.Core.Portfolio;
 using DirectIndexing.ML.MLNet.Io;
 using DirectIndexing.ML.MLNet.Metrics;
 using DirectIndexing.ML.MLNet.Models;
-using DirectIndexing.ML.MLNet.Schema;
+using DirectIndexing.ML.MLNet.Tuning;
 using Microsoft.ML;
 
 namespace DirectIndexing.ML.MLNet;
@@ -34,7 +34,8 @@ public static class MLnetPipeline
         Confusion ConfusionAt05,
         Confusion ConfusionAtBest,
         CurvePointDto[] RocCurve,
-        CurvePointDto[] PrCurve);
+        CurvePointDto[] PrCurve,
+        IReadOnlyList<StratumMetrics> StrataBySigmaMkt);
 
     private static BaseMetrics ToBase(
         BinaryMetricsResult m, string target, int train, int test, double[] cvFolds) =>
@@ -44,13 +45,14 @@ public static class MLnetPipeline
             new(m.Tp05, m.Fp05, m.Tn05, m.Fn05),
             new(m.TpBest, m.FpBest, m.TnBest, m.FnBest),
             m.RocCurve.Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray(),
-            m.PrCurve .Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray());
+            m.PrCurve .Select(p => new CurvePointDto(p.Threshold, p.X, p.Y)).ToArray(),
+            m.Strata);
 
     // ── Per-model public entry points (full CV + test eval) ──────────────────
 
     /// <summary>
-    /// Run a specific model's full pipeline (CV grid search + champion test eval).
-    /// Used by individual <c>mlnet-gbt</c>, <c>mlnet-rf</c>, etc. cases.
+    /// Run a specific model's full pipeline (CV grid search + test eval).
+    /// Used by the individual <c>mlnet-gbt</c> / <c>mlnet-logistic</c> cases.
     /// </summary>
     public static void RunSupervisedModel(
         string modelName,
@@ -66,17 +68,32 @@ public static class MLnetPipeline
         {
             case "logistic": WriteLogistic(LogisticTrainer.Run(ml, data, target), target, artifactsDir, ml); break;
             case "gbt":      WriteGbt     (GradientBoostedTreesTrainer.Run(ml, data, target), target, artifactsDir, ml); break;
-            case "rf":       WriteRf      (RandomForestTrainer.Run(ml, data, target), target, artifactsDir, ml); break;
-            case "elnet":    WriteElnet   (ElasticNetTrainer.Run(ml, data, target), target, artifactsDir, ml); break;
-            case "linreg":   WriteLinreg  (LinearRegressionTrainer.Run(ml, data, target), target, artifactsDir, ml); break;
             default: throw new ArgumentException($"unknown model '{modelName}'");
         }
     }
 
     /// <summary>
-    /// Champion-selection run: CV-tunes all models, emits a leaderboard, then runs
-    /// full test evaluation only for the top-2 classifiers + the linreg poor-fit
-    /// demonstration. The test set is never touched until after the CV ranking.
+    /// The two supervised models kept after the pre-v0.3 downsizing
+    /// (<c>DataMemo/archive/RetiredComponents.md</c>): GBT, the champion and RL
+    /// substrate, and L2 logistic, the linear control that measures how much
+    /// non-linearity the target actually has.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Models = new[] { "gbt", "logistic" };
+
+    /// <summary>
+    /// Champion = argmax of mean CV PR-AUC. A pure function of the CV results, so the
+    /// selection rule is testable without touching any test set.
+    /// </summary>
+    // [math:champion] — DataMemo/spec/SymbolTable.md
+    public static string SelectChampion(IEnumerable<CvResult> cvResults) =>
+        cvResults.OrderByDescending(r => r.MeanCvScore).First().ModelName;
+
+    /// <summary>
+    /// Comparison run: CV-tunes both models, emits a leaderboard that names the
+    /// champion, then runs the full test evaluation for both. They are a
+    /// pre-registered comparison pair (champion vs linear control), so evaluating
+    /// both on test selects nothing on test — the selection rule reads CV only, and
+    /// the test set is touched only after the leaderboard is written.
     /// </summary>
     public static void RunAllSupervised(
         IReadOnlyList<LotStateVector> data,
@@ -90,22 +107,12 @@ public static class MLnetPipeline
         // 1. CV phase — test set untouched.
         var cvResults = new[]
         {
-            LogisticTrainer              .RunCV(ml, data, target),
-            GradientBoostedTreesTrainer  .RunCV(ml, data, target),
-            RandomForestTrainer          .RunCV(ml, data, target),
-            ElasticNetTrainer            .RunCV(ml, data, target),
-            LinearRegressionTrainer      .RunCV(ml, data, target),
+            GradientBoostedTreesTrainer.RunCV(ml, data, target),
+            LogisticTrainer            .RunCV(ml, data, target),
         };
+        var champion = SelectChampion(cvResults);
 
-        // 2. Pick top-2 classifiers (exclude linreg — regression demonstration).
-        var champions = cvResults
-            .Where(r => r.ModelName != "linreg")
-            .OrderByDescending(r => r.MeanCvScore)
-            .Take(2)
-            .Select(r => r.ModelName)
-            .ToHashSet();
-
-        // 3. Emit CV leaderboard.
+        // 2. Emit CV leaderboard.
         var leaderboard = cvResults
             .OrderByDescending(r => r.MeanCvScore)
             .Select(r => new
@@ -113,8 +120,8 @@ public static class MLnetPipeline
                 r.ModelName,
                 MeanCvPrAuc  = r.MeanCvScore,
                 r.PerFoldScores,
-                IsChampion   = champions.Contains(r.ModelName),
-                ModelType    = r.ModelName == "linreg" ? "regression_demonstration" : "classifier",
+                IsChampion   = r.ModelName == champion,
+                Role         = r.ModelName == "gbt" ? "champion_candidate" : "linear_control",
                 AllConfigs   = r.AllConfigs.Select(c => new
                 {
                     Params   = c.Params,
@@ -124,27 +131,9 @@ public static class MLnetPipeline
         Artifacts.WriteJson(leaderboard,
             Path.Combine(artifactsDir, $"{target}_cv_leaderboard.json"));
 
-        // 4. Full test eval — champions only + linreg poor-fit demonstration.
-        foreach (var name in champions)
+        // 3. Full test eval — only after the CV leaderboard exists.
+        foreach (var name in Models)
             RunSupervisedModel(name, data, target, artifactsDir);
-
-        // Linreg always runs as the demonstration, regardless of CV rank.
-        RunSupervisedModel("linreg", data, target, artifactsDir);
-    }
-
-    // ── Backward-compatible single-model entry point ─────────────────────────
-
-    /// <summary>Runs logistic regression only. Kept for backward compatibility with
-    /// <c>mlnet-supervised</c> and <c>mlnet-baseline</c> cases.</summary>
-    public static void RunSupervised(
-        IReadOnlyList<LotStateVector> data,
-        string target,
-        string artifactsDir)
-    {
-        Console.WriteLine($"[MLnetPipeline] supervised target={target} rows={data.Count}");
-        Directory.CreateDirectory(artifactsDir);
-        var ml = new MLContext(seed: 42);
-        WriteLogistic(LogisticTrainer.Run(ml, data, target), target, artifactsDir, ml);
     }
 
     // ── Artifact writers ─────────────────────────────────────────────────────
@@ -162,7 +151,7 @@ public static class MLnetPipeline
             AllConfigs = r.AllConfigs.Select(c => new { C = c.C, MeanCvPrAuc = c.MeanScore }),
             b.CvBestMeanPrAuc, b.CvPerFold,
             b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
+            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve, b.StrataBySigmaMkt,
         }, Path.Combine(dir, $"{name}_metrics.json"));
 
         WriteCoefficients(r.Coefficients, dir, name);
@@ -187,86 +176,10 @@ public static class MLnetPipeline
             }),
             b.CvBestMeanPrAuc, b.CvPerFold,
             b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
+            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve, b.StrataBySigmaMkt,
             Note = "NormalizeMeanVariance applied for schema consistency; scale-invariant for trees",
         }, Path.Combine(dir, $"{name}_metrics.json"));
 
-        ml.Model.Save(r.Model, null, Path.Combine(dir, $"{name}_model.zip"));
-    }
-
-    private static void WriteRf(
-        RandomForestTrainer.RfOutput r, string target, string dir, MLContext ml)
-    {
-        var name = $"rf_{target}";
-        var b    = ToBase(r.Metrics, target, r.RowsTrain, r.RowsTest, r.PerFoldCvScores);
-        Artifacts.WriteJson(new
-        {
-            b.Target, b.RowsTrain, b.RowsTest,
-            BestNumberOfTrees  = r.BestNumberOfTrees,
-            BestNumberOfLeaves = r.BestNumberOfLeaves,
-            FeatureFraction    = r.FeatureFraction,
-            AllConfigs = r.AllConfigs.Select(c => new
-            {
-                Params      = c.Params,
-                MeanCvPrAuc = c.MeanScore,
-            }),
-            b.CvBestMeanPrAuc, b.CvPerFold,
-            b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
-        }, Path.Combine(dir, $"{name}_metrics.json"));
-
-        ml.Model.Save(r.Model, null, Path.Combine(dir, $"{name}_model.zip"));
-    }
-
-    private static void WriteElnet(
-        ElasticNetTrainer.ElasticNetOutput r, string target, string dir, MLContext ml)
-    {
-        var name = $"elnet_{target}";
-        var b    = ToBase(r.Metrics, target, r.RowsTrain, r.RowsTest, r.PerFoldCvScores);
-        Artifacts.WriteJson(new
-        {
-            b.Target, b.RowsTrain, b.RowsTest,
-            BestL1 = r.BestL1,
-            BestL2 = r.BestL2,
-            AllConfigs = r.AllConfigs.Select(c => new
-            {
-                Params      = c.Params,
-                MeanCvPrAuc = c.MeanScore,
-            }),
-            b.CvBestMeanPrAuc, b.CvPerFold,
-            b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
-        }, Path.Combine(dir, $"{name}_metrics.json"));
-
-        WriteCoefficients(r.Coefficients, dir, name);
-        ml.Model.Save(r.Model, null, Path.Combine(dir, $"{name}_model.zip"));
-    }
-
-    private static void WriteLinreg(
-        LinearRegressionTrainer.LinRegOutput r, string target, string dir, MLContext ml)
-    {
-        var name = $"linreg_{target}";
-        var b    = ToBase(r.Metrics, target, r.RowsTrain, r.RowsTest, r.PerFoldCvScores);
-        Artifacts.WriteJson(new
-        {
-            b.Target, b.RowsTrain, b.RowsTest,
-            ModelType        = "regression_demonstration",
-            BestL2           = r.BestL2,
-            Bias             = r.Bias,
-            FractionOutsideUnit = r.FractionOutsideUnit,
-            MeanPrediction   = r.MeanPrediction,
-            AllConfigs = r.AllConfigs.Select(c => new
-            {
-                Params      = c.Params,
-                MeanCvPrAuc = c.MeanScore,
-            }),
-            b.CvBestMeanPrAuc, b.CvPerFold,
-            b.TestRocAuc, b.TestPrAuc, b.F1At05, b.F1AtBest, b.BestThreshold,
-            b.ConfusionAt05, b.ConfusionAtBest, b.RocCurve, b.PrCurve,
-            Note = "Score treated as probability proxy; predictions outside [0,1] are the primary failure signal",
-        }, Path.Combine(dir, $"{name}_metrics.json"));
-
-        WriteCoefficients(r.Coefficients, dir, name);
         ml.Model.Save(r.Model, null, Path.Combine(dir, $"{name}_model.zip"));
     }
 
@@ -283,70 +196,7 @@ public static class MLnetPipeline
             rows);
     }
 
-    // ── Unsupervised / render (unchanged) ────────────────────────────────────
-
-    public static void RunUnsupervised(
-        IReadOnlyList<LotStateVector> data,
-        string artifactsDir)
-    {
-        Console.WriteLine($"[MLnetPipeline] unsupervised  rows={data.Count}");
-        Directory.CreateDirectory(artifactsDir);
-        var ml = new MLContext(seed: 42);
-
-        var pca = PcaPipeline.Run(ml, data, cumulativeVarianceThreshold: 0.95);
-
-        Artifacts.WriteJson(new
-        {
-            featureNames       = FeatureLists.NumericFeatures,
-            explainedVariance  = pca.ExplainedVariance,
-            cumulativeVariance = pca.CumulativeVariance,
-            nKept              = pca.NKept,
-        }, Path.Combine(artifactsDir, "pca_components.json"));
-
-        Artifacts.WriteJson(new
-        {
-            k                  = Enumerable.Range(1, pca.ExplainedVariance.Length).ToArray(),
-            explainedVariance  = pca.ExplainedVariance,
-            cumulativeVariance = pca.CumulativeVariance,
-            threshold          = 0.95,
-            nKept              = pca.NKept,
-        }, Path.Combine(artifactsDir, "pca_scree.json"));
-
-        var loadingHeader = new[] { "component" }.Concat(FeatureLists.NumericFeatures);
-        var loadingRows   = pca.Loadings.Select((row, i) =>
-            new[] { (object)$"PC{i + 1}" }.Concat(row.Cast<object>()));
-        Artifacts.WriteCsv(
-            Path.Combine(artifactsDir, "pca_loadings.csv"),
-            loadingHeader, loadingRows);
-
-        ml.Model.Save(pca.Model, null, Path.Combine(artifactsDir, "pca_model.zip"));
-
-        var km = KMeansPipeline.Run(ml, data);
-
-        Artifacts.WriteJson(new
-        {
-            featureNames = KMeansPipeline.FeatureNames,
-            bestK        = km.BestK,
-            centers      = km.Centers,
-        }, Path.Combine(artifactsDir, "kmeans_centers.json"));
-
-        Artifacts.WriteJson(new
-        {
-            ks         = km.Elbow.Select(e => e.K).ToArray(),
-            silhouette = km.Elbow.Select(e => e.Silhouette).ToArray(),
-            inertia    = km.Elbow.Select(e => e.Inertia).ToArray(),
-            bestK      = km.BestK,
-        }, Path.Combine(artifactsDir, "kmeans_elbow.json"));
-
-        Artifacts.WriteJson(
-            km.Assignments.ToDictionary(a => a.Symbol, a => a.ClusterId),
-            Path.Combine(artifactsDir, "cluster_assignments.json"));
-
-        Artifacts.WriteCsv(
-            Path.Combine(artifactsDir, "cluster_assignments.csv"),
-            new[] { "symbol", "sector", "cluster_id" },
-            km.Assignments.Select(a => new object[] { a.Symbol, a.Sector, a.ClusterId }));
-    }
+    // ── Render (EDA + model plots via the Python renderer) ───────────────────
 
     public static int RunRender(
         string lotsCsv, string artifactsDir, string edaDir, string modelsDir)

@@ -34,6 +34,7 @@ public static class PreprocessingPipeline
     public class SectorIn  { public string Sector { get; set; } = ""; }
     public class SectorOut { public string SectorClean { get; set; } = ""; }
 
+    // [math:phi_pre] — DataMemo/spec/SymbolTable.md
     public static IEstimator<ITransformer> Build(MLContext ml)
     {
         var numeric = FeatureLists.NumericFeatures;

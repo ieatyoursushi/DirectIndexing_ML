@@ -1,51 +1,89 @@
+using DirectIndexing.Core.Portfolio;
+using DirectIndexing.Core.Simulation.Covariance;
+
 namespace DirectIndexing.Core.Simulation;
 
+/// <summary>How the active-weight vector δw is formed (DataMemo/decisions/VolatilityModel_v03.md §2).</summary>
+public enum TeWeighting
+{
+    /// <summary>Legacy: δw_i = 1/n_open − 1/N for every held NAME (position size ignored).</summary>
+    Names,
+    /// <summary>v0.3-6: δw_i = (dollars in i)/V − 1/N_t over the names priced today.</summary>
+    Dollars,
+}
+
 /// <summary>
-/// Computes annualised tracking error σ_TE = √(δw⊤ Σ δw × 252) via the full
-/// quadratic form, where:
-///   Σ   = N×N daily return covariance matrix, pre-computed once from the full
-///          price history at construction time (pairwise available-case, Bessel correction).
-///   δw  = active weight deviation vector:
-///            δw_i = 1/n_open − 1/N   (lot i is open)
-///            δw_i =         − 1/N   (lot i is not open / in wash-sale window)
+/// Annualised ex-ante tracking error σ_TE = √(252 · δwᵀ Σ̂_t δw).
 ///
-/// Both portfolio and benchmark use equal weights, consistent with the simulation's
-/// equal-dollar lot initialisation.
+///   Σ̂_t — from an <see cref="ICovarianceEstimator"/>: the legacy full-history sample
+///          (a look-ahead, ROADMAP F1) or the point-in-time / Ledoit–Wolf estimators (v0.3-6).
+///   δw  — active weights, by <see cref="TeWeighting"/>: legacy equal-per-name, or dollar
+///          weights vs an equal-weight benchmark over the names priced today.
 ///
-/// v0.1 used std(r_port − r_bench, window=30) × √252 (rolling scalar approach).
-/// v0.2 (this class) uses the quadratic form for forward-looking estimates that expose
-/// cross-stock correlations — the natural extension point for future RMT-based
-/// Marchenko-Pastur eigenvalue cleaning.
-///
-/// Computational cost:
-///   Construction : O(N² × T) ≈ 127M ops — once at load time
-///   Per-day call : O(N²)     ≈ 253K ops — v = Σδw matrix-vector product
+/// v0.1 used std(r_port − r_bench, window=30) × √252 (rolling scalar approach). v0.2 moved to
+/// the quadratic form, which exposes cross-stock correlation and survives structural lot
+/// removal (TE Test 3).
+/// Cost per day: O(N²) for v = Σ̂δw; Σ̂ refits are the estimator's business.
 /// </summary>
 public sealed class TrackingErrorProxy
 {
-    private readonly float[,]               _cov;      // [N, N] daily return covariance
-    private readonly List<string>           _symbols;  // sorted — defines row/col order
+    private readonly ICovarianceEstimator  _covEst;
+    private readonly TeWeighting           _weighting;
+    private readonly List<string>          _symbols;  // sorted — defines row/col order
     private readonly Dictionary<string,int> _symIdx;
-    private readonly int                    _N;
+    private readonly int                   _N;
 
+    /// <summary>Legacy arm: full-sample Σ̂, equal-per-name δw (byte-identical to v0.2–v0.3-5).</summary>
     public TrackingErrorProxy(PriceLoader prices)
+        : this(prices, new FullSampleCovariance(prices), TeWeighting.Names) { }
+
+    public TrackingErrorProxy(PriceLoader prices, ICovarianceEstimator covariance, TeWeighting weighting)
     {
-        _symbols = prices.Symbols.OrderBy(s => s).ToList();
-        _N       = _symbols.Count;
-        _symIdx  = _symbols.Select((s, i) => (s, i)).ToDictionary(x => x.s, x => x.i);
-        _cov     = ComputeCovariance(prices, _symbols, _N);
-        Console.WriteLine($"[TrackingErrorProxy] Σ computed: {_N}×{_N}.");
+        _covEst    = covariance;
+        _weighting = weighting;
+        _symbols   = covariance.Symbols.ToList();
+        _N         = _symbols.Count;
+        _symIdx    = _symbols.Select((s, i) => (s, i)).ToDictionary(x => x.s, x => x.i);
+        Console.WriteLine($"[TrackingErrorProxy] Σ̂ = {covariance.Name} ({_N}×{_N}), δw = {weighting}.");
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns annualised tracking error for the current open-lot universe.
-    /// Call once per trading day before the lot loop.
-    /// </summary>
-    public float Update(IEnumerable<string> openSymbols)
+    /// <summary>The engine's call: σ_TE on day t for the open book at today's closes.</summary>
+    // [math:delta_w] — DataMemo/spec/SymbolTable.md
+    public float Update(int t, IReadOnlyList<Lot> openLots, IReadOnlyDictionary<string, decimal> closes)
     {
-        // Build open set (restrict to symbols known in our covariance universe)
+        if (_weighting == TeWeighting.Names)
+            return Update(openLots.Select(l => l.Symbol), t);
+
+        var dollars = new double[_N];
+        double V = 0;
+        foreach (var lot in openLots)
+            if (_symIdx.TryGetValue(lot.Symbol, out int i) && closes.TryGetValue(lot.Symbol, out decimal px))
+            {
+                double v = (double)(lot.Shares * px);
+                dollars[i] += v;
+                V += v;
+            }
+        if (V <= 0) return 0f;
+
+        int nPriced = 0;
+        for (int i = 0; i < _N; i++) if (closes.ContainsKey(_symbols[i])) nPriced++;
+        if (nPriced == 0) return 0f;
+
+        var dw = new float[_N];
+        for (int i = 0; i < _N; i++)
+            dw[i] = (float)(dollars[i] / V - (closes.ContainsKey(_symbols[i]) ? 1.0 / nPriced : 0.0));
+        return Quadratic(_covEst.At(t), dw);
+    }
+
+    /// <summary>
+    /// Legacy equal-per-name form: δw_i = 1/n_open − 1/N if name i is held, else −1/N.
+    /// <paramref name="t"/> selects Σ̂_t (irrelevant for the time-invariant full-sample arm).
+    /// </summary>
+    // [math:sigma_te] — DataMemo/spec/SymbolTable.md
+    public float Update(IEnumerable<string> openSymbols, int t = 0)
+    {
         var openSet = new HashSet<string>();
         foreach (var s in openSymbols)
             if (_symIdx.ContainsKey(s)) openSet.Add(s);
@@ -56,76 +94,23 @@ public sealed class TrackingErrorProxy
         float wPort  = 1f / nOpen;
         float wBench = 1f / _N;
 
-        // Pre-compute δw vector (N HashSet lookups instead of N² inside the loop)
         var dw = new float[_N];
         for (int i = 0; i < _N; i++)
             dw[i] = openSet.Contains(_symbols[i]) ? wPort - wBench : -wBench;
+        return Quadratic(_covEst.At(t), dw);
+    }
 
-        // variance = δw⊤ Σ δw  (combined matrix-vector multiply + dot product)
+    /// <summary>√(252 · δwᵀ Σ δw), floored at 0.</summary>
+    private float Quadratic(float[,] cov, float[] dw)
+    {
         double variance = 0;
         for (int i = 0; i < _N; i++)
         {
             double vi = 0;
             for (int j = 0; j < _N; j++)
-                vi += _cov[i, j] * dw[j];
+                vi += cov[i, j] * dw[j];
             variance += dw[i] * vi;
         }
-
         return MathF.Sqrt(MathF.Max((float)variance, 0f) * 252f);
-    }
-
-    // ── Shared covariance estimator ──────────────────────────────────────────
-
-    /// <summary>
-    /// Pairwise available-case sample covariance with Bessel's correction.
-    ///
-    /// Σ_ij is estimated from all days t where both r_t^(i) and r_t^(j) are non-NaN.
-    /// The resulting matrix is symmetric; diagonal entries are per-stock daily variances.
-    ///
-    /// Exposed as <c>internal static</c> so <see cref="MonteCarloEngine"/> can reuse
-    /// it for its calibrated constructor without duplicating the logic.
-    /// </summary>
-    internal static float[,] ComputeCovariance(PriceLoader prices, List<string> symbols, int N)
-    {
-        var retArrays = symbols.Select(s => prices.GetReturnArray(s)).ToArray();
-        int T         = retArrays[0].Length;
-
-        // Step 1: per-symbol means (ignoring NaN)
-        var means  = new double[N];
-        var counts = new int[N];
-        for (int i = 0; i < N; i++)
-        {
-            for (int t = 0; t < T; t++)
-            {
-                float r = retArrays[i][t];
-                if (!float.IsNaN(r)) { means[i] += r; counts[i]++; }
-            }
-            if (counts[i] > 0) means[i] /= counts[i];
-        }
-
-        // Step 2: pairwise sample covariance (upper triangle → fill both halves)
-        var cov = new float[N, N];
-        for (int i = 0; i < N; i++)
-        {
-            for (int j = i; j < N; j++)
-            {
-                double sumCov = 0;
-                int    cnt    = 0;
-                for (int t = 0; t < T; t++)
-                {
-                    float ri = retArrays[i][t];
-                    float rj = retArrays[j][t];
-                    if (!float.IsNaN(ri) && !float.IsNaN(rj))
-                    {
-                        sumCov += (ri - means[i]) * (rj - means[j]);
-                        cnt++;
-                    }
-                }
-                float c = cnt > 1 ? (float)(sumCov / (cnt - 1)) : 0f;
-                cov[i, j] = c;
-                cov[j, i] = c;
-            }
-        }
-        return cov;
     }
 }

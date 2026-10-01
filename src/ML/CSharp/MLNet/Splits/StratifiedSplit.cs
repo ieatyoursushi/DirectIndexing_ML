@@ -13,6 +13,7 @@ namespace DirectIndexing.ML.MLNet.Splits;
 /// </summary>
 public static class StratifiedSplit
 {
+    // [math:split_random] — DataMemo/spec/SymbolTable.md
     public static (List<LotStateVector> Train, List<LotStateVector> Test) Split(
         IReadOnlyList<LotStateVector> data,
         Func<LotStateVector, int> labelSelector,
